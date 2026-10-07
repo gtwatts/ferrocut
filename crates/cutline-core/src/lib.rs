@@ -1,14 +1,18 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! Shared types for Cutline.
+//!
+//! PROVISIONAL: pending SeePlus review. Everything in this crate is a first
+//! draft written for Rusty's engine spike so `cutline-engine`, `cutline-color`
+//! and `cutline-ofx` have a common vocabulary. SeePlus owns the final shape of
+//! [`Frame`] and [`RenderNode`]; expect breaking changes.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod frame;
+pub mod gpu;
+pub mod hash;
+pub mod node;
+pub mod time;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use frame::{AlphaMode, ColorSpace, CpuImage, Frame, FrameStorage, GpuImage, WORKING_FORMAT};
+pub use gpu::{AdapterPreference, GpuContext, GpuError};
+pub use hash::{FrameKey, NodeHash};
+pub use node::{NodeError, Pull, RenderCtx, RenderNode, WorkerState};
+pub use time::{FrameRate, Rational, RationalTime, TimeError};
