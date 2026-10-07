@@ -6,7 +6,7 @@
 set -euo pipefail
 
 OCIO_TAG="${OCIO_TAG:-v2.5.2}"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"  # physical: never bake a symlinked path
 TP="$HERE/third_party"
 SRC="$TP/src-ocio"
 BUILD="$TP/build-ocio"
@@ -25,6 +25,17 @@ actual="$(git -C "$SRC" describe --tags --exact-match 2>/dev/null || echo unknow
 if [ "$actual" != "$OCIO_TAG" ]; then
   echo "error: $SRC is at '$actual', expected $OCIO_TAG (delete it to re-clone)" >&2
   exit 1
+fi
+
+# A build tree or install configured from another checkout path (the repo was
+# moved or renamed) bakes that path into CMakeCache.txt, the .pc file and the
+# install manifest: start both over. The source clone is path-independent.
+if [ -f "$BUILD/CMakeCache.txt" ] && ! grep -qxF "CMAKE_HOME_DIRECTORY:INTERNAL=$SRC" "$BUILD/CMakeCache.txt"; then
+  echo "build tree was configured for another path; rebuilding from scratch"
+  rm -rf "$BUILD" "$PREFIX"
+fi
+if [ -f "$PREFIX/lib/pkgconfig/OpenColorIO.pc" ] && ! grep -qxF "prefix=$PREFIX" "$PREFIX/lib/pkgconfig/OpenColorIO.pc"; then
+  rm -rf "$PREFIX"
 fi
 
 # Keep the dependency search away from Homebrew/system copies so the result is

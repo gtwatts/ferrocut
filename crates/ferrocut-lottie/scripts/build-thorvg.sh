@@ -10,7 +10,7 @@ THORVG_SHA256="4ac22e7648e4d163c8d06ccadfd463fe17d62f39854c8e6057cc9291d80603cd"
 MESON_VERSION="1.9.1"
 NINJA_VERSION="1.13.0"
 
-here="$(cd "$(dirname "$0")/.." && pwd)"
+here="$(cd "$(dirname "$0")/.." && pwd -P)"  # physical: never bake a symlinked path
 tp="$here/third_party"
 src="$tp/thorvg-$THORVG_VERSION"
 prefix="$tp/install"
@@ -33,7 +33,18 @@ for p in "$here"/patches/thorvg-$THORVG_VERSION-*.patch; do
 done
 
 venv="$tp/.venv"
-if [[ ! -x "$venv/bin/meson" ]] || [[ "$("$venv/bin/meson" --version)" != "$MESON_VERSION" ]]; then
+# pip writes absolute shebangs: a venv created under another checkout path (the
+# repo was moved or renamed) must be recreated, not reused.
+if [[ -f "$venv/bin/meson" ]] && [[ "$(head -c 300 "$venv/bin/meson" | head -n1)" != "#!$venv/bin/python"* ]]; then
+  echo "venv was created for another path; recreating"
+  rm -rf "$venv"
+fi
+# Same for an install whose .pc points at another prefix.
+if [[ -f "$prefix/lib/pkgconfig/thorvg-1.pc" ]] && ! grep -qxF "prefix=$prefix" "$prefix/lib/pkgconfig/thorvg-1.pc"; then
+  rm -rf "$prefix"
+fi
+if [[ ! -x "$venv/bin/meson" ]] || [[ "$("$venv/bin/meson" --version 2>/dev/null)" != "$MESON_VERSION" ]]; then
+  rm -rf "$venv"
   python3 -m venv "$venv"
   "$venv/bin/pip" install --quiet "meson==$MESON_VERSION" "ninja==$NINJA_VERSION"
 fi
