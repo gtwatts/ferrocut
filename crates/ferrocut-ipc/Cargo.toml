@@ -1,0 +1,13 @@
+[package]
+name = "ferrocut-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Shared plumbing for Ferrocut's isolated plugin hosts: line-protocol child processes, shared-memory frame buffers, supervision and NodeError mapping"
+
+[dependencies]
+ferrocut-types = { workspace = true }
+memmap2 = "0.9"
+thiserror = "2"

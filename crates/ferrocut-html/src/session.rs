@@ -11,8 +11,9 @@
 
 use std::time::Duration;
 
-use crate::host::{HostConfig, HostProcess, HtmlError};
-use crate::shm::ShmBgra;
+use ferrocut_ipc::{HostSlot, IpcError, ShmBuffer};
+
+use crate::host::{HOST_NAME, HostConfig, HtmlError, spawn_host};
 
 /// Output size and the frame grid the page is stepped on (frames per second as
 /// an exact rational, e.g. 30000/1001).
@@ -51,17 +52,17 @@ pub struct HtmlSession {
     cfg: HostConfig,
     url: String,
     params: SessionParams,
-    host: Option<HostProcess>,
-    shm: Option<ShmBgra>,
+    slot: HostSlot,
+    /// BGRA8 capture buffer shared with the host.
+    shm: Option<ShmBuffer>,
     /// Last grid frame stepped in the current host.
     stepped: Option<i64>,
     load_ms: Option<u32>,
-    spawns: u32,
 }
 
 impl HtmlSession {
     pub fn new(cfg: HostConfig, url: String, params: SessionParams) -> Self {
-        HtmlSession { cfg, url, params, host: None, shm: None, stepped: None, load_ms: None, spawns: 0 }
+        HtmlSession { cfg, url, params, slot: HostSlot::new(), shm: None, stepped: None, load_ms: None }
     }
 
     pub fn params(&self) -> &SessionParams {
@@ -70,11 +71,11 @@ impl HtmlSession {
 
     /// Host processes started so far (tests: respawn on seek/crash).
     pub fn spawns(&self) -> u32 {
-        self.spawns
+        self.slot.spawns()
     }
 
     pub fn host_pid(&self) -> Option<u32> {
-        self.host.as_ref().map(HostProcess::pid)
+        self.slot.pid()
     }
 
     /// Virtual ms the page needed to load (reported by OPEN), once open.
@@ -84,13 +85,11 @@ impl HtmlSession {
 
     /// SIGKILL the host (tests: simulate a crash / OOM kill).
     pub fn kill_host(&mut self) {
-        if let Some(h) = self.host.as_mut() {
-            h.kill();
-        }
+        self.slot.kill();
     }
 
     fn reset(&mut self) {
-        self.host = None;
+        self.slot.discard();
         self.stepped = None;
         self.load_ms = None;
     }
@@ -101,7 +100,7 @@ impl HtmlSession {
         let r = self.render_inner(k, cancelled, out);
         match &r {
             // Cancellation happens between whole steps: the page state is intact.
-            Err(HtmlError::Cancelled) | Ok(()) => {}
+            Err(IpcError::Cancelled) | Ok(()) => {}
             // Anything else leaves the page in an unknown state: start over next time.
             Err(_) => self.reset(),
         }
@@ -110,33 +109,38 @@ impl HtmlSession {
 
     fn render_inner(&mut self, k: i64, cancelled: &dyn Fn() -> bool, out: &mut Vec<u8>) -> Result<(), HtmlError> {
         if k < 0 {
-            return Err(HtmlError::Protocol(format!("negative frame {k}")));
+            return Err(IpcError::Protocol { host: HOST_NAME, message: format!("negative frame {k}") });
         }
         if self.stepped.is_some_and(|s| s > k) {
             self.reset(); // pages can't run backwards: replay from 0
         }
         let (step_t, open_t) = (self.cfg.step_timeout, self.cfg.open_timeout);
-        if self.host.as_mut().is_some_and(|h| !h.is_alive()) {
-            self.reset();
-        }
-        if self.host.is_none() {
+        if !self.slot.is_running() {
+            self.reset(); // never started, or died (crash, OOM kill)
             if cancelled() {
-                return Err(HtmlError::Cancelled);
+                return Err(IpcError::Cancelled);
             }
-            let mut h = HostProcess::spawn(&self.cfg)?;
-            self.spawns += 1;
-            let p = self.params;
-            let r = h.request(&format!("OPEN\t{}\t{}\t{}", p.width, p.height, self.url), open_t)?;
-            self.load_ms = r.first().and_then(|s| s.parse().ok());
-            self.host = Some(h);
+        }
+        let p = self.params;
+        let (cfg, url) = (&self.cfg, &self.url);
+        let mut opened = None;
+        let host = self.slot.get(
+            || spawn_host(cfg),
+            |h| {
+                let r = h.request(&format!("OPEN\t{}\t{}\t{}", p.width, p.height, url), open_t)?;
+                opened = Some(r.first().and_then(|s| s.parse().ok()));
+                Ok(())
+            },
+        )?;
+        if let Some(load_ms) = opened {
+            self.load_ms = load_ms;
             self.stepped = None;
         }
-        let host = self.host.as_mut().expect("host");
         let mut j = self.stepped.map_or(0, |s| s + 1);
         let mut elapsed = self.stepped.map_or(0, |s| self.params.grid_us(s));
         while j <= k {
             if cancelled() {
-                return Err(HtmlError::Cancelled);
+                return Err(IpcError::Cancelled);
             }
             let us = self.params.grid_us(j);
             if us > elapsed {
@@ -148,11 +152,12 @@ impl HtmlSession {
             j += 1;
         }
         let (w, h) = (self.params.width, self.params.height);
-        if self.shm.as_ref().map(ShmBgra::dims) != Some((w, h)) {
-            self.shm = Some(ShmBgra::new(w, h)?);
+        let len = w as usize * h as usize * 4;
+        if self.shm.as_ref().map(ShmBuffer::len) != Some(len) {
+            self.shm = Some(ShmBuffer::new("ferrocut-html", len)?);
         }
         let shm = self.shm.as_ref().expect("shm");
-        let path = shm.path().to_str().ok_or_else(|| HtmlError::Protocol("non-UTF-8 shm path".into()))?.to_owned();
+        let path = shm.path().to_str().ok_or_else(|| host.protocol_error("non-UTF-8 shm path"))?.to_owned();
         host.request(&format!("CAPTURE\t{path}"), step_t.max(Duration::from_secs(25)))?;
         out.clear();
         out.extend_from_slice(shm.bytes());

@@ -14,8 +14,6 @@ mod adapter;
 pub mod host;
 #[cfg(not(ferrocut_html_no_host))]
 pub mod session;
-#[cfg(not(ferrocut_html_no_host))]
-mod shm;
 
 pub use color::OutputEncoding;
 

@@ -450,7 +450,15 @@ version = "0.0.1"
 dependencies = [
  "cmake",
  "ferrocut-core",
+ "ferrocut-ipc",
  "half",
+]
+
+[[package]]
+name = "ferrocut-ipc"
+version = "0.0.1"
+dependencies = [
+ "ferrocut-types",
  "memmap2",
  "thiserror",
 ]
@@ -472,9 +480,8 @@ version = "0.0.1"
 dependencies = [
  "cmake",
  "ferrocut-core",
+ "ferrocut-ipc",
  "half",
- "memmap2",
- "thiserror",
 ]
 
 [[package]]

@@ -118,7 +118,7 @@ background is transparent unless the page paints one.
   transparent.
 - `host_crash_is_a_clean_retryable_node_error_and_recovers`: SIGKILLing
   the host mid-pre-roll yields `Retryable` "html host died during STEP:
-  killed by signal 9". The next render recovers byte-exact.
+  killed by SIGKILL (9)". The next render recovers byte-exact.
 - `missing_host_or_bad_page_are_permanent`
 - `render_node_through_core_on_gpu`: GPU upload round trip is bit-exact,
   and a cancelled token gives `ErrorKind::Cancelled`.
@@ -174,11 +174,12 @@ it can be driven by hand.
 
 - `host/`: the C++ CEF host (protocol in `main.cpp`'s header comment) and
   the JS time shim (`shim.h`).
-- `src/host.rs`: process plus line protocol, timeouts, and the stderr tail.
+- `src/host.rs`: host config, version handshake and `HostSpec`. Process
+  supervision, the line protocol, timeouts, the stderr tail, the private
+  profile dir and the shared-memory buffer come from `ferrocut-ipc`.
 - `src/session.rs`: frame grid, budgets, pre-roll, and respawn on seek or
   crash.
 - `src/color.rs`: BGRA8 premultiplied → ACEScg f16.
 - `src/adapter.rs`: `HtmlNode`. This is the only module touching
   ferrocut-core.
-- `src/shm.rs`: the shared-memory paint buffer.
 - `scripts/fetch-cef.sh`: the pinned CEF download.

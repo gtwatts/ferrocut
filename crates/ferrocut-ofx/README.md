@@ -18,7 +18,7 @@ OfxNode::render ──f16→f32──► /dev/shm/…-src ◄──mmap──┐
 
 ## Control protocol (v1, tab-separated lines)
 
-`HELLO`, `LIST`, `LOAD <id> <context>`, `PARAM <name> <v…>`, `RENDER <t num> <t den> <fps num> <fps den> <w> <h> <src shm> <dst shm> <src premult>` → `OK <out premult> rendered|identity`, `QUIT`. Errors: `ERR <msg>`. See `host/src/main.cpp`.
+`HELLO`, `LIST`, `LOAD <id> <context>`, `PARAM <name> <v…>`, `RENDER <t num> <t den> <fps num> <fps den> <w> <h> <src shm> <dst shm> <src premult>` → `OK <out premult> rendered|identity`, `QUIT`. Errors: `ERR <msg>`. See `host/src/main.cpp`. Process supervision, timeouts, the shared-memory buffers and the error → `NodeError` mapping are in `ferrocut-ipc` (shared with `ferrocut-html`).
 
 ## Build
 

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use ferrocut_core::{CpuImage, Frame, FrameRate, FrameStorage, NodeError, NodeHash, PixelRect, Pull, RationalTime, RenderCtx, RenderNode};
+use ferrocut_ipc::HostSlot;
 use half::f16;
 
 use crate::host::{HostConfig, HostProcess, OPAQUE, OfxError, PREMULTIPLIED, RenderReply, UNPREMULTIPLIED};
@@ -23,7 +24,7 @@ pub struct OfxPluginSpec {
 pub struct OfxSession {
     cfg: HostConfig,
     spec: OfxPluginSpec,
-    host: Option<HostProcess>,
+    slot: HostSlot<HostProcess>,
     bufs: Option<(ShmFrame, ShmFrame)>,
     /// Number of host processes started (1 + restarts), for diagnostics/tests.
     pub spawns: u32,
@@ -31,27 +32,30 @@ pub struct OfxSession {
 
 impl OfxSession {
     pub fn new(cfg: HostConfig, spec: OfxPluginSpec) -> OfxSession {
-        OfxSession { cfg, spec, host: None, bufs: None, spawns: 0 }
+        OfxSession { cfg, spec, slot: HostSlot::new(), bufs: None, spawns: 0 }
     }
 
     /// The current host process, starting (and loading the plugin) if needed.
     pub fn host(&mut self) -> Result<&mut HostProcess, OfxError> {
-        let alive = self.host.as_mut().is_some_and(|h| h.is_alive());
-        if !alive {
-            self.host = None;
-            let mut h = HostProcess::spawn(&self.cfg)?;
-            self.spawns += 1;
-            h.load(&self.spec.plugin_id, &self.spec.context)?;
-            for (name, values) in &self.spec.params {
-                h.set_param(name, values)?;
-            }
-            self.host = Some(h);
-        }
-        Ok(self.host.as_mut().expect("just set"))
+        let (cfg, spec) = (&self.cfg, &self.spec);
+        let started = self.slot.get(
+            || HostProcess::spawn(cfg),
+            |h| {
+                h.load(&spec.plugin_id, &spec.context)?;
+                for (name, values) in &spec.params {
+                    h.set_param(name, values)?;
+                }
+                Ok(())
+            },
+        );
+        let started = started.map(|_| ());
+        self.spawns = self.slot.spawns();
+        started?;
+        Ok(self.slot.current().expect("started"))
     }
 
     pub fn host_pid(&self) -> Option<u32> {
-        self.host.as_ref().map(|h| h.pid())
+        self.slot.pid()
     }
 
     /// Render straight from/to RGBA f32 (top row first). `src_premult` is the
@@ -74,33 +78,19 @@ impl OfxSession {
         let (src, dst) = self.bufs.as_mut().expect("allocated");
         src.pixels_mut().copy_from_slice(rgba);
         dst.pixels_mut().fill(0.0);
-        let host = self.host.as_mut().expect("started");
+        let host = self.slot.current().expect("started");
         let result = host.render(t, rate, src, dst, src_premult);
-        match result {
-            Ok(reply) => {
-                let out = dst.pixels().to_vec();
-                // Contain leaks: recycle a host that grew past its memory budget.
-                if let (Some(max), Some(rss)) = (self.cfg.max_rss_bytes, host.rss_bytes())
-                    && rss > max
-                {
-                    self.host = None; // Drop = QUIT + reap
-                }
-                Ok((out, reply))
-            }
-            Err(e) => {
-                if e.host_lost() {
-                    self.host = None; // next render starts a fresh host
-                }
-                Err(e)
-            }
-        }
+        // A lost host (crash, kill, hang) is discarded: the next render starts a fresh one.
+        let reply = self.slot.check(result)?;
+        let out = dst.pixels().to_vec();
+        // Contain leaks: recycle a host that grew past its memory budget.
+        self.slot.recycle_if_rss_above(self.cfg.max_rss_bytes);
+        Ok((out, reply))
     }
 
     /// Kill the host process now (simulates a crash/OOM kill in tests).
     pub fn kill_host(&mut self) {
-        if let Some(h) = self.host.as_mut() {
-            h.kill();
-        }
+        self.slot.kill();
     }
 }
 
@@ -181,13 +171,9 @@ impl OfxNode {
         let src: Vec<f32> = cpu.pixels.iter().map(|v| v.to_f32()).collect();
         let (mut out, reply) = session
             .render_rgba_f32(t, self.rate, input.width, input.height, &src, PREMULTIPLIED)
-            .map_err(|e| {
-                let msg = format!("ofx node {} ({}): {e}", self.spec.plugin_id, self.label);
-                // Host crash / OOM kill / hang: the session starts a fresh host on the
-                // next render, so let the engine retry (bounded). Plugin-reported
-                // failures repeat deterministically.
-                if e.host_lost() { NodeError::retryable(msg) } else { NodeError::permanent(msg) }
-            })?;
+            // Host crash / OOM kill / hang -> Retryable (the session starts a fresh
+            // host on the next render); plugin-reported failures -> Permanent.
+            .map_err(|e| e.to_node_error(format_args!("ofx node {} ({})", self.spec.plugin_id, self.label)))?;
         match reply.output_premult.as_str() {
             PREMULTIPLIED => {}
             UNPREMULTIPLIED => {

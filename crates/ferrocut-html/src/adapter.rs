@@ -118,13 +118,10 @@ impl HtmlNode {
 }
 
 fn to_node_error(e: HtmlError) -> NodeError {
-    match e {
-        HtmlError::Cancelled => NodeError::cancelled("html: cancelled"),
-        // Crash, hang, OOM kill or a confused host: a fresh host may well succeed.
-        e if e.host_lost() => NodeError::retryable(format!("html: {e}")),
-        // Missing host binary, page load/script failures, shm errors: deterministic.
-        e => NodeError::permanent(format!("html: {e}")),
-    }
+    // Crash, hang, OOM kill or a confused host -> Retryable (a fresh host may
+    // succeed); cancellation -> Cancelled; missing host binary, page
+    // load/script failures, shm errors -> Permanent (deterministic).
+    e.to_node_error("html")
 }
 
 impl RenderNode for HtmlNode {
