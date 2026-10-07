@@ -7,16 +7,14 @@ Brief: Obsidian vault `Pi Memory/Projects/cutline-research-brief-2026-10-07.md` 
 License: Apache-2.0 (see `LICENSE`).
 
 ## Crate ownership
-- `ferrocut-types`: GPU-free shared types: rational time, content hashes, color-space tags, pixel windows, CPU frames, `NodeError`, `CancelToken` (Rusty + SeePlus)
+- `ferrocut-types`: GPU-free shared types: rational time, content hashes, file manifests, color-space tags, pixel windows, CPU frames, `NodeError`, `CancelToken` (Rusty + SeePlus)
 - `ferrocut-core`: shared GPU context + texture pool, GPU `Frame`, `RenderNode`/`RenderCtx`; re-exports `ferrocut-types` (Rusty + SeePlus)
 - `ferrocut-engine`: timeline, scheduler, render graph, FFmpeg I/O, wgpu compositor (Rusty)
-- `cutline-color`: OCIO bridge (SeePlus)
-- `cutline-ofx`: out-of-process OpenFX host (SeePlus)
-- `cutline-lottie`, `cutline-html`: Lottie and HTML layers (SeePlus)
-
-SeePlus's crates keep their `cutline-*` names until SeePlus renames them; meanwhile the root
-`Cargo.toml` has a TEMP `cutline-core` alias pointing at `ferrocut-core`. The repo folder is
-still `cutline/` for now.
+- `ferrocut-colorspace`: pure-Rust Rec.709/sRGB/ACEScg matrices, transfer functions and matching WGSL (SeePlus)
+- `ferrocut-color`: OCIO bridge (SeePlus)
+- `ferrocut-ofx`: out-of-process OpenFX host (SeePlus)
+- `ferrocut-ipc`: shared plumbing for out-of-process hosts (SeePlus)
+- `ferrocut-lottie`, `ferrocut-html`: Lottie and HTML layers (SeePlus)
 
 ## Engine spike (`ferrocut-engine`)
 
@@ -55,8 +53,15 @@ cargo test --release
   nv-codec-headers for NVENC/NVDEC/CUVID; NASM is built locally if missing). Sources, build tree and
   install all live in gitignored `third_party/`; set `PREFIX=...` to install elsewhere.
   - `.cargo/config.toml` points `PKG_CONFIG_PATH` at `third_party/ffmpeg-lgpl/lib/pkgconfig`, so
-    `ffmpeg-sys-next` finds it; `crates/ferrocut-engine/build.rs` embeds an rpath to that libdir.
-    An explicit `PKG_CONFIG_PATH` in your environment overrides this (e.g. a `~/.local/opt` prefix).
+    `ffmpeg-sys-next` finds it. An explicit `PKG_CONFIG_PATH` in your environment overrides this
+    (e.g. a `~/.local/opt` prefix).
+  - **Relocatable:** the install has no absolute paths. The libs and `ffmpeg`/`ffprobe` carry
+    RUNPATH `$ORIGIN/../lib` and the `.pc` files use `prefix=${pcfiledir}/../..` (the script
+    checks both). `crates/ferrocut-engine/build.rs` canonicalizes the libdir and, when it is inside
+    the workspace, embeds `$ORIGIN`-relative rpaths (`$ORIGIN/../../third_party/ffmpeg-lgpl/lib`
+    for `target/<profile>/ferrocut`, `$ORIGIN/../../../…` for test binaries), so moving or renaming
+    the checkout needs no rebuild. A prefix outside the workspace is embedded as its canonical
+    absolute path.
   - **Fallback (not for distribution):** if the LGPL prefix is missing, pkg-config falls back to the
     system FFmpeg (on watts: linuxbrew 9.0.1, a GPL build with x264/x265). The build prints a
     `FALLBACK FFmpeg ... do not distribute` warning, `ferrocut render` prints a non-LGPL warning, and
@@ -64,7 +69,9 @@ cargo test --release
   - The engine itself only uses LGPL-native codecs (FFV1 master). H.264/HEVC/AV1 delivery would use
     NVENC (`h264_nvenc`/`hevc_nvenc`/`av1_nvenc`), which this build includes. No software AV1
     decoder yet (dav1d not built); AV1 decodes via NVDEC (`av1_cuvid` / `-hwaccel cuda`).
-- Color transforms in the compositor are placeholders until the OCIO color crate (SeePlus, `crates/cutline-color`) is wired in.
+- **Color**: the compositor's input (Rec.709 BT.709 OETF → linear ACEScg) and output (inverse)
+  transforms come from `ferrocut-colorspace` (`wgsl()` prepended to the shaders; OCIO 2.5 matrices).
+  `ferrocut_colorspace::VERSION` is part of every chunk key. Full OCIO transforms are `ferrocut-color` nodes.
 
 ### Core contract (agreed Rusty + SeePlus, Oct 7 2026)
 
@@ -85,3 +92,22 @@ cargo test --release
   frame on `Retryable` (default 2 retries, `--retries`), never on the others. `NodeError::new` is
   `Permanent`. `RenderCtx` carries a `CancelToken` and optional deadline (`--timeout <secs>`), checked
   between frames and available to nodes via `ctx.check()`; the first failing chunk cancels its siblings.
+- **GPU faults.** `NodeError::from_gpu(&wgpu::Error)` (`ferrocut_core::GpuErrorExt`) classifies
+  out-of-memory and device-lost as `Retryable` with a `gpu_fault` (`NodeError::gpu_out_of_memory` /
+  `NodeError::device_lost` build them directly); other validation/internal errors are `Permanent`.
+  Each frame runs in a `GpuContext::error_scope`, so wgpu OOM becomes an error instead of a panic:
+  the pool is trimmed and the frame retried. Device loss (reported by a node, or seen via wgpu's
+  device-lost callback) is not retried per frame: the scheduler recreates the shared device, queue
+  and texture pool on the same adapter (`SharedGpu::recover`) and re-renders the chunk on a fresh
+  worker, at most `max_chunk_restarts` (2) times per chunk. Nodes that cache device objects outside
+  worker slots must key them by `GpuContext::id()`, which changes on recreation.
+- **Sequential nodes.** `RenderNode::access_pattern()` returns `Random` (default) or `Sequential`
+  (can only step forward cheaply: browser pages, simulations). If any node feeding the output is
+  sequential, the scheduler gives each worker one contiguous run of chunks, renders it in increasing
+  time order on one persistent `WorkerState`, and the graph never asks a sequential node for an
+  earlier time than its last on that worker without calling `reset_sequential(worker)` first (default:
+  drop the worker slot keyed by `content_hash()`, so the node pre-rolls fresh).
+- **File dependencies.** Nodes whose output depends on local files put
+  `ferrocut_types::FileManifest::digest()` into their `NodeHash`: `(relative path, blake3 of bytes)`
+  per file, sorted, independent of discovery order and of where the project lives. Network fetches
+  can't be hashed: such nodes must block them during renders.
