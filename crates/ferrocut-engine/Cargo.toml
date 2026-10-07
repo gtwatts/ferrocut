@@ -2,6 +2,8 @@
 name = "ferrocut-engine"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Ferrocut engine: timeline, scheduler, pull-based render graph, FFmpeg I/O, wgpu compositor"
 
 [[bin]]

@@ -4,6 +4,8 @@ Headless, agent-native video editing and compositing engine (Rust).
 
 Brief: Obsidian vault `Pi Memory/Projects/cutline-research-brief-2026-10-07.md` (written before the rename to Ferrocut).
 
+License: Apache-2.0 (see `LICENSE`).
+
 ## Crate ownership
 - `ferrocut-types`: GPU-free shared types: rational time, content hashes, color-space tags, pixel windows, CPU frames, `NodeError`, `CancelToken` (Rusty + SeePlus)
 - `ferrocut-core`: shared GPU context + texture pool, GPU `Frame`, `RenderNode`/`RenderCtx`; re-exports `ferrocut-types` (Rusty + SeePlus)
@@ -47,7 +49,7 @@ cargo test --release
 - **Chunks** are `gop * gops_per_chunk` frames, GOP-aligned, each an independent closed-GOP encode.
 - **Determinism**: bit-exact on the same machine/driver (any `--jobs`). Across GPUs expect a
   perceptual match (NVIDIA vs Intel Arc on watts: SSIM 0.99989, PSNR 72.7 dB), not identical bytes.
-- **FFmpeg (LGPL only)**: Ferrocut is headed for Apache-2.0, so it links a shared, LGPL v2.1+ FFmpeg
+- **FFmpeg (LGPL only)**: Ferrocut is Apache-2.0, so it links a shared, LGPL v2.1+ FFmpeg
   built in user space by `scripts/build-ffmpeg-lgpl.sh` (FFmpeg 9.0.2, signature-checked tarball;
   `--disable-autodetect`, no `--enable-gpl`/`--enable-nonfree`/`--enable-version3`; zlib +
   nv-codec-headers for NVENC/NVDEC/CUVID; NASM is built locally if missing). Sources, build tree and

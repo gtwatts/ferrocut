@@ -2,6 +2,8 @@
 name = "ferrocut-types"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Ferrocut's lightweight shared types (no GPU deps): rational time, content hashes, color-space tags, CPU frames, node errors, cancellation"
 
 [dependencies]
