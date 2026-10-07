@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cutline_core::{ColorSpace, CpuImage, Frame, FrameStorage, Rational, RationalTime, RenderNode};
+use cutline_core::{ColorSpace, CpuImage, Frame, FrameStorage, PixelRect, Rational, RationalTime, RenderNode};
 use cutline_ofx::{HostConfig, OfxNode, OfxPluginSpec, OfxSession, PREMULTIPLIED, UNPREMULTIPLIED, bundled_plugin_dir};
 use half::f16;
 
@@ -41,6 +41,8 @@ fn frame(px: &[f32]) -> Frame {
     Frame {
         width: W,
         height: H,
+        data_window: PixelRect::full(W, H),
+        pixel_aspect: Rational::ONE,
         color_space: ColorSpace::acescg(),
         alpha: Default::default(),
         storage: FrameStorage::Cpu(Arc::new(CpuImage { pixels: px.iter().map(|&v| f16::from_f32(v)).collect() })),

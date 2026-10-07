@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use cutline_core::{CpuImage, Frame, FrameRate, FrameStorage, NodeError, NodeHash, Pull, RationalTime, RenderCtx, RenderNode};
+use cutline_core::{CpuImage, Frame, FrameRate, FrameStorage, NodeError, NodeHash, PixelRect, Pull, RationalTime, RenderCtx, RenderNode};
 use half::f16;
 
 use crate::host::{HostConfig, HostProcess, OPAQUE, OfxError, PREMULTIPLIED, RenderReply, UNPREMULTIPLIED};
@@ -193,6 +193,10 @@ impl OfxNode {
         Ok(Frame {
             width: input.width,
             height: input.height,
+            // [Rusty, core review] the plugin renders the full width x height window;
+            // in a graph the engine reframes inputs to it (supports_data_window = false).
+            data_window: PixelRect::full(input.width, input.height),
+            pixel_aspect: input.pixel_aspect,
             color_space: input.color_space.clone(), // OFX plugins are color-space agnostic
             alpha: Default::default(),
             storage: FrameStorage::Cpu(Arc::new(CpuImage { pixels: out.iter().map(|&v| f16::from_f32(v)).collect() })),

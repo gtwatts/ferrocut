@@ -22,7 +22,7 @@ pub mod node;
 pub mod ocio;
 
 #[cfg(not(cutline_no_ocio))]
-pub use gpu::{GpuTransform, gpu_context_for_color};
+pub use gpu::GpuTransform;
 #[cfg(not(cutline_no_ocio))]
 pub use node::OcioTransformNode;
 #[cfg(not(cutline_no_ocio))]

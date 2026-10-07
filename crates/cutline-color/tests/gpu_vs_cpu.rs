@@ -7,14 +7,14 @@
 
 use std::sync::{Arc, OnceLock};
 
-use cutline_color::{Config, GpuShaderOptions, OcioTransformNode, gpu_context_for_color};
-use cutline_core::{ColorSpace, CpuImage, Frame, FrameStorage, GpuContext, RenderCtx, RenderNode, RationalTime, WorkerState};
+use cutline_color::{Config, GpuShaderOptions, OcioTransformNode};
+use cutline_core::{AdapterPreference, CancelToken, ColorSpace, CpuImage, Frame, FrameStorage, GpuContext, GpuRequirements, PixelRect, Rational, RenderCtx, RenderNode, RationalTime, WorkerState};
 use half::f16;
 
 fn gpu() -> &'static GpuContext {
     static G: OnceLock<GpuContext> = OnceLock::new();
     G.get_or_init(|| {
-        let g = gpu_context_for_color().expect("a wgpu adapter is required for these tests");
+        let g = GpuContext::with_requirements(AdapterPreference::default(), &GpuRequirements::optional(wgpu::Features::FLOAT32_FILTERABLE)).expect("a wgpu adapter is required for these tests");
         eprintln!("[gpu] {} | FLOAT32_FILTERABLE={}", g.describe(), g.device.features().contains(wgpu::Features::FLOAT32_FILTERABLE));
         g
     })
@@ -50,6 +50,8 @@ fn cpu_frame(px: Vec<f16>, cs: &str) -> Frame {
     Frame {
         width: W as u32,
         height: H as u32,
+        data_window: PixelRect::full(W as u32, H as u32),
+        pixel_aspect: Rational::ONE,
         color_space: ColorSpace::new(cs),
         alpha: Default::default(),
         storage: FrameStorage::Cpu(Arc::new(CpuImage { pixels: px })),
@@ -201,7 +203,8 @@ fn render_node_contract() {
     // Through the trait, twice: deterministic bit-identical output on one device.
     let input = Arc::new(cpu_frame(test_pattern(), "ACEScg"));
     let mut worker = WorkerState::default();
-    let mut ctx = RenderCtx { gpu: gpu(), worker: &mut worker };
+    let cancel = CancelToken::new();
+    let mut ctx = RenderCtx::new(gpu(), &mut worker, &cancel, None);
     let o1 = a.render(&mut ctx, t, std::slice::from_ref(&input)).unwrap();
     let o2 = b.render(&mut ctx, t, std::slice::from_ref(&input)).unwrap();
     let (p1, p2) = (cpu_pixels(&o1), cpu_pixels(&o2));

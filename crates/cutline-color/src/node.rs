@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use cutline_core::{ColorSpace, Frame, GpuContext, NodeError, NodeHash, Pull, RenderCtx, RenderNode, RationalTime};
+use cutline_core::{ColorSpace, Frame, GpuContext, GpuRequirements, NodeError, NodeHash, Pull, RenderCtx, RenderNode, RationalTime};
 
 use crate::glsl::{self, TranslatedShader};
 use crate::gpu::GpuTransform;
@@ -86,9 +86,9 @@ impl OcioTransformNode {
     /// Build (once) the wgpu pipeline for `gpu`.
     pub fn prepare(&self, gpu: &GpuContext) -> Result<Arc<GpuTransform>, NodeError> {
         self.gpu
-            .get_or_init(|| GpuTransform::new(gpu, &self.shader, &self.translated).map(Arc::new).map_err(|e| e.0))
+            .get_or_init(|| GpuTransform::new(gpu, &self.shader, &self.translated).map(Arc::new).map_err(|e| e.message))
             .clone()
-            .map_err(NodeError)
+            .map_err(NodeError::new)
     }
 
     /// Render one frame directly (outside a graph).
@@ -134,6 +134,12 @@ impl RenderNode for OcioTransformNode {
     }
     fn pulls(&self, t: RationalTime) -> Vec<Pull> {
         vec![Pull { input: 0, time: t }]
+    }
+    // [Rusty, core review] replaces gpu_context_for_color(): the engine's shared
+    // device requests this when the adapter has it; GpuTransform::new already
+    // checks the device and falls back to f16 LUTs.
+    fn gpu_requirements(&self) -> GpuRequirements {
+        GpuRequirements::optional(wgpu::Features::FLOAT32_FILTERABLE)
     }
     fn render(&self, ctx: &mut RenderCtx<'_>, _t: RationalTime, inputs: &[Arc<Frame>]) -> Result<Arc<Frame>, NodeError> {
         let input = inputs.first().ok_or_else(|| NodeError::new("ocio: missing input"))?;
