@@ -5,7 +5,8 @@ Headless, agent-native video editing and compositing engine (Rust).
 Brief: Obsidian vault `Pi Memory/Projects/cutline-research-brief-2026-10-07.md`.
 
 ## Crate ownership
-- `cutline-core`: shared frame type, render node trait, rational time (Rusty + SeePlus)
+- `cutline-types`: GPU-free shared types: rational time, content hashes, color-space tags, pixel windows, CPU frames, `NodeError`, `CancelToken` (Rusty + SeePlus)
+- `cutline-core`: shared GPU context + texture pool, GPU `Frame`, `RenderNode`/`RenderCtx`; re-exports `cutline-types` (Rusty + SeePlus)
 - `cutline-engine`: timeline, scheduler, render graph, FFmpeg I/O, wgpu compositor (Rusty)
 - `cutline-color`: OCIO bridge (SeePlus)
 - `cutline-ofx`: out-of-process OpenFX host (SeePlus)
@@ -29,6 +30,8 @@ cargo test --release
 ```
 
 - **Time** is exact rationals everywhere (`cutline_core::RationalTime`); JSON times are `"n"` or `"n/d"`.
+  Every time -> pts/frame conversion rounds to nearest with exact halves away from zero, matching
+  FFmpeg's `av_rescale_rnd(.., AV_ROUND_NEAR_INF)` (tested against libavutil and a real mux + seek).
 - **Cache keys**: each frame's key is a Merkle hash of the node's parameters at `t`, `t`, and
   the keys of the inputs it pulls at `t`. A chunk's key hashes its frame keys plus the encoder
   fingerprint. Chunks live in `<out dir>/.cutline-cache/chunks/<key>.mkv`; `--force` re-renders all.
@@ -51,3 +54,23 @@ cargo test --release
     NVENC (`h264_nvenc`/`hevc_nvenc`/`av1_nvenc`), which this build includes. No software AV1
     decoder yet (dav1d not built); AV1 decodes via NVDEC (`av1_cuvid` / `-hwaccel cuda`).
 - Color transforms in the compositor are placeholders until `cutline-color` (OCIO) lands.
+
+### Core contract (agreed Rusty + SeePlus, Oct 7 2026)
+
+- **One GPU device per render.** Nodes declare `gpu_requirements()` (required/optional wgpu features,
+  minimum limits); the engine creates one `GpuContext` with `required ∪ (optional ∩ adapter)` and
+  nodes check `gpu.has_features(..)` to fall back (e.g. OCIO LUTs drop to f16 without
+  `FLOAT32_FILTERABLE`). No node creates its own device.
+- **Frames** carry a display window (`width`/`height`), a **data window** (`PixelRect`, may be
+  smaller or larger than the display; storage covers only it; outside is transparent black) and an
+  exact **pixel aspect ratio**. Compositor ops output the union of their inputs' windows and require
+  matching PARs; the output transform crops to the display window. Nodes that don't opt in via
+  `supports_data_window()` get inputs reframed to the full display window.
+- **GPU batching.** Working textures come from a pool keyed by (size, format, usage), sharded by
+  allocating thread. Nodes that return `batches_gpu_work() = true` record into the worker's encoder;
+  the scheduler submits once per frame and reads output back through a 3-deep staging ring per chunk
+  (no blocking readback per frame). Other nodes get a flushed encoder and may submit on their own.
+- **Errors.** `NodeError { kind: Retryable | Permanent | Cancelled, message }`. The scheduler retries a
+  frame on `Retryable` (default 2 retries, `--retries`), never on the others. `NodeError::new` is
+  `Permanent`. `RenderCtx` carries a `CancelToken` and optional deadline (`--timeout <secs>`), checked
+  between frames and available to nodes via `ctx.check()`; the first failing chunk cancels its siblings.
