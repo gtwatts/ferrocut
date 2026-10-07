@@ -6,6 +6,9 @@
 //!   OCIO 2.5's values ([`REC709_TO_ACESCG`], [`ACESCG_TO_REC709`]).
 //! - [`Space`] / [`convert_rgb`]: gamut + transfer, with the matching OCIO
 //!   colorspace name where the built-in config has one.
+//! - [`named`]: the same, keyed by color-space name (`ferrocut_types::ColorSpace`
+//!   names = OCIO names/aliases): `named::matrix(from, to)`,
+//!   `named::transfer(space)`.
 //! - [`pixels`]: deterministic 8-bit → f16 fast paths used by layer nodes.
 //! - [`wgsl()`]: the same math as a WGSL snippet for shaders, generated from
 //!   the Rust constants so CPU and GPU can't drift apart.
@@ -19,6 +22,7 @@
 //! segment below the breakpoint (including negatives) and their power segment
 //! above 1; pure power curves clamp negatives to 0 (OCIO's defaults).
 
+pub mod named;
 pub mod pixels;
 mod wgsl;
 
@@ -50,6 +54,42 @@ pub enum Transfer {
 }
 
 impl Transfer {
+    /// BT.1886 display EOTF with a zero black level: [`Transfer::Gamma24`].
+    pub const BT1886: Transfer = Transfer::Gamma24;
+
+    /// [`to_linear`](Self::to_linear) per channel, computed in f64 then
+    /// rounded: the CPU reference for the WGSL `fc_*_to_linear` functions.
+    pub fn decode(self, rgb: [f32; 3]) -> [f32; 3] {
+        rgb.map(|v| self.to_linear(v as f64) as f32)
+    }
+
+    /// [`from_linear`](Self::from_linear) per channel (f64, rounded).
+    pub fn encode(self, rgb: [f32; 3]) -> [f32; 3] {
+        rgb.map(|l| self.from_linear(l as f64) as f32)
+    }
+
+    /// Name of the [`wgsl()`] function implementing [`decode`](Self::decode).
+    pub fn wgsl_decode_fn(self) -> &'static str {
+        match self {
+            Transfer::Linear => "fc_identity",
+            Transfer::Srgb => "fc_srgb_to_linear",
+            Transfer::Bt709 => "fc_bt709_to_linear",
+            Transfer::Gamma22 => "fc_gamma22_to_linear",
+            Transfer::Gamma24 => "fc_gamma24_to_linear",
+        }
+    }
+
+    /// Name of the [`wgsl()`] function implementing [`encode`](Self::encode).
+    pub fn wgsl_encode_fn(self) -> &'static str {
+        match self {
+            Transfer::Linear => "fc_identity",
+            Transfer::Srgb => "fc_linear_to_srgb",
+            Transfer::Bt709 => "fc_linear_to_bt709",
+            Transfer::Gamma22 => "fc_linear_to_gamma22",
+            Transfer::Gamma24 => "fc_linear_to_gamma24",
+        }
+    }
+
     /// Encoded value → linear light.
     pub fn to_linear(self, v: f64) -> f64 {
         match self {

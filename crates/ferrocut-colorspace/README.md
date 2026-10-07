@@ -3,13 +3,14 @@
 Pure-Rust (no OpenColorIO) color math for the conversions Ferrocut needs
 everywhere: Rec.709 / sRGB encoded ↔ linear Rec.709 ↔ linear ACEScg. It
 covers the CPU (f64 reference plus deterministic 8-bit fast paths) and the
-GPU (a generated WGSL snippet). Used by `ferrocut-lottie` and
-`ferrocut-html`, and meant to replace the engine's hand-written BT.709
-transforms.
+GPU (a generated WGSL snippet). Used by `ferrocut-lottie`,
+`ferrocut-html` and the engine.
 
 Validated against OCIO 2.5 in `ferrocut-color/tests/colorspace_vs_ocio.rs`:
 
 - every named space within 4.1e-7 (linear light) in both directions;
+- every name and alias of `named` against OCIO's own processor for that
+  name: within 5.3e-7, except `Camera Rec.709` at 5.5e-5 (see below);
 - the matrices within 7e-7 relative over [-2, 100];
 - the 8-bit layer path within f16 rounding;
 - the WGSL on an RTX 5090 within 2.2e-7 of the f64 reference.
@@ -21,8 +22,13 @@ pub const VERSION: &str = "ferrocut-colorspace/1";  // put in node hashes
 
 pub enum Transfer { Linear, Srgb, Bt709, Gamma22, Gamma24 }
 impl Transfer {
+    pub const BT1886: Transfer;              // = Gamma24 (zero black level)
     pub fn to_linear(self, v: f64) -> f64;   // encoded -> linear
     pub fn from_linear(self, l: f64) -> f64; // linear -> encoded
+    pub fn decode(self, rgb: [f32; 3]) -> [f32; 3];  // CPU reference (f64 inside)
+    pub fn encode(self, rgb: [f32; 3]) -> [f32; 3];
+    pub fn wgsl_decode_fn(self) -> &'static str;     // e.g. "fc_srgb_to_linear"
+    pub fn wgsl_encode_fn(self) -> &'static str;
 }
 
 pub enum Gamut { Rec709, AcesCg }
@@ -41,6 +47,17 @@ pub fn convert_rgb(src: Space, dst: Space, rgb: [f64; 3]) -> [f64; 3];
 
 pub fn wgsl() -> &'static str;   // fc_* functions + FC_* matrices, see below
 
+pub mod named {                   // keyed by ferrocut_types::ColorSpace names
+    pub mod names { ACESCG, LINEAR_REC709, SRGB_ENCODED_REC709,
+                    GAMMA22_REC709, GAMMA24_REC709, CAMERA_REC709 }
+    pub struct UnknownSpace(pub String);
+    pub fn space(name: &str) -> Result<Space, UnknownSpace>;
+    pub fn matrix(from: &str, to: &str) -> Result<[[f32; 3]; 3], UnknownSpace>; // = FC_* constants
+    pub fn transfer(space: &str) -> Result<Transfer, UnknownSpace>;
+    pub fn wgsl_matrix_fn(from: &str, to: &str) -> Result<&'static str, UnknownSpace>;
+    pub fn all() -> impl Iterator<Item = (&'static str, Space)>;
+}
+
 pub mod pixels {                  // deterministic 8-bit -> f16 (layer nodes)
     pub fn srgb8_premul_to_acescg_f16(px: impl IntoIterator<Item = [u8; 4]>, out: &mut Vec<f16>);
     pub fn rgba8_to_f16(px: impl IntoIterator<Item = [u8; 4]>, out: &mut Vec<f16>);
@@ -53,6 +70,7 @@ WGSL (`wgsl()`, prepend to a shader). Everything works on straight
 
 ```wgsl
 const FC_REC709_TO_ACESCG: mat3x3<f32>;  const FC_ACESCG_TO_REC709: mat3x3<f32>;
+fn fc_identity(c)                                      // linear / same primaries
 fn fc_rec709_to_acescg(c) / fc_acescg_to_rec709(c)
 fn fc_srgb_to_linear(v)    / fc_linear_to_srgb(l)
 fn fc_bt709_to_linear(v)   / fc_linear_to_bt709(l)     // same as the engine's curves
@@ -67,36 +85,45 @@ Out-of-range values:
 - Pure power curves clamp negatives to 0.
 - Matrices are linear everywhere.
 
-## For the engine (not done here; Rusty owns the engine)
+## Names (`named`)
 
-Today `composite.wgsl` / `output.wgsl` hard-code their own matrices:
+`named` keys everything by the strings frames are tagged with. It accepts
+the OCIO 2.5 built-in config names and all of their aliases (e.g. `ACEScg`,
+`lin_ap1`, `sRGB - Texture`, `srgb_tx`, `g24_rec709`, `Camera Rec.709`).
+Matching is exact, as in OCIO. Each name gives one matrix and one curve, and
+the shader-side equivalents are named by `wgsl_matrix_fn` and
+`Transfer::wgsl_{de,en}code_fn`:
 
-- `REC709_TO_ACESCG_ROWS` differs from OCIO 2.5 by up to 6.9e-5 per
-  element, and its rows sum to 1.000087 / 0.99997 / 0.99995 (white isn't
-  preserved exactly).
-- `ACESCG_TO_REC709_ROWS` differs from the exact inverse of OCIO's matrix by
-  up to 1.9e-4.
+```rust
+use ferrocut_colorspace::named::{self, names};
+let m = named::matrix(frame.color_space.name(), names::ACESCG)?;   // [[f32;3];3], row-major
+let t = named::transfer(frame.color_space.name())?;                // Transfer
+let wgsl = format!("{}({}(c))", named::wgsl_matrix_fn(src, names::ACESCG)?, t.wgsl_decode_fn());
+```
 
-So a video layer and a Lottie/HTML layer currently use slightly different
-color math. The differences are invisible at 8 bits but real in float.
+Only scene-referred spaces are listed. OCIO's display spaces (`sRGB -
+Display`, `Rec.1886 Rec.709 - Display`) are reached through a view
+transform (tone mapping) and return `UnknownSpace`. Use a `ferrocut-color`
+node for those. BT.1886 with a zero black level is `Gamma 2.4 Encoded
+Rec.709` (`Transfer::BT1886`).
 
-Migration, if you want it:
+Known differences from OCIO:
 
-1. Build the shader source as `format!("{}{}", ferrocut_colorspace::wgsl(), include_str!("composite.wgsl"))`.
-2. Replace the local functions:
-   - `bt709_to_linear` → `fc_bt709_to_linear`
-   - the `REC709_TO_ACESCG_ROWS` dots → `fc_rec709_to_acescg`
-   - `ACESCG_TO_REC709_ROWS` → `fc_acescg_to_rec709`
-   - `linear_to_bt709` → `fc_linear_to_bt709`
-3. Add `ferrocut_colorspace::VERSION` to the source/output node hash strings.
-   Outputs change by up to ~1e-4, so goldens and caches move once.
-4. Decide policy. `Transfer::Bt709` (scene-referred, what the engine does
-   now) and `Transfer::Gamma24` (BT.1886 display-referred, closer to what a
-   player shows) are both available.
+- `Camera Rec.709` (studio config) maps to `Transfer::Bt709`. That uses the
+  BT.709 spec constants (0.018 / 4.5 / 0.099), which the engine and FFmpeg
+  also use. OCIO uses the continuous `ExponentWithLinear` form instead. The
+  two differ by up to 5.5e-5 in linear light, less than half an 8-bit step.
+- Negative values (out of gamut after the matrix) follow each curve's
+  extension: linear segment for piecewise curves, clamp for pure powers.
+  OCIO extends sRGB and BT.709 differently below 0, by up to 1.4e-4 and
+  1.7e-3 in linear light. In-gamut values agree as above.
 
-Tell me if you need more (f32 CPU variants, PQ/HLG, Display P3, a
-`Space` ↔ `ColorSpace` tag mapping). The API is kept small until there's a
-user.
+## Engine status
+
+The engine prepends `wgsl()` to its shaders and keys chunks by `VERSION`.
+The old hand-written matrices (`REC709_TO_ACESCG_ROWS` was off from OCIO by
+up to 6.9e-5, and its rows didn't sum to 1) are gone, so video, Lottie and
+HTML layers now share one set of constants.
 
 ## Why `LEGACY_REC709_TO_ACESCG_F32`
 

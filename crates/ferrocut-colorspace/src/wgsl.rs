@@ -7,6 +7,7 @@ use crate::{ACESCG_TO_REC709_F32, REC709_TO_ACESCG_F32};
 /// prefixed `fc_` and works on straight (non-premultiplied) `vec3<f32>`:
 ///
 /// ```wgsl
+/// fn fc_identity(c: vec3<f32>) -> vec3<f32>          (linear spaces / same primaries)
 /// fn fc_rec709_to_acescg(c: vec3<f32>) -> vec3<f32>
 /// fn fc_acescg_to_rec709(c: vec3<f32>) -> vec3<f32>
 /// fn fc_srgb_to_linear(v: vec3<f32>) -> vec3<f32>     fn fc_linear_to_srgb(l: vec3<f32>) -> vec3<f32>
@@ -37,6 +38,7 @@ fn build() -> String {
     s += &mat("FC_REC709_TO_ACESCG", &REC709_TO_ACESCG_F32);
     s += &mat("FC_ACESCG_TO_REC709", &ACESCG_TO_REC709_F32);
     s += r#"
+fn fc_identity(c: vec3<f32>) -> vec3<f32> { return c; }
 fn fc_rec709_to_acescg(c: vec3<f32>) -> vec3<f32> { return FC_REC709_TO_ACESCG * c; }
 fn fc_acescg_to_rec709(c: vec3<f32>) -> vec3<f32> { return FC_ACESCG_TO_REC709 * c; }
 
@@ -71,7 +73,7 @@ mod tests {
     #[test]
     fn snippet_parses_and_validates_with_naga() {
         let src = format!(
-            "{}\n@compute @workgroup_size(1) fn main() {{ let c = fc_linear_to_srgb(fc_acescg_to_rec709(fc_rec709_to_acescg(fc_srgb_to_linear(vec3<f32>(0.5))))); _ = fc_bt709_to_linear(fc_linear_to_bt709(c)) + fc_gamma22_to_linear(fc_linear_to_gamma22(c)) + fc_gamma24_to_linear(fc_linear_to_gamma24(c)); }}",
+            "{}\n@compute @workgroup_size(1) fn main() {{ let c = fc_identity(fc_linear_to_srgb(fc_acescg_to_rec709(fc_rec709_to_acescg(fc_srgb_to_linear(vec3<f32>(0.5)))))); _ = fc_bt709_to_linear(fc_linear_to_bt709(c)) + fc_gamma22_to_linear(fc_linear_to_gamma22(c)) + fc_gamma24_to_linear(fc_linear_to_gamma24(c)); }}",
             wgsl()
         );
         let module = naga::front::wgsl::parse_str(&src).unwrap_or_else(|e| panic!("{}\n{src}", e.emit_to_string(&src)));

@@ -233,3 +233,69 @@ fn wgsl_snippet_on_gpu_matches_cpu() {
         assert!(w < 1e-5, "{f}: {w:e}");
     }
 }
+
+/// `ferrocut_colorspace::named` (what the engine uses, keyed by frame color
+/// space names): every name and alias must exist in OCIO 2.5's built-in CG
+/// config (or, for `Camera Rec.709`, the studio config) and `matrix(name,
+/// ACEScg) · decode` must match OCIO's name -> ACEScg processor; the reverse
+/// is compared in linear light.
+#[test]
+fn named_api_matches_ocio_for_every_name_and_alias() {
+    use ferrocut_colorspace::named::{self, names};
+    let cg = Config::builtin_default().unwrap();
+    let studio = Config::load("ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5").unwrap();
+    let rgb = grid();
+    let run = |p: ferrocut_color::Processor, rgb: &[[f64; 3]]| -> Vec<[f64; 3]> {
+        let mut px: Vec<f32> = rgb.iter().flat_map(|c| [c[0] as f32, c[1] as f32, c[2] as f32, 1.0]).collect();
+        p.apply_cpu_rgba_precise(&mut px, rgb.len(), 1).unwrap();
+        px.chunks(4).map(|c| [c[0] as f64, c[1] as f64, c[2] as f64]).collect()
+    };
+    let mut worst: Vec<(String, f64, f64, f64)> = Vec::new();
+    for (name, space) in named::all() {
+        let (cfg, which) = match cg.colorspace_processor(name, names::ACESCG) {
+            Ok(_) => (&cg, "cg"),
+            Err(_) => (&studio, "studio"),
+        };
+        let to_ap1 = cfg.colorspace_processor(name, names::ACESCG).unwrap_or_else(|e| panic!("{name} not in OCIO ({which}): {e}"));
+        let from_ap1 = cfg.colorspace_processor(names::ACESCG, name).unwrap();
+        let m = named::matrix(name, names::ACESCG).unwrap();
+        let mi = named::matrix(names::ACESCG, name).unwrap();
+        let t = named::transfer(name).unwrap();
+        assert_eq!(t, space.transfer);
+        let mul = |m: &[[f32; 3]; 3], c: [f32; 3]| -> [f64; 3] {
+            std::array::from_fn(|i| (0..3).map(|j| m[i][j] as f64 * c[j] as f64).sum())
+        };
+        // name -> ACEScg
+        let ours: Vec<[f64; 3]> = rgb.iter().map(|c| mul(&m, t.decode(c.map(|v| v as f32)))).collect();
+        let fwd = run(to_ap1, &rgb)
+            .iter()
+            .zip(&ours)
+            .flat_map(|(a, b)| (0..3).map(move |i| (a[i] - b[i]).abs()))
+            .fold(0.0, f64::max);
+        // ACEScg -> name, compared in linear light, on ACEScg values of in-gamut
+        // Rec.709 colors (negative results take each curve's extension, where
+        // OCIO and this crate differ; reported, not asserted).
+        let rev_err = |ap1: &[[f64; 3]]| -> f64 {
+            let theirs = run(cfg.colorspace_processor(names::ACESCG, name).unwrap(), ap1);
+            ap1.iter()
+                .zip(&theirs)
+                .flat_map(|(c, o)| {
+                    let enc = t.encode(mul(&mi, c.map(|v| v as f32)).map(|v| v as f32));
+                    (0..3).map(move |i| (t.to_linear(o[i]) - t.to_linear(enc[i] as f64)).abs())
+                })
+                .fold(0.0, f64::max)
+        };
+        let in_gamut: Vec<[f64; 3]> = rgb.iter().map(|c| convert_rgb(Space::LINEAR_REC709, Space::ACESCG, *c)).collect();
+        let rev = rev_err(&in_gamut);
+        let out_of_gamut = rev_err(&rgb.iter().map(|c| c.map(|v| v * 0.8)).collect::<Vec<_>>());
+        drop(from_ap1);
+        worst.push((format!("{name} [{which}]"), fwd, rev, out_of_gamut));
+        // BT.709: spec constants (here, the engine, FFmpeg) vs OCIO's
+        // continuous ExponentWithLinear form; the toes differ slightly.
+        let tol = if t == Transfer::Bt709 { 1e-4 } else if t == Transfer::Srgb { 1e-6 } else { 5e-7 };
+        assert!(fwd < tol && rev < tol, "{name}: name->ACEScg {fwd:.2e}, ACEScg->name {rev:.2e} (tol {tol:.0e})");
+    }
+    for (n, f, r, o) in &worst {
+        eprintln!("named {n:48} ->ACEScg {f:.2e}  ACEScg-> {r:.2e}  (out-of-gamut ACEScg-> {o:.2e})");
+    }
+}
