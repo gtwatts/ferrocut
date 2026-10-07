@@ -3,7 +3,12 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use cutline_core::{Frame, FrameKey, NodeError, NodeHash, RationalTime, RenderCtx, RenderNode};
+use cutline_core::{
+    Frame, FrameKey, GpuRequirements, NodeError, NodeHash, PixelRect, RationalTime, RenderCtx,
+    RenderNode,
+};
+
+use crate::compositor::compositor;
 
 pub type NodeId = usize;
 
@@ -45,6 +50,13 @@ impl Graph {
         self.nodes[id].node.content_hash()
     }
 
+    /// Union of every node's GPU requirements: what the shared device must offer.
+    pub fn gpu_requirements(&self) -> GpuRequirements {
+        self.nodes.iter().fold(GpuRequirements::none(), |acc, e| {
+            acc.union(&e.node.gpu_requirements())
+        })
+    }
+
     /// Cache key of node `id` at `t`: H(content_hash_at(t), t, keys of pulled inputs).
     /// Cheap: no decoding, no GPU. This is what chunk planning runs on.
     pub fn frame_key(&self, id: NodeId, t: RationalTime) -> FrameKey {
@@ -78,7 +90,19 @@ impl Graph {
         }
         let mut inputs = Vec::with_capacity(pulls.len());
         for p in &pulls {
-            inputs.push(self.evaluate(e.inputs[p.input], p.time, ctx, cache)?);
+            let mut f = self.evaluate(e.inputs[p.input], p.time, ctx, cache)?;
+            if !e.node.supports_data_window() && !f.is_full_window() {
+                // Crop/pad to the display window for nodes that assume it.
+                let comp = compositor(ctx)?;
+                let full = PixelRect::full(f.width, f.height);
+                let staged = f.to_gpu(ctx.gpu);
+                f = Arc::new(comp.reframe(ctx, &staged, full)?);
+            }
+            inputs.push(f);
+        }
+        if !e.node.batches_gpu_work() {
+            // The node may submit or read back on its own: get batched work in first.
+            ctx.flush();
         }
         let f = e.node.render(ctx, t, &inputs)?;
         cache.put(key, f.clone());
@@ -104,6 +128,10 @@ impl FrameCache {
             hits: 0,
             misses: 0,
         }
+    }
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
     }
     fn get(&mut self, k: &FrameKey) -> Option<Arc<Frame>> {
         match self.map.get(k) {

@@ -8,7 +8,7 @@ use cutline_core::{
     Frame, FrameRate, NodeError, NodeHash, Pull, Rational, RationalTime, RenderCtx, RenderNode,
 };
 
-use crate::compositor::compositor;
+use crate::compositor::{Compositor, compositor};
 use crate::media::decode::Decoder;
 
 /// Bumped whenever the pixel math of a node changes, so stale cache entries die.
@@ -42,6 +42,12 @@ impl RenderNode for SourceNode {
     fn kind(&self) -> &'static str {
         "source"
     }
+    fn batches_gpu_work(&self) -> bool {
+        true
+    }
+    fn supports_data_window(&self) -> bool {
+        true
+    }
     fn content_hash(&self) -> NodeHash {
         NodeHash::of(
             "source",
@@ -72,7 +78,8 @@ impl RenderNode for SourceNode {
         let rgba = dec
             .frame_at(t)
             .map_err(|e| NodeError::new(format!("{}: {e:#}", self.path.display())))?;
-        Ok(Arc::new(comp.input_rec709(gpu, w, h, rgba)))
+        let staged = Compositor::stage_rgba8(gpu, w, h, rgba);
+        Ok(Arc::new(comp.input_rec709(ctx, &staged)))
     }
 }
 
@@ -87,6 +94,12 @@ pub struct ClipNode {
 impl RenderNode for ClipNode {
     fn kind(&self) -> &'static str {
         "clip"
+    }
+    fn batches_gpu_work(&self) -> bool {
+        true
+    }
+    fn supports_data_window(&self) -> bool {
+        true
     }
     fn content_hash(&self) -> NodeHash {
         NodeHash::of(
@@ -116,7 +129,7 @@ impl RenderNode for ClipNode {
         }
         let comp = compositor(ctx)?;
         Ok(Arc::new(comp.opacity(
-            ctx.gpu,
+            ctx,
             &inputs[0],
             self.opacity.to_f32_param(),
         )?))
@@ -185,6 +198,12 @@ impl RenderNode for SequenceNode {
     fn kind(&self) -> &'static str {
         "sequence"
     }
+    fn batches_gpu_work(&self) -> bool {
+        true
+    }
+    fn supports_data_window(&self) -> bool {
+        true
+    }
     fn content_hash(&self) -> NodeHash {
         let [w, h] = self.base_params();
         let mut ranges = Vec::new();
@@ -229,10 +248,10 @@ impl RenderNode for SequenceNode {
     ) -> Result<Arc<Frame>, NodeError> {
         let comp = compositor(ctx)?;
         match self.active(t) {
-            Active::Gap => Ok(Arc::new(comp.clear(ctx.gpu, self.width, self.height))),
+            Active::Gap => Ok(Arc::new(comp.clear(ctx, self.width, self.height))),
             Active::One(_) => Ok(inputs[0].clone()),
             Active::Dissolve { mix, .. } => Ok(Arc::new(comp.dissolve(
-                ctx.gpu,
+                ctx,
                 &inputs[0],
                 &inputs[1],
                 mix.to_f32_param(),
@@ -248,6 +267,12 @@ impl RenderNode for OverNode {
     fn kind(&self) -> &'static str {
         "over"
     }
+    fn batches_gpu_work(&self) -> bool {
+        true
+    }
+    fn supports_data_window(&self) -> bool {
+        true
+    }
     fn content_hash(&self) -> NodeHash {
         NodeHash::of("over", &[])
     }
@@ -261,7 +286,7 @@ impl RenderNode for OverNode {
         inputs: &[Arc<Frame>],
     ) -> Result<Arc<Frame>, NodeError> {
         let comp = compositor(ctx)?;
-        Ok(Arc::new(comp.over(ctx.gpu, &inputs[0], &inputs[1])?))
+        Ok(Arc::new(comp.over(ctx, &inputs[0], &inputs[1])?))
     }
 }
 

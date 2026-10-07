@@ -98,12 +98,23 @@ impl ChunkEncoder {
 
     /// Append one frame of tightly packed BGRA8/BGR0.
     pub fn push_bgra(&mut self, bgra: &[u8]) -> anyhow::Result<()> {
+        self.push_bgra_strided(bgra, self.settings.width as usize * 4)
+    }
+
+    /// Like [`Self::push_bgra`] but rows are `row_stride` bytes apart (e.g. a
+    /// GPU readback buffer with 256-byte aligned rows), saving a compaction copy.
+    pub fn push_bgra_strided(&mut self, bgra: &[u8], row_stride: usize) -> anyhow::Result<()> {
         let (w, h) = (self.settings.width as usize, self.settings.height as usize);
-        ensure!(bgra.len() == w * h * 4, "frame size mismatch");
+        ensure!(row_stride >= w * 4, "row stride too small");
+        ensure!(
+            bgra.len() >= row_stride * (h - 1) + w * 4,
+            "frame size mismatch"
+        );
         let stride = self.frame.stride(0);
         let data = self.frame.data_mut(0);
         for y in 0..h {
-            data[y * stride..y * stride + w * 4].copy_from_slice(&bgra[y * w * 4..(y + 1) * w * 4]);
+            data[y * stride..y * stride + w * 4]
+                .copy_from_slice(&bgra[y * row_stride..y * row_stride + w * 4]);
         }
         self.frame.set_pts(Some(self.next_index));
         self.next_index += 1;
@@ -131,5 +142,5 @@ impl ChunkEncoder {
 
 /// Frame index of a packet timestamp at `fps` (nearest), for re-timing on concat.
 pub(crate) fn pts_to_frame(pts: i64, tb: ffmpeg_next::Rational, fps: FrameRate) -> i64 {
-    (RationalTime::from_pts(pts, to_core(tb)).seconds() * fps).round()
+    RationalTime::from_pts(pts, to_core(tb)).frame_round(fps)
 }

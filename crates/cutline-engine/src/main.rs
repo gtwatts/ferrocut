@@ -38,6 +38,12 @@ enum Cmd {
         /// Write the JSON render report here (default: <output>.report.json).
         #[arg(long)]
         report: Option<PathBuf>,
+        /// Abort (as cancelled) if rendering takes longer than this many seconds.
+        #[arg(long)]
+        timeout: Option<f64>,
+        /// Retries per frame for transient (retryable) node errors.
+        #[arg(long, default_value_t = 2)]
+        retries: u32,
     },
     /// Print the chunk plan (frame/chunk keys) without decoding or touching the GPU.
     Plan { timeline: PathBuf },
@@ -84,10 +90,17 @@ fn main() -> anyhow::Result<()> {
             force,
             jobs,
             report,
+            timeout,
+            retries,
         } => {
+            let started = std::time::Instant::now();
             let tl = Timeline::load(&timeline)?;
             let c = compile(&tl)?;
-            let gpu = GpuContext::new(AdapterPreference::default())?;
+            // One device for the whole render, from what the graph's nodes declared.
+            let gpu = GpuContext::with_requirements(
+                AdapterPreference::default(),
+                &c.graph.gpu_requirements(),
+            )?;
             eprintln!("adapter: {}", gpu.describe());
             let (v, l, _) = cutline_engine::media::ffmpeg_info();
             eprintln!("ffmpeg:  {v} ({l})");
@@ -115,9 +128,11 @@ fn main() -> anyhow::Result<()> {
                 &gpu,
                 &output,
                 &RenderOptions {
-                    cache_dir,
                     force,
                     jobs,
+                    deadline: timeout.map(|s| started + std::time::Duration::from_secs_f64(s)),
+                    max_retries: retries,
+                    ..RenderOptions::new(cache_dir)
                 },
             )?;
             println!(
@@ -162,6 +177,10 @@ fn main() -> anyhow::Result<()> {
                 r.jobs,
                 r.concat_ms,
                 r.total_ms
+            );
+            println!(
+                "gpu: {} submissions, textures {} allocated / {} reused from pool | retries {}",
+                r.gpu_submissions, r.textures_allocated, r.textures_reused, r.retries
             );
             println!("output: {}  blake3 {}", r.output.display(), r.final_blake3);
             let report_path = report.unwrap_or_else(|| output.with_extension("report.json"));

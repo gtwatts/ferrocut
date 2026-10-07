@@ -21,4 +21,5 @@ serde_json = "1"
 wgpu = "30"
 
 [dev-dependencies]
+half = "2.7"
 tempfile = "3"
