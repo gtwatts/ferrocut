@@ -1,14 +1,6 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! Cutline engine: timeline, pull-based render graph, chunked parallel scheduler,
+//! FFmpeg I/O and the wgpu compositor. Owned by Rusty.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod timeline;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use timeline::Timeline;
