@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use ferrocut_core::{AdapterPreference, GpuContext};
+use ferrocut_core::{AdapterPreference, GpuContext, SharedGpu};
 use ferrocut_engine::render::ChunkStatus;
 use ferrocut_engine::{RenderOptions, Timeline, compile, plan, render};
 
@@ -97,11 +97,11 @@ fn main() -> anyhow::Result<()> {
             let tl = Timeline::load(&timeline)?;
             let c = compile(&tl)?;
             // One device for the whole render, from what the graph's nodes declared.
-            let gpu = GpuContext::with_requirements(
+            let gpu = SharedGpu::new(GpuContext::with_requirements(
                 AdapterPreference::default(),
                 &c.graph.gpu_requirements(),
-            )?;
-            eprintln!("adapter: {}", gpu.describe());
+            )?);
+            eprintln!("adapter: {}", gpu.get().describe());
             let (v, l, _) = ferrocut_engine::media::ffmpeg_info();
             eprintln!("ffmpeg:  {v} ({l})");
             if !ferrocut_engine::media::ffmpeg_is_lgpl() {
@@ -179,9 +179,20 @@ fn main() -> anyhow::Result<()> {
                 r.total_ms
             );
             println!(
-                "gpu: {} submissions, textures {} allocated / {} reused from pool | retries {}",
-                r.gpu_submissions, r.textures_allocated, r.textures_reused, r.retries
+                "gpu: {} submissions, textures {} allocated / {} reused from pool | retries {}, chunk restarts {}, device recreations {}",
+                r.gpu_submissions,
+                r.textures_allocated,
+                r.textures_reused,
+                r.retries,
+                r.chunk_restarts,
+                r.gpu_recreations
             );
+            if r.sequential {
+                println!(
+                    "sequential graph: {} contiguous worker runs, {} sequential resets",
+                    r.worker_tasks, r.sequential_resets
+                );
+            }
             println!("output: {}  blake3 {}", r.output.display(), r.final_blake3);
             let report_path = report.unwrap_or_else(|| output.with_extension("report.json"));
             std::fs::write(&report_path, serde_json::to_string_pretty(&r)?)

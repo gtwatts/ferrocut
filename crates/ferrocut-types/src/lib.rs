@@ -14,7 +14,7 @@ pub mod time;
 
 pub use cancel::CancelToken;
 pub use color::{AlphaMode, ColorSpace};
-pub use error::{ErrorKind, NodeError};
+pub use error::{ErrorKind, GpuFault, NodeError};
 pub use hash::{FrameKey, NodeHash};
 pub use image::{CpuFrame, CpuImage, PixelRect};
 pub use manifest::FileManifest;

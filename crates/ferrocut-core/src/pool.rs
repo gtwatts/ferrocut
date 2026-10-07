@@ -103,6 +103,12 @@ impl PoolInner {
         (texture, lease)
     }
 
+    pub fn trim(&self) {
+        if let Ok(mut m) = self.idle.lock() {
+            m.clear();
+        }
+    }
+
     pub fn idle_count(&self) -> usize {
         self.idle
             .lock()

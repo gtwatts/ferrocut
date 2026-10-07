@@ -12,6 +12,16 @@
 //! and never submit; the scheduler submits once per frame. Before calling a
 //! node that doesn't batch (the default), the scheduler flushes that encoder, so
 //! such nodes may freely `queue.submit`, read back, or stage to the CPU.
+//!
+//! Access pattern: nodes that can only step forward in time cheaply (a browser
+//! page, a stateful simulation, a long-GOP decoder without seeking) return
+//! [`AccessPattern::Sequential`] from [`RenderNode::access_pattern`]. If any
+//! node feeding the output is sequential, the scheduler gives each worker one
+//! contiguous range of chunks and renders it in increasing time order, and the
+//! graph never asks a sequential node for an earlier time than the last one on
+//! that worker without first calling [`RenderNode::reset_sequential`] (fresh
+//! state, so the node pre-rolls from scratch). Device-lost recovery also
+//! starts workers with fresh state.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -23,6 +33,16 @@ use ferrocut_types::{CancelToken, NodeError, NodeHash, RationalTime};
 
 use crate::frame::Frame;
 use crate::gpu::{GpuContext, GpuRequirements};
+
+/// How a node can be driven through time. See the module docs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum AccessPattern {
+    /// Any time in any order (the default).
+    #[default]
+    Random,
+    /// Increasing times per worker; going back needs a reset + pre-roll.
+    Sequential,
+}
 
 /// "I need input slot `input` evaluated at local time `time`."
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,6 +60,10 @@ pub struct WorkerState {
     encoder: Option<wgpu::CommandEncoder>,
     /// Number of `queue.submit`s this worker's encoder has made.
     pub submissions: u64,
+    /// Last time each sequential node (by content hash) rendered on this worker.
+    seq_last: HashMap<NodeHash, RationalTime>,
+    /// Backward seeks on sequential nodes that required a reset.
+    pub sequential_resets: u64,
 }
 
 impl WorkerState {
@@ -76,6 +100,21 @@ impl WorkerState {
         let enc = self.encoder.take()?;
         self.submissions += 1;
         Some(gpu.queue.submit([enc.finish()]))
+    }
+
+    /// Record that sequential node `node` is about to render at `t` on this
+    /// worker. Returns `true` if `t` is earlier than its previous time here,
+    /// i.e. the caller must reset the node first.
+    pub fn advance_sequential(&mut self, node: NodeHash, t: RationalTime) -> bool {
+        match self.seq_last.insert(node, t) {
+            Some(prev) => t < prev,
+            None => false,
+        }
+    }
+
+    /// Last time sequential node `node` rendered on this worker.
+    pub fn sequential_position(&self, node: &NodeHash) -> Option<RationalTime> {
+        self.seq_last.get(node).copied()
     }
 
     pub fn has_pending_gpu_work(&self) -> bool {
@@ -166,6 +205,21 @@ pub trait RenderNode: Send + Sync {
     /// display window before calling [`Self::render`].
     fn supports_data_window(&self) -> bool {
         false
+    }
+
+    /// [`AccessPattern::Sequential`] if the node can only move forward in time
+    /// cheaply (see the module docs). Default: [`AccessPattern::Random`].
+    fn access_pattern(&self) -> AccessPattern {
+        AccessPattern::Random
+    }
+
+    /// Drop this node's per-worker state so its next render starts fresh
+    /// (pre-roll from scratch). Called before a sequential node would be asked
+    /// for an earlier time than its last on this worker. The default removes the
+    /// worker slot keyed by [`Self::content_hash`]; override it if the node keys
+    /// its state differently.
+    fn reset_sequential(&self, worker: &mut WorkerState) {
+        worker.remove_slot(&self.content_hash());
     }
 
     /// Produce the frame at `t`. `inputs` correspond 1:1 to `pulls(t)`.

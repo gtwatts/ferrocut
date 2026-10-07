@@ -4,8 +4,8 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use ferrocut_core::{
-    Frame, FrameKey, GpuRequirements, NodeError, NodeHash, PixelRect, RationalTime, RenderCtx,
-    RenderNode,
+    AccessPattern, Frame, FrameKey, GpuRequirements, NodeError, NodeHash, PixelRect, RationalTime,
+    RenderCtx, RenderNode,
 };
 
 use crate::compositor::compositor;
@@ -57,6 +57,24 @@ impl Graph {
         })
     }
 
+    /// [`AccessPattern::Sequential`] if `id` or anything upstream of it is
+    /// sequential: the scheduler then renders contiguous, increasing time ranges
+    /// per worker.
+    pub fn access_pattern(&self, id: NodeId) -> AccessPattern {
+        // Inputs always precede their consumers, so one forward pass suffices.
+        let mut seq = vec![false; id + 1];
+        for i in 0..=id {
+            let e = &self.nodes[i];
+            seq[i] = e.node.access_pattern() == AccessPattern::Sequential
+                || e.inputs.iter().any(|&j| seq[j]);
+        }
+        if seq[id] {
+            AccessPattern::Sequential
+        } else {
+            AccessPattern::Random
+        }
+    }
+
     /// Cache key of node `id` at `t`: H(content_hash_at(t), t, keys of pulled inputs).
     /// Cheap: no decoding, no GPU. This is what chunk planning runs on.
     pub fn frame_key(&self, id: NodeId, t: RationalTime) -> FrameKey {
@@ -103,6 +121,14 @@ impl Graph {
         if !e.node.batches_gpu_work() {
             // The node may submit or read back on its own: get batched work in first.
             ctx.flush();
+        }
+        if e.node.access_pattern() == AccessPattern::Sequential
+            && ctx.worker.advance_sequential(e.node.content_hash(), t)
+        {
+            // Never hand a sequential node an earlier time than its last on this
+            // worker: give it fresh state so it pre-rolls from scratch.
+            e.node.reset_sequential(ctx.worker);
+            ctx.worker.sequential_resets += 1;
         }
         let f = e.node.render(ctx, t, &inputs)?;
         cache.put(key, f.clone());

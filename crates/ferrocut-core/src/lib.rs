@@ -13,5 +13,8 @@ mod pool;
 pub use ferrocut_types;
 pub use ferrocut_types::*;
 pub use frame::{Frame, FrameStorage, GpuImage, WORKING_FORMAT};
-pub use gpu::{AdapterPreference, GpuContext, GpuError, GpuRequirements, PoolStats};
-pub use node::{Pull, RenderCtx, RenderNode, WorkerState};
+pub use gpu::{
+    AdapterPreference, GpuContext, GpuError, GpuErrorExt, GpuErrorScope, GpuRequirements,
+    PoolStats, SharedGpu,
+};
+pub use node::{AccessPattern, Pull, RenderCtx, RenderNode, WorkerState};

@@ -11,7 +11,6 @@ use std::sync::{Arc, mpsc};
 use ferrocut_core::{
     ColorSpace, Frame, GpuContext, GpuImage, NodeError, NodeHash, PixelRect, RenderCtx,
 };
-use wgpu::util::DeviceExt;
 
 const WG: u32 = 16;
 const ALIGN: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -45,6 +44,31 @@ pub struct Compositor {
 }
 
 /// Worker-slot key under which the shared compositor is stored.
+/// `wgpu::util::DeviceExt::create_buffer_init` without its panic on a lost
+/// device: on a mapping failure the (invalid) buffer is returned as is, and the
+/// error surfaces through the frame's error scope / device-lost flag.
+fn init_buffer(
+    gpu: &GpuContext,
+    label: &str,
+    contents: &[u8],
+    usage: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    let align = wgpu::COPY_BUFFER_ALIGNMENT as usize;
+    let size = contents.len().div_ceil(align).max(1) * align;
+    let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: size as u64,
+        usage,
+        mapped_at_creation: true,
+    });
+    if let Ok(mut m) = buf.slice(..).get_mapped_range_mut() {
+        m.slice(..contents.len()).copy_from_slice(contents);
+        drop(m);
+        buf.unmap();
+    }
+    buf
+}
+
 pub fn compositor_slot() -> NodeHash {
     NodeHash::of("engine.compositor", &[])
 }
@@ -167,12 +191,12 @@ impl Compositor {
     }
 
     fn uniform<T: bytemuck::Pod>(gpu: &GpuContext, v: &T) -> wgpu::Buffer {
-        gpu.device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("ferrocut.params"),
-                contents: bytemuck::bytes_of(v),
-                usage: wgpu::BufferUsages::UNIFORM,
-            })
+        init_buffer(
+            gpu,
+            "ferrocut.params",
+            bytemuck::bytes_of(v),
+            wgpu::BufferUsages::UNIFORM,
+        )
     }
 
     fn params(
@@ -204,12 +228,7 @@ impl Compositor {
         let row = w * 4;
         let padded = padded_row(row);
         let buf = if padded == row {
-            gpu.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("ferrocut.upload"),
-                    contents: rgba,
-                    usage: wgpu::BufferUsages::COPY_SRC,
-                })
+            init_buffer(gpu, "ferrocut.upload", rgba, wgpu::BufferUsages::COPY_SRC)
         } else {
             let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("ferrocut.upload"),
@@ -217,18 +236,17 @@ impl Compositor {
                 usage: wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: true,
             });
-            {
-                let mut m = buf
-                    .slice(..)
-                    .get_mapped_range_mut()
-                    .expect("mapped at creation");
+            // Mapping fails only on a lost device / invalid buffer; the frame's
+            // error scope or the device-lost flag then fails the frame.
+            if let Ok(mut m) = buf.slice(..).get_mapped_range_mut() {
                 for y in 0..h as usize {
                     let (s, d) = (y * row as usize, y * padded as usize);
                     m.slice(d..d + row as usize)
                         .copy_from_slice(&rgba[s..s + row as usize]);
                 }
+                drop(m);
+                buf.unmap();
             }
-            buf.unmap();
             buf
         };
         Staged {

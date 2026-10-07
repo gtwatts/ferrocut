@@ -7,9 +7,18 @@
 //! field-wise best of the requested limits. Nodes then query what they actually
 //! got ([`GpuContext::has_features`]) and fall back when an optional feature is
 //! missing.
+//!
+//! GPU faults: [`GpuErrorExt::from_gpu`] classifies wgpu errors into
+//! [`NodeError`]s (out-of-memory and device-lost are `Retryable` with a
+//! [`GpuFault`](ferrocut_types::GpuFault)). The scheduler wraps each frame in a [`GpuContext::error_scope`]
+//! so allocation failures surface as errors instead of wgpu's default panic,
+//! and owns the context through a [`SharedGpu`], which replaces a lost device
+//! with a fresh one (new device, queue and texture pool on the same adapter).
 
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, mpsc};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock, mpsc};
+
+use ferrocut_types::NodeError;
 
 use crate::frame::GpuImage;
 use crate::pool::{PoolInner, TexKey};
@@ -95,6 +104,9 @@ pub enum AdapterPreference {
     DiscreteNvidia,
     /// First adapter whose name contains this (case-insensitive) substring.
     NameContains(String),
+    /// The adapter matching this one (name, vendor, device, backend), e.g. to
+    /// recreate a lost device on the same GPU. Ignores `FERROCUT_ADAPTER`.
+    SameAs(Box<wgpu::AdapterInfo>),
 }
 
 const NVIDIA: u32 = 0x10de;
@@ -124,7 +136,14 @@ pub struct GpuContext {
     pub queue: wgpu::Queue,
     pub info: wgpu::AdapterInfo,
     pool: Arc<PoolInner>,
+    id: u64,
+    requirements: GpuRequirements,
+    /// Set by wgpu's device-lost callback, or by [`SharedGpu::recover`].
+    lost: Arc<Mutex<Option<String>>>,
+    lost_flag: Arc<AtomicBool>,
 }
+
+static NEXT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 impl GpuContext {
     fn instance() -> wgpu::Instance {
@@ -150,9 +169,10 @@ impl GpuContext {
         pref: AdapterPreference,
         req: &GpuRequirements,
     ) -> Result<Self, GpuError> {
-        let pref = match std::env::var("FERROCUT_ADAPTER") {
-            Ok(s) if !s.is_empty() => AdapterPreference::NameContains(s),
-            _ => pref,
+        let pref = match (std::env::var("FERROCUT_ADAPTER"), pref) {
+            (_, AdapterPreference::SameAs(i)) => AdapterPreference::SameAs(i),
+            (Ok(s), _) if !s.is_empty() => AdapterPreference::NameContains(s),
+            (_, p) => p,
         };
         let inst = Self::instance();
         let adapters = pollster::block_on(inst.enumerate_adapters(wgpu::Backends::all()));
@@ -168,6 +188,11 @@ impl GpuContext {
                     .into_iter()
                     .find(|a| a.get_info().name.to_lowercase().contains(&s))
             }
+            AdapterPreference::SameAs(want) => adapters.into_iter().find(|a| {
+                let i = a.get_info();
+                (&i.name, i.vendor, i.device, i.backend)
+                    == (&want.name, want.vendor, want.device, want.backend)
+            }),
         }
         .ok_or(GpuError::NoAdapter)?;
         let info = adapter.get_info();
@@ -193,13 +218,104 @@ impl GpuContext {
                 required_limits: limits,
                 ..Default::default()
             }))?;
+        let lost: Arc<Mutex<Option<String>>> = Arc::default();
+        let lost_flag: Arc<AtomicBool> = Arc::default();
+        {
+            let (lost, flag) = (lost.clone(), lost_flag.clone());
+            device.set_device_lost_callback(move |reason, msg| {
+                if let Ok(mut l) = lost.lock() {
+                    l.get_or_insert_with(|| format!("GPU device lost ({reason:?}): {msg}"));
+                }
+                flag.store(true, Ordering::Release);
+            });
+        }
         Ok(GpuContext {
             adapter,
             device,
             queue,
             info,
             pool: Arc::default(),
+            id: NEXT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
+            requirements: req.clone(),
+            lost,
+            lost_flag,
         })
+    }
+
+    /// Process-unique id of this context. A recreated context (after device
+    /// loss) gets a new id: nodes that cache device objects (pipelines, bind
+    /// group layouts, LUT textures) outside worker slots must key them by it.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// The requirements the device was created from.
+    pub fn requirements(&self) -> &GpuRequirements {
+        &self.requirements
+    }
+
+    /// `true` once the device is lost (driver reset, `device.destroy()`, or a
+    /// node reported [`GpuFault::DeviceLost`](ferrocut_types::GpuFault::DeviceLost) and the scheduler gave up on it).
+    pub fn is_lost(&self) -> bool {
+        self.lost_flag.load(Ordering::Acquire)
+    }
+
+    /// `Err(device_lost)` if [`Self::is_lost`].
+    pub fn check_lost(&self) -> Result<(), NodeError> {
+        if !self.is_lost() {
+            return Ok(());
+        }
+        let msg = self.lost.lock().ok().and_then(|l| l.clone());
+        Err(NodeError::device_lost(
+            msg.unwrap_or_else(|| "GPU device lost".into()),
+        ))
+    }
+
+    fn mark_lost(&self, why: &str) {
+        if let Ok(mut l) = self.lost.lock() {
+            l.get_or_insert_with(|| why.to_string());
+        }
+        self.lost_flag.store(true, Ordering::Release);
+    }
+
+    /// A fresh device + queue + texture pool on the same adapter with the same
+    /// requirements.
+    pub fn recreate(&self) -> Result<GpuContext, GpuError> {
+        Self::with_requirements(
+            AdapterPreference::SameAs(Box::new(self.info.clone())),
+            &self.requirements,
+        )
+    }
+
+    /// Free every idle pooled texture (e.g. after an out-of-memory error).
+    pub fn trim_pool(&self) {
+        self.pool.trim();
+    }
+
+    /// Capture this thread's out-of-memory and validation errors until
+    /// [`GpuErrorScope::finish`] (instead of wgpu's default panic). Scopes are
+    /// per thread: open and finish on the thread that does the GPU work.
+    pub fn error_scope(&self) -> GpuErrorScope<'_> {
+        let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let oom = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        GpuErrorScope {
+            gpu: self,
+            oom: Some(oom),
+            validation: Some(validation),
+        }
+    }
+
+    /// Run `f` inside an [`Self::error_scope`]. A GPU fault (out of memory, device
+    /// lost) wins over the error `f` returned, since it is the root cause.
+    pub fn scoped<T>(&self, f: impl FnOnce() -> Result<T, NodeError>) -> Result<T, NodeError> {
+        let scope = self.error_scope();
+        let r = f();
+        match (scope.finish(), r) {
+            (Some(fault), _) if fault.gpu_fault.is_some() => Err(fault),
+            (_, Err(e)) => Err(e),
+            (Some(e), Ok(_)) => Err(e),
+            (None, Ok(v)) => Ok(v),
+        }
     }
 
     /// Features the shared device was actually created with.
@@ -241,6 +357,13 @@ impl GpuContext {
     }
 
     pub fn describe(&self) -> String {
+        if self.is_lost() {
+            return format!("{} [lost]", self.describe_adapter());
+        }
+        self.describe_adapter()
+    }
+
+    fn describe_adapter(&self) -> String {
         format!(
             "{} ({:?}, {:?}, vendor 0x{:04x}, driver {} {})",
             self.info.name,
@@ -324,5 +447,189 @@ impl GpuContext {
             },
             texture.size(),
         );
+    }
+}
+
+/// See [`GpuContext::error_scope`]. Dropping without [`Self::finish`] discards
+/// captured errors.
+pub struct GpuErrorScope<'a> {
+    gpu: &'a GpuContext,
+    // Field order = drop order: the inner (OOM) scope must pop first.
+    oom: Option<wgpu::ErrorScopeGuard>,
+    validation: Option<wgpu::ErrorScopeGuard>,
+}
+
+impl GpuErrorScope<'_> {
+    /// The first error captured, classified. Out-of-memory beats device-lost
+    /// beats validation (validation errors are usually fallout of the others).
+    pub fn finish(mut self) -> Option<NodeError> {
+        let oom = self.oom.take().and_then(|g| pollster::block_on(g.pop()));
+        let val = self
+            .validation
+            .take()
+            .and_then(|g| pollster::block_on(g.pop()));
+        if let Some(e) = oom {
+            return Some(NodeError::from_gpu(&e));
+        }
+        if val.is_some() && !self.gpu.is_lost() {
+            // A destroyed/lost device turns every new object invalid at once but
+            // reports the loss only from `maintain`, once its queue drains. Poll
+            // (error path only) so "X is invalid" fallout is classified as
+            // device-lost rather than as a permanent validation error.
+            let _ = self.gpu.device.poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(std::time::Duration::from_secs(2)),
+            });
+        }
+        if let Err(e) = self.gpu.check_lost() {
+            return Some(e);
+        }
+        val.map(|e| NodeError::from_gpu(&e))
+    }
+}
+
+/// Classify GPU errors as [`NodeError`]s:
+/// `NodeError::from_gpu(&wgpu_error)` / `NodeError::from_gpu_error(&gpu_error)`.
+pub trait GpuErrorExt {
+    /// Out of memory -> Retryable + [`GpuFault::OutOfMemory`](ferrocut_types::GpuFault::OutOfMemory); anything naming a
+    /// lost device -> Retryable + [`GpuFault::DeviceLost`](ferrocut_types::GpuFault::DeviceLost); other validation and
+    /// internal errors -> Permanent (they reproduce).
+    fn from_gpu(e: &wgpu::Error) -> NodeError;
+    fn from_gpu_error(e: &GpuError) -> NodeError;
+}
+
+fn mentions_lost(s: &str) -> bool {
+    let s = s.to_lowercase();
+    s.contains("device lost") || s.contains("device is lost") || s.contains("parent device is lost")
+}
+
+impl GpuErrorExt for NodeError {
+    fn from_gpu(e: &wgpu::Error) -> NodeError {
+        match e {
+            wgpu::Error::OutOfMemory { .. } => NodeError::gpu_out_of_memory(format!("wgpu: {e}")),
+            wgpu::Error::Validation { description, .. }
+            | wgpu::Error::Internal { description, .. }
+                if mentions_lost(description) =>
+            {
+                NodeError::device_lost(format!("wgpu: {description}"))
+            }
+            wgpu::Error::Internal { description, .. }
+                if description.to_lowercase().contains("out of memory") =>
+            {
+                NodeError::gpu_out_of_memory(format!("wgpu: {description}"))
+            }
+            wgpu::Error::Validation { description, .. } => {
+                NodeError::permanent(format!("wgpu validation: {description}"))
+            }
+            wgpu::Error::Internal { description, .. } => {
+                NodeError::permanent(format!("wgpu internal: {description}"))
+            }
+        }
+    }
+
+    fn from_gpu_error(e: &GpuError) -> NodeError {
+        match e {
+            GpuError::NoAdapter | GpuError::MissingFeatures { .. } | GpuError::Limits { .. } => {
+                NodeError::permanent(e)
+            }
+            GpuError::Poll(wgpu::PollError::WrongSubmissionIndex(..)) => NodeError::permanent(e),
+            // Device creation can fail transiently (e.g. right after a reset);
+            // map/poll failures are almost always a dying device or memory pressure.
+            GpuError::Map(m) if mentions_lost(m) => NodeError::device_lost(e),
+            GpuError::Device(_) | GpuError::Map(_) | GpuError::Poll(_) => NodeError::retryable(e),
+        }
+    }
+}
+
+impl From<GpuError> for NodeError {
+    fn from(e: GpuError) -> Self {
+        NodeError::from_gpu_error(&e)
+    }
+}
+
+/// The render's shared GPU context, replaceable after device loss. Workers take
+/// a snapshot ([`Self::get`]) per chunk; after a device-lost failure the
+/// scheduler calls [`Self::recover`] and re-renders the chunk on the new device.
+pub struct SharedGpu {
+    current: RwLock<Arc<GpuContext>>,
+    recreations: AtomicU64,
+}
+
+impl From<GpuContext> for SharedGpu {
+    fn from(g: GpuContext) -> Self {
+        SharedGpu::new(g)
+    }
+}
+
+impl SharedGpu {
+    pub fn new(gpu: GpuContext) -> Self {
+        SharedGpu {
+            current: RwLock::new(Arc::new(gpu)),
+            recreations: AtomicU64::new(0),
+        }
+    }
+
+    pub fn get(&self) -> Arc<GpuContext> {
+        self.current
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+
+    /// Replace `failed` with a fresh context on the same adapter (new device,
+    /// queue and texture pool) and return it. If another worker already did,
+    /// just return the current one. `failed` is marked lost, so workers still
+    /// holding it stop at their next frame and recover too.
+    pub fn recover(&self, failed: &Arc<GpuContext>) -> Result<Arc<GpuContext>, GpuError> {
+        let mut cur = self.current.write().unwrap_or_else(|p| p.into_inner());
+        if !Arc::ptr_eq(&cur, failed) {
+            return Ok(cur.clone());
+        }
+        failed.mark_lost("GPU device replaced after a device-lost error");
+        let fresh = Arc::new(failed.recreate()?);
+        *cur = fresh.clone();
+        self.recreations.fetch_add(1, Ordering::Relaxed);
+        Ok(fresh)
+    }
+
+    /// Contexts created by [`Self::recover`] so far.
+    pub fn recreations(&self) -> u64 {
+        self.recreations.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferrocut_types::GpuFault;
+
+    fn src() -> wgpu::ErrorSource {
+        Box::new(std::io::Error::other("x"))
+    }
+
+    #[test]
+    fn classifies_wgpu_errors() {
+        let oom = NodeError::from_gpu(&wgpu::Error::OutOfMemory { source: src() });
+        assert!(oom.is_retryable() && oom.gpu_fault == Some(GpuFault::OutOfMemory));
+        let lost = NodeError::from_gpu(&wgpu::Error::Validation {
+            source: src(),
+            description: "Parent device is lost".into(),
+        });
+        assert!(lost.is_retryable() && lost.is_device_lost());
+        let bug = NodeError::from_gpu(&wgpu::Error::Validation {
+            source: src(),
+            description: "Texture usage mismatch".into(),
+        });
+        assert_eq!(bug.kind, ferrocut_types::ErrorKind::Permanent);
+        let ioom = NodeError::from_gpu(&wgpu::Error::Internal {
+            source: src(),
+            description: "Not enough memory left: out of memory".into(),
+        });
+        assert!(ioom.is_gpu_out_of_memory());
+        assert_eq!(
+            NodeError::from(GpuError::NoAdapter).kind,
+            ferrocut_types::ErrorKind::Permanent
+        );
+        assert!(NodeError::from(GpuError::Poll(wgpu::PollError::Timeout)).is_retryable());
     }
 }

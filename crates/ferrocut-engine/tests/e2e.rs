@@ -4,13 +4,16 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use ferrocut_core::{
-    AdapterPreference, ErrorKind, Frame, GpuContext, NodeError, NodeHash, Pull, Rational,
-    RationalTime, RenderCtx, RenderNode,
+    AccessPattern, AdapterPreference, ErrorKind, Frame, GpuContext, NodeError, NodeHash, Pull,
+    Rational, RationalTime, RenderCtx, RenderNode, SharedGpu, WorkerState,
 };
+use ferrocut_engine::compositor::{Compositor, compositor_slot};
+use ferrocut_engine::graph::FrameCache;
 use ferrocut_engine::media::encode::{ChunkEncoder, EncodeSettings};
 use ferrocut_engine::render::{ChunkStatus, RenderOptions, node_error};
 use ferrocut_engine::{Timeline, compile, render};
@@ -64,13 +67,13 @@ fn timeline(dir: &Path, opacity: &str) -> Timeline {
 #[test]
 fn deterministic_and_incremental() {
     let gpu = match GpuContext::new(AdapterPreference::default()) {
-        Ok(g) => g,
+        Ok(g) => SharedGpu::new(g),
         Err(e) => {
             eprintln!("SKIP: no GPU ({e})");
             return;
         }
     };
-    eprintln!("adapter: {}", gpu.describe());
+    eprintln!("adapter: {}", gpu.get().describe());
     let dir = tempfile::tempdir().unwrap();
     synth(&dir.path().join("a.mkv"), 60, 1);
     synth(&dir.path().join("b.mkv"), 60, 2);
@@ -182,7 +185,7 @@ impl RenderNode for Faulty {
 #[test]
 fn retries_permanent_errors_and_cancellation() {
     let gpu = match GpuContext::new(AdapterPreference::default()) {
-        Ok(g) => g,
+        Ok(g) => SharedGpu::new(g),
         Err(e) => {
             eprintln!("SKIP: no GPU ({e})");
             return;
@@ -287,4 +290,331 @@ fn retries_permanent_errors_and_cancellation() {
         "{e:#}"
     );
     assert_eq!(idle.attempts.lock().unwrap().len(), 0);
+}
+
+fn gpu_or_skip() -> Option<SharedGpu> {
+    match GpuContext::new(AdapterPreference::default()) {
+        Ok(g) => Some(SharedGpu::new(g)),
+        Err(e) => {
+            eprintln!("SKIP: no GPU ({e})");
+            None
+        }
+    }
+}
+
+fn frame_of(t: RationalTime) -> i64 {
+    t.frame_round(Rational::from_int(24))
+}
+
+#[derive(Clone, Copy)]
+enum Fault {
+    /// The node reports device-lost (what a node does after a failed GPU call).
+    ReportLost,
+    /// The node reports out-of-memory.
+    ReportOom,
+    /// Really lose the device (`device.destroy()`) and carry on as if nothing
+    /// happened: the scheduler must notice by itself.
+    DestroyDevice,
+}
+
+/// Pass-through that injects a GPU fault at frame `at`: once, or every time.
+struct GpuFaultAt {
+    at: i64,
+    fault: Fault,
+    always: bool,
+    fired: AtomicBool,
+}
+
+impl GpuFaultAt {
+    fn once(at: i64, fault: Fault) -> Arc<Self> {
+        Arc::new(GpuFaultAt {
+            at,
+            fault,
+            always: false,
+            fired: AtomicBool::new(false),
+        })
+    }
+    fn always(at: i64, fault: Fault) -> Arc<Self> {
+        Arc::new(GpuFaultAt {
+            always: true,
+            ..Arc::into_inner(Self::once(at, fault)).unwrap()
+        })
+    }
+}
+
+impl RenderNode for GpuFaultAt {
+    fn kind(&self) -> &'static str {
+        "test.gpu_fault"
+    }
+    fn content_hash(&self) -> NodeHash {
+        NodeHash::of("test.gpu_fault", &[])
+    }
+    fn pulls(&self, t: RationalTime) -> Vec<Pull> {
+        vec![Pull { input: 0, time: t }]
+    }
+    fn batches_gpu_work(&self) -> bool {
+        true
+    }
+    fn supports_data_window(&self) -> bool {
+        true
+    }
+    fn render(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        t: RationalTime,
+        inputs: &[Arc<Frame>],
+    ) -> Result<Arc<Frame>, NodeError> {
+        if frame_of(t) == self.at && (self.always || !self.fired.swap(true, Ordering::SeqCst)) {
+            match self.fault {
+                Fault::ReportLost => return Err(NodeError::device_lost("injected device loss")),
+                Fault::ReportOom => return Err(NodeError::gpu_out_of_memory("injected OOM")),
+                Fault::DestroyDevice => ctx.gpu.device.destroy(),
+            }
+        }
+        Ok(inputs[0].clone())
+    }
+}
+
+/// Per-worker state of [`SeqProbe`]: like a browser page, it can only move forward.
+struct SeqState {
+    last: i64,
+}
+
+/// Pass-through with sequential per-worker state. Fails (Permanent) when asked
+/// for an earlier frame than its last one; counts pre-rolls (fresh states).
+struct SeqProbe {
+    pattern: AccessPattern,
+    /// Also fail on forward gaps (when every chunk is rendered, a contiguous
+    /// run is strictly consecutive).
+    consecutive: bool,
+    prerolls: AtomicU64,
+}
+
+impl SeqProbe {
+    fn new(pattern: AccessPattern, consecutive: bool) -> Arc<Self> {
+        Arc::new(SeqProbe {
+            pattern,
+            consecutive,
+            prerolls: AtomicU64::new(0),
+        })
+    }
+    fn prerolls(&self) -> u64 {
+        self.prerolls.load(Ordering::SeqCst)
+    }
+}
+
+impl RenderNode for SeqProbe {
+    fn kind(&self) -> &'static str {
+        "test.seq_probe"
+    }
+    fn content_hash(&self) -> NodeHash {
+        NodeHash::of("test.seq_probe", &[])
+    }
+    fn pulls(&self, t: RationalTime) -> Vec<Pull> {
+        vec![Pull { input: 0, time: t }]
+    }
+    fn access_pattern(&self) -> AccessPattern {
+        self.pattern
+    }
+    fn render(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        t: RationalTime,
+        inputs: &[Arc<Frame>],
+    ) -> Result<Arc<Frame>, NodeError> {
+        let n = frame_of(t);
+        let st = ctx.worker.slot(self.content_hash(), || {
+            self.prerolls.fetch_add(1, Ordering::SeqCst);
+            Ok(SeqState { last: -1 })
+        })?;
+        if n < st.last {
+            return Err(NodeError::permanent(format!(
+                "backward seek {} -> {n}",
+                st.last
+            )));
+        }
+        if self.consecutive && st.last >= 0 && n != st.last + 1 {
+            return Err(NodeError::permanent(format!("gap {} -> {n}", st.last)));
+        }
+        st.last = n;
+        Ok(inputs[0].clone())
+    }
+}
+
+#[test]
+fn gpu_faults_are_classified_and_recovered() {
+    let Some(gpu) = gpu_or_skip() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    synth(&dir.path().join("a.mkv"), 60, 1);
+    synth(&dir.path().join("b.mkv"), 60, 2);
+    synth(&dir.path().join("c.mkv"), 30, 3);
+    let tl = timeline(dir.path(), "1/2");
+    let opts = |name: &str| RenderOptions {
+        force: true,
+        jobs: 3,
+        ..RenderOptions::new(dir.path().join(format!("cache-{name}")))
+    };
+    let out = |name: &str| dir.path().join(format!("{name}.mkv"));
+    let wrapped = |nodes: Vec<Arc<dyn RenderNode>>| {
+        let mut c = compile(&tl).unwrap();
+        for n in nodes {
+            c.output = c.graph.add(n, vec![c.output]);
+        }
+        c
+    };
+    let reference = render(&tl, &compile(&tl).unwrap(), &gpu, &out("ref"), &opts("ref")).unwrap();
+    assert_eq!(
+        (reference.chunk_restarts, reference.gpu_recreations),
+        (0, 0)
+    );
+
+    // Out of memory once: retried per frame on the same device.
+    let r = render(
+        &tl,
+        &wrapped(vec![GpuFaultAt::once(30, Fault::ReportOom)]),
+        &gpu,
+        &out("oom"),
+        &opts("oom"),
+    )
+    .unwrap();
+    assert_eq!((r.retries, r.chunk_restarts, r.gpu_recreations), (1, 0, 0));
+    assert_eq!(r.final_blake3, reference.final_blake3);
+
+    // A node reports device-lost once: the context is recreated and the chunk re-rendered.
+    let first = gpu.get();
+    let r = render(
+        &tl,
+        &wrapped(vec![GpuFaultAt::once(30, Fault::ReportLost)]),
+        &gpu,
+        &out("lost"),
+        &opts("lost"),
+    )
+    .unwrap();
+    assert_eq!(r.gpu_recreations, 1);
+    assert!(r.chunk_restarts >= 1);
+    assert_eq!(r.retries, 0, "device loss is not retried per frame");
+    assert_eq!(r.final_blake3, reference.final_blake3);
+    assert!(first.is_lost(), "the replaced context is marked lost");
+    assert_ne!(gpu.get().id(), first.id());
+    assert!(!gpu.get().is_lost());
+    drop(first);
+
+    // A real device loss the node doesn't even report, combined with a
+    // sequential node (fresh pre-roll after recovery, never a backward seek).
+    let probe = SeqProbe::new(AccessPattern::Sequential, false);
+    let r = render(
+        &tl,
+        &wrapped(vec![
+            probe.clone(),
+            GpuFaultAt::once(40, Fault::DestroyDevice),
+        ]),
+        &gpu,
+        &out("destroy"),
+        &opts("destroy"),
+    )
+    .unwrap();
+    assert_eq!(r.gpu_recreations, 1, "{r:?}");
+    assert!(r.chunk_restarts >= 1);
+    assert_eq!(r.final_blake3, reference.final_blake3);
+    assert!(probe.prerolls() > 3, "restarted workers pre-roll again");
+
+    // Device lost on every attempt: bounded (max_chunk_restarts recreations), then it surfaces.
+    let before = gpu.recreations();
+    let e = render(
+        &tl,
+        &wrapped(vec![GpuFaultAt::always(20, Fault::ReportLost)]),
+        &gpu,
+        &out("dead"),
+        &opts("dead"),
+    )
+    .unwrap_err();
+    assert!(
+        node_error(&e).is_some_and(NodeError::is_device_lost),
+        "{e:#}"
+    );
+    assert_eq!(gpu.recreations() - before, 2);
+    assert!(!out("dead").exists());
+}
+
+#[test]
+fn sequential_nodes_get_contiguous_forward_runs() {
+    let Some(gpu) = gpu_or_skip() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    synth(&dir.path().join("a.mkv"), 60, 1);
+    synth(&dir.path().join("b.mkv"), 60, 2);
+    synth(&dir.path().join("c.mkv"), 30, 3);
+    let tl = timeline(dir.path(), "1/2");
+    let opts = |name: &str| RenderOptions {
+        force: true,
+        jobs: 3,
+        ..RenderOptions::new(dir.path().join(format!("cache-{name}")))
+    };
+    let out = |name: &str| dir.path().join(format!("{name}.mkv"));
+    let base = compile(&tl).unwrap();
+    assert_eq!(
+        base.graph.access_pattern(base.output),
+        AccessPattern::Random
+    );
+    let reference = render(&tl, &base, &gpu, &out("ref"), &opts("ref")).unwrap();
+    assert!(!reference.sequential);
+    assert_eq!(reference.worker_tasks, 6, "one task per chunk");
+
+    let wrapped = |probe: Arc<SeqProbe>| {
+        let mut c = compile(&tl).unwrap();
+        c.output = c.graph.add(probe, vec![c.output]);
+        // Sequential-ness propagates to everything downstream.
+        c.output = c.graph.add(Faulty::new(|_, _| None), vec![c.output]);
+        c
+    };
+
+    // Sequential: 3 contiguous runs of 24 frames, strictly consecutive, one pre-roll each.
+    let seq = SeqProbe::new(AccessPattern::Sequential, true);
+    let c = wrapped(seq.clone());
+    assert_eq!(c.graph.access_pattern(c.output), AccessPattern::Sequential);
+    let r = render(&tl, &c, &gpu, &out("seq"), &opts("seq")).unwrap();
+    assert!(r.sequential);
+    assert_eq!(
+        (r.worker_tasks, seq.prerolls(), r.sequential_resets),
+        (3, 3, 0)
+    );
+    assert_eq!(r.final_blake3, reference.final_blake3);
+
+    // The same node declared Random: one fresh worker (and pre-roll) per chunk.
+    let rnd = SeqProbe::new(AccessPattern::Random, true);
+    let r = render(&tl, &wrapped(rnd.clone()), &gpu, &out("rnd"), &opts("rnd")).unwrap();
+    assert!(!r.sequential);
+    assert_eq!((r.worker_tasks, rnd.prerolls()), (6, 6));
+    assert_eq!(r.final_blake3, reference.final_blake3);
+
+    // Backward seek on one worker: the graph resets the sequential node first...
+    let g = gpu.get();
+    let comp = Arc::new(Compositor::new(&g));
+    let eval = |c: &ferrocut_engine::Compiled, worker: &mut WorkerState, frame: i64| {
+        let cancel = ferrocut_core::CancelToken::new();
+        let mut cache = FrameCache::new(4);
+        let mut ctx = RenderCtx::new(&g, worker, &cancel, None);
+        let t = RationalTime::from_frames(frame, Rational::from_int(24));
+        let r = c
+            .graph
+            .evaluate(c.output, t, &mut ctx, &mut cache)
+            .map(|_| ());
+        ctx.flush();
+        r
+    };
+    let seq = SeqProbe::new(AccessPattern::Sequential, false);
+    let c = wrapped(seq.clone());
+    let mut worker = WorkerState::default();
+    worker.slot(compositor_slot(), || Ok(comp.clone())).unwrap();
+    eval(&c, &mut worker, 30).unwrap();
+    eval(&c, &mut worker, 31).unwrap();
+    eval(&c, &mut worker, 10).unwrap();
+    assert_eq!((worker.sequential_resets, seq.prerolls()), (1, 2));
+    // ...while a node that (wrongly) claims Random access really would see it and fail.
+    let rnd = SeqProbe::new(AccessPattern::Random, false);
+    let c = wrapped(rnd.clone());
+    let mut worker = WorkerState::default();
+    worker.slot(compositor_slot(), || Ok(comp.clone())).unwrap();
+    eval(&c, &mut worker, 30).unwrap();
+    let e = eval(&c, &mut worker, 10).unwrap_err();
+    assert!(e.message.contains("backward seek 30 -> 10"), "{e}");
 }
