@@ -4,3 +4,4 @@ target/
 /out/
 /media/
 .cutline-cache/
+/third_party/
