@@ -389,6 +389,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cutline-html"
+version = "0.0.1"
+
+[[package]]
+name = "cutline-lottie"
+version = "0.0.1"
+dependencies = [
+ "cutline-core",
+ "half",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "cutline-ofx"
 version = "0.0.1"
 dependencies = [
