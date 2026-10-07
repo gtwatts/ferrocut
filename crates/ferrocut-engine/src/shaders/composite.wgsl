@@ -48,20 +48,8 @@ fn load_b(id: vec2<u32>) -> vec4<f32> {
     return load_window(src_b, params.b_origin, display_pos(id));
 }
 
-// Rows of the linear Rec.709 (D65) -> ACEScg (AP1, D60, Bradford) matrix.
-// `v * M_ROWS` == M * v because WGSL treats `v` as a row vector.
-const REC709_TO_ACESCG_ROWS = mat3x3<f32>(
-    vec3<f32>(0.6131324224, 0.3395380158, 0.0474166960),
-    vec3<f32>(0.0701243808, 0.9163940113, 0.0134515240),
-    vec3<f32>(0.0205876575, 0.1095745716, 0.8697854040),
-);
-
-// Inverse BT.709 OETF. PLACEHOLDER input transform until the OCIO color crate (SeePlus) owns IDTs.
-fn bt709_to_linear(v: vec3<f32>) -> vec3<f32> {
-    let lo = v / 4.5;
-    let hi = pow((v + vec3<f32>(0.099)) / 1.099, vec3<f32>(1.0 / 0.45));
-    return select(hi, lo, v < vec3<f32>(0.081));
-}
+// Color math (fc_* functions, OCIO-matching matrices) comes from
+// `ferrocut_colorspace::wgsl()`, prepended to this file at pipeline creation.
 
 // Decoded 8-bit Rec.709 RGBA (straight alpha) -> linear ACEScg, premultiplied.
 // Source and destination share one window, so no origin math.
@@ -69,7 +57,8 @@ fn bt709_to_linear(v: vec3<f32>) -> vec3<f32> {
 fn input_rec709(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!in_bounds(id.xy)) { return; }
     let c = textureLoad(src_a, vec2<i32>(id.xy), 0);
-    let lin = bt709_to_linear(c.rgb) * REC709_TO_ACESCG_ROWS;
+    // Rec.709 video, scene-referred: inverse BT.709 OETF, then Rec.709 -> ACEScg.
+    let lin = fc_rec709_to_acescg(fc_bt709_to_linear(c.rgb));
     textureStore(dst, vec2<i32>(id.xy), vec4<f32>(lin * c.a, c.a));
 }
 

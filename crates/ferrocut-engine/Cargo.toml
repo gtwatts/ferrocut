@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 ferrocut-core.workspace = true
+ferrocut-colorspace = { path = "../ferrocut-colorspace" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 blake3 = "1.8"

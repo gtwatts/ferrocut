@@ -443,6 +443,7 @@ dependencies = [
  "blake3",
  "bytemuck",
  "clap",
+ "ferrocut-colorspace",
  "ferrocut-core",
  "ffmpeg-next",
  "half",

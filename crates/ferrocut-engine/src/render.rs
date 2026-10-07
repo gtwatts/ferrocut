@@ -51,8 +51,11 @@ use crate::media::concat::concat;
 use crate::media::encode::{ChunkEncoder, EncodeSettings};
 use crate::timeline::Timeline;
 
+/// Part of every chunk key (with [`ferrocut_colorspace::VERSION`]): bump when
+/// the engine's output for the same inputs changes.
+/// v2: color transforms from `ferrocut-colorspace` (OCIO 2.5 matrices).
 pub const ENGINE_VERSION: &str =
-    concat!("ferrocut-engine ", env!("CARGO_PKG_VERSION"), " render.v1");
+    concat!("ferrocut-engine ", env!("CARGO_PKG_VERSION"), " render.v2");
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ChunkPlan {
@@ -214,6 +217,7 @@ pub fn plan(tl: &Timeline, c: &Compiled) -> Vec<ChunkPlan> {
         let mut h = blake3::Hasher::new();
         h.update(b"ferrocut.chunk.v1\0");
         h.update(ENGINE_VERSION.as_bytes());
+        h.update(ferrocut_colorspace::VERSION.as_bytes());
         h.update(fp.as_bytes());
         h.update(&frames.to_le_bytes());
         for i in start..start + frames {

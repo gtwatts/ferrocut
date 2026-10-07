@@ -123,11 +123,25 @@ impl Compositor {
         let dev = &gpu.device;
         let comp = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("composite.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/composite.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    ferrocut_colorspace::wgsl(),
+                    include_str!("shaders/composite.wgsl")
+                )
+                .into(),
+            ),
         });
         let out = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("output.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/output.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    "{}\n{}",
+                    ferrocut_colorspace::wgsl(),
+                    include_str!("shaders/output.wgsl")
+                )
+                .into(),
+            ),
         });
         let mk = |m: &wgpu::ShaderModule, entry: &str| {
             dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
