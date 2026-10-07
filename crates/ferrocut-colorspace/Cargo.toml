@@ -1,0 +1,14 @@
+[package]
+name = "ferrocut-colorspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Pure-Rust (OCIO-free) Rec.709/sRGB <-> linear <-> ACEScg conversions for Ferrocut: exact matrices, transfer functions, 8-bit fast paths and a matching WGSL snippet"
+
+[dependencies]
+half = "2.7"
+
+[dev-dependencies]
+naga = { version = "30", features = ["wgsl-in"] }

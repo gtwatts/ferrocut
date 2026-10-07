@@ -86,6 +86,13 @@ unsafe extern "C" {
         height: i64,
         err: *mut *mut c_char,
     ) -> c_int;
+    pub fn cl_ocio_processor_apply_cpu_rgba_f32_precise(
+        p: *const CLOcioProcessor,
+        pixels: *mut f32,
+        width: i64,
+        height: i64,
+        err: *mut *mut c_char,
+    ) -> c_int;
 
     pub fn cl_ocio_gpu_shader_create(
         p: *const CLOcioProcessor,

@@ -8,6 +8,7 @@ description = "HTML/CSS/JS layer for Ferrocut: offscreen Chromium (CEF, BSD) in 
 build = "build.rs"
 
 [dependencies]
+ferrocut-colorspace = { path = "../ferrocut-colorspace" }
 ferrocut-core = { workspace = true }
 ferrocut-ipc = { path = "../ferrocut-ipc" }
 half = "2.7"

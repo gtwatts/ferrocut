@@ -16,6 +16,9 @@ pollster = "1"
 thiserror = "2"
 wgpu = "30"
 
+[dev-dependencies]
+ferrocut-colorspace = { path = "../ferrocut-colorspace" }
+
 [build-dependencies]
 cc = "1.2"
 

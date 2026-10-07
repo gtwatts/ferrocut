@@ -18,6 +18,8 @@ struct CLOcioConfig {
 struct CLOcioProcessor {
     OCIO::ConstProcessorRcPtr proc;
     OCIO::ConstCPUProcessorRcPtr cpu;
+    // OPTIMIZATION_LOSSLESS: no fast log/exp/pow approximations (validation).
+    OCIO::ConstCPUProcessorRcPtr cpu_precise;
 };
 struct CLOcioGpuShader {
     OCIO::GpuShaderDescRcPtr desc;
@@ -59,6 +61,7 @@ CLOcioProcessor *wrap(OCIO::ConstProcessorRcPtr p) {
     w->proc = p;
     // Default CPU processor: the reference we compare the GPU path against.
     w->cpu = p->getDefaultCPUProcessor();
+    w->cpu_precise = p->getOptimizedCPUProcessor(OCIO::OPTIMIZATION_LOSSLESS);
     return w;
 }
 
@@ -160,6 +163,15 @@ int cl_ocio_processor_apply_cpu_rgba_f32(const CLOcioProcessor *p, float *pixels
     return guard(err, [&] {
         OCIO::PackedImageDesc img(pixels, width, height, 4);
         p->cpu->apply(img);
+    });
+}
+
+int cl_ocio_processor_apply_cpu_rgba_f32_precise(const CLOcioProcessor *p, float *pixels, int64_t width,
+                                                 int64_t height, char **err) {
+    if (!p || !pixels) return null_arg(err, "p/pixels");
+    return guard(err, [&] {
+        OCIO::PackedImageDesc img(pixels, width, height, 4);
+        p->cpu_precise->apply(img);
     });
 }
 

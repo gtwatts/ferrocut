@@ -8,14 +8,13 @@
 //! composites in encoded sRGB, so the decode happens *after* ThorVG's blending:
 //! this reproduces the look the animator saw.
 //!
-//! Determinism: the transfer function is evaluated once per (alpha, value) pair
-//! in f64 into a 64K-entry table; the per-pixel work is table lookups plus a
-//! fixed 3x3 f32 matrix (Rust never contracts to FMA), then round-to-nearest-even
-//! to f16. No libm call happens per pixel, and f64 table values are far below
-//! f16 resolution, so outputs are bit-identical across machines in practice.
+//! The math lives in `ferrocut-colorspace` (shared with the engine; validated
+//! against OCIO 2.5 in ferrocut-color's tests). Determinism: per-pixel work is
+//! table lookups plus a fixed f32 matrix, so outputs are bit-identical across
+//! machines (see `ferrocut_colorspace::pixels`).
 
+use ferrocut_colorspace::{Transfer, pixels};
 use half::f16;
-use std::sync::OnceLock;
 
 /// OCIO colorspace names (built-in `cg-config-v4.0.0_aces-v2.0_ocio-v2.5`).
 pub const ACESCG: &str = "ACEScg";
@@ -40,72 +39,22 @@ impl OutputEncoding {
     }
 }
 
-/// Linear Rec.709 -> ACEScg, as evaluated by OCIO 2.5's built-in CG config
-/// (`Linear Rec.709 (sRGB)` -> `ACEScg`; Bradford D65->D60).
-// Digits as printed by OCIO (f64); the f32 rounding is intended.
-#[allow(clippy::excessive_precision)]
-pub const REC709_TO_ACESCG: [[f32; 3]; 3] = [
-    [0.613_097_43, 0.339_523_14, 0.047_379_453],
-    [0.070_193_72, 0.916_353_9, 0.013_452_399],
-    [0.020_615_593, 0.109_569_77, 0.869_814_6],
-];
+/// Linear Rec.709 -> ACEScg (OCIO 2.5's values) as the f32 literals this
+/// node has always used; see `ferrocut_colorspace::pixels::LEGACY_REC709_TO_ACESCG_F32`.
+pub const REC709_TO_ACESCG: [[f32; 3]; 3] = pixels::LEGACY_REC709_TO_ACESCG_F32;
 
+/// sRGB decoding (IEC 61966-2-1), in f64.
 pub fn srgb_eotf(v: f64) -> f64 {
-    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
-}
-
-/// `table[(a << 8) | c]` = premultiplied linear value of premultiplied encoded `c`
-/// at alpha `a` (i.e. `a/255 * eotf(c/a)`).
-fn premult_linear_table() -> &'static [f32] {
-    static T: OnceLock<Vec<f32>> = OnceLock::new();
-    T.get_or_init(|| {
-        let mut t = vec![0.0f32; 65536];
-        for a in 1..256usize {
-            for c in 0..256usize {
-                let c = c.min(a);
-                let alpha = a as f64 / 255.0;
-                t[(a << 8) | c] = (alpha * srgb_eotf(c as f64 / a as f64)) as f32;
-            }
-            // values above alpha (invalid premultiplied input) clamp to alpha
-            for c in a + 1..256 {
-                t[(a << 8) | c] = t[(a << 8) | a];
-            }
-        }
-        t
-    })
+    Transfer::Srgb.to_linear(v)
 }
 
 /// Convert `src` (one u32 per pixel: little-endian bytes R,G,B,A, premultiplied)
 /// into tightly packed RGBA f16, premultiplied.
 pub fn convert(src: &[u32], encoding: OutputEncoding, out: &mut Vec<f16>) {
-    out.clear();
-    out.reserve(src.len() * 4);
+    let px = src.iter().map(|p| p.to_le_bytes());
     match encoding {
-        OutputEncoding::SrgbEncoded => {
-            for &px in src {
-                let [r, g, b, a] = px.to_le_bytes();
-                for v in [r, g, b, a] {
-                    out.push(f16::from_f32(v as f32 / 255.0));
-                }
-            }
-        }
-        OutputEncoding::AcesCg => {
-            let t = premult_linear_table();
-            let m = &REC709_TO_ACESCG;
-            for &px in src {
-                let [r, g, b, a] = px.to_le_bytes();
-                if a == 0 {
-                    out.extend_from_slice(&[f16::ZERO; 4]);
-                    continue;
-                }
-                let base = (a as usize) << 8;
-                let (r, g, b) = (t[base | r as usize], t[base | g as usize], t[base | b as usize]);
-                out.push(f16::from_f32(m[0][0] * r + m[0][1] * g + m[0][2] * b));
-                out.push(f16::from_f32(m[1][0] * r + m[1][1] * g + m[1][2] * b));
-                out.push(f16::from_f32(m[2][0] * r + m[2][1] * g + m[2][2] * b));
-                out.push(f16::from_f32(a as f32 / 255.0));
-            }
-        }
+        OutputEncoding::SrgbEncoded => pixels::rgba8_to_f16(px, out),
+        OutputEncoding::AcesCg => pixels::srgb8_premul_to_acescg_f16(px, out),
     }
 }
 
@@ -135,5 +84,14 @@ mod tests {
             assert!((got.to_f64() - want).abs() <= want * 1e-3 + 1e-4, "{got} vs {want}");
         }
         assert!((out[3].to_f64() - a).abs() < 1e-3);
+    }
+
+    #[test]
+    fn colorspace_names_match_ferrocut_colorspace() {
+        use ferrocut_colorspace::Space;
+        assert_eq!(Space::ACESCG.ocio_name(), Some(ACESCG));
+        assert_eq!(Space::SRGB.ocio_name(), Some(SRGB_ENCODED));
+        // Bumping the shared color math must bump this node's NODE_VERSION too.
+        assert_eq!(ferrocut_colorspace::VERSION, "ferrocut-colorspace/1");
     }
 }

@@ -33,7 +33,15 @@ cargo test -p ferrocut-color -- --nocapture     # needs a wgpu adapter (any Vulk
 
 Nothing third-party is committed; `third_party/` is git-ignored.
 
-## Tests (`tests/gpu_vs_cpu.rs`)
+## Tests
+
+`tests/colorspace_vs_ocio.rs` validates the pure-Rust `ferrocut-colorspace`
+crate (used by lottie, html and, later, the engine) against OCIO. It uses
+`Processor::apply_cpu_rgba_precise`, OCIO's lossless CPU path, because
+OCIO's default CPU path uses fast pow approximations that are off by up to
+2.4e-5. The test also checks the crate's WGSL snippet on the GPU.
+
+### `tests/gpu_vs_cpu.rs`
 
 * ACEScg → `sRGB - Display` / `ACES 2.0 - SDR 100 nits (Rec.709)` (built-in `cg-config-v4.0.0_aces-v2.0_ocio-v2.5`; uses two LUT textures) GPU vs OCIO CPU on a 67×45 premultiplied f16 pattern with exposures up to 4.0 and alphas of 1, .75, .5, .25 and 0.
 * ACEScg → `sRGB - Texture` (analytic only, no LUTs).

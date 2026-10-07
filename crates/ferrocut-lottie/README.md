@@ -108,5 +108,5 @@ Effects does in 8-bit, so it matches the animator's look. Two output encodings
 ## Layout
 
 `src/adapter.rs` is the only file that touches `ferrocut-core`. `renderer.rs`,
-`thorvg.rs` (FFI wrapper + ThorVG thread), `timing.rs`, `color.rs` and `meta.rs`
+`thorvg.rs` (FFI wrapper + ThorVG thread), `timing.rs`, `color.rs` (math in `ferrocut-colorspace`) and `meta.rs`
 are core-independent.

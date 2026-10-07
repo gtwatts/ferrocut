@@ -8,6 +8,7 @@ description = "Lottie layer for Ferrocut: ThorVG (MIT) CPU rasterizer behind its
 build = "build.rs"
 
 [dependencies]
+ferrocut-colorspace = { path = "../ferrocut-colorspace" }
 ferrocut-core = { workspace = true }
 half = "2.7"
 serde = { version = "1", features = ["derive"] }

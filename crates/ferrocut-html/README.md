@@ -179,7 +179,7 @@ it can be driven by hand.
   profile dir and the shared-memory buffer come from `ferrocut-ipc`.
 - `src/session.rs`: frame grid, budgets, pre-roll, and respawn on seek or
   crash.
-- `src/color.rs`: BGRA8 premultiplied → ACEScg f16.
+- `src/color.rs`: BGRA8 premultiplied → ACEScg f16 (math in `ferrocut-colorspace`).
 - `src/adapter.rs`: `HtmlNode`. This is the only module touching
   ferrocut-core.
 - `scripts/fetch-cef.sh`: the pinned CEF download.

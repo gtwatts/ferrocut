@@ -406,12 +406,21 @@ version = "0.0.1"
 dependencies = [
  "bytemuck",
  "cc",
+ "ferrocut-colorspace",
  "ferrocut-core",
  "half",
  "naga",
  "pollster",
  "thiserror",
  "wgpu",
+]
+
+[[package]]
+name = "ferrocut-colorspace"
+version = "0.0.1"
+dependencies = [
+ "half",
+ "naga",
 ]
 
 [[package]]
@@ -449,6 +458,7 @@ name = "ferrocut-html"
 version = "0.0.1"
 dependencies = [
  "cmake",
+ "ferrocut-colorspace",
  "ferrocut-core",
  "ferrocut-ipc",
  "half",
@@ -467,6 +477,7 @@ dependencies = [
 name = "ferrocut-lottie"
 version = "0.0.1"
 dependencies = [
+ "ferrocut-colorspace",
  "ferrocut-core",
  "half",
  "serde",

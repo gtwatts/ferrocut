@@ -159,6 +159,21 @@ impl Processor {
     }
 
     /// Extract the GPU shader (Vulkan GLSL 4.6) and its LUT textures.
+    /// Like [`apply_cpu_rgba`](Self::apply_cpu_rgba) but with OCIO's lossless
+    /// CPU optimization: no fast log/exp/pow approximations (those are off by
+    /// up to ~2.5e-5). For validating other implementations.
+    pub fn apply_cpu_rgba_precise(&self, pixels: &mut [f32], width: usize, height: usize) -> Result<()> {
+        assert_eq!(pixels.len(), width * height * 4, "pixel buffer size mismatch");
+        let mut err = ptr::null_mut();
+        check(
+            unsafe {
+                ffi::cl_ocio_processor_apply_cpu_rgba_f32_precise(self.raw, pixels.as_mut_ptr(), width as i64, height as i64, &mut err)
+            },
+            err,
+        )
+    }
+
+    /// Extract the GPU shader (Vulkan GLSL 4.6) and its LUT textures.
     pub fn gpu_shader(&self, opts: &GpuShaderOptions) -> Result<GpuShader> {
         let f = cstr(&opts.function_name)?;
         let p = cstr(&opts.resource_prefix)?;
