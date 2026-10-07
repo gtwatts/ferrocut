@@ -31,7 +31,7 @@ fn lut_bytes(t: &LutTexture, f32_ok: bool) -> Vec<u8> {
     let rgba: Vec<f32> = if t.channels == 1 {
         t.values.clone()
     } else {
-        t.values.chunks_exact(3).flat_map(|c| [c[0], c[1], c[2], 1.0]).collect()
+        t.values.as_chunks::<3>().0.iter().flat_map(|c| [c[0], c[1], c[2], 1.0]).collect()
     };
     if f32_ok {
         bytemuck::cast_slice(&rgba).to_vec()

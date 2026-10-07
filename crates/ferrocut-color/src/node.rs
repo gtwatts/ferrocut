@@ -114,8 +114,8 @@ impl OcioTransformNode {
     /// CPU reference on premultiplied RGBA f32 pixels, mirroring the GPU path
     /// exactly (unpremultiply when alpha > 0, transform, re-premultiply).
     pub fn apply_cpu_premultiplied(&self, rgba: &mut [f32], width: usize, height: usize) -> Result<(), NodeError> {
-        let alphas: Vec<f32> = rgba.chunks_exact(4).map(|p| p[3]).collect();
-        for p in rgba.chunks_exact_mut(4) {
+        let alphas: Vec<f32> = rgba.as_chunks::<4>().0.iter().map(|p| p[3]).collect();
+        for p in rgba.as_chunks_mut::<4>().0.iter_mut() {
             if p[3] > 0.0 {
                 p[0] /= p[3];
                 p[1] /= p[3];
@@ -123,7 +123,7 @@ impl OcioTransformNode {
             }
         }
         self.processor.apply_cpu_rgba(rgba, width, height).map_err(NodeError::new)?;
-        for (p, a) in rgba.chunks_exact_mut(4).zip(alphas) {
+        for (p, a) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(alphas) {
             p[0] *= a;
             p[1] *= a;
             p[2] *= a;

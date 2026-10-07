@@ -42,6 +42,8 @@ impl OutputEncoding {
 
 /// Linear Rec.709 -> ACEScg, as evaluated by OCIO 2.5's built-in CG config
 /// (`Linear Rec.709 (sRGB)` -> `ACEScg`; Bradford D65->D60).
+// Digits as printed by OCIO (f64); the f32 rounding is intended.
+#[allow(clippy::excessive_precision)]
 pub const REC709_TO_ACESCG: [[f32; 3]; 3] = [
     [0.613_097_43, 0.339_523_14, 0.047_379_453],
     [0.070_193_72, 0.916_353_9, 0.013_452_399],

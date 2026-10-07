@@ -34,7 +34,7 @@ impl LottieMeta {
         if fr_num <= 0 {
             return Err(LottieError::Load(format!("frame rate must be > 0, got {}", h.fr)));
         }
-        if !(h.op > h.ip) || !h.ip.is_finite() || !h.op.is_finite() {
+        if !h.ip.is_finite() || !h.op.is_finite() || h.op <= h.ip {
             return Err(LottieError::Load(format!("need op > ip, got ip={} op={}", h.ip, h.op)));
         }
         if !(h.w > 0.0 && h.h > 0.0) {

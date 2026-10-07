@@ -102,7 +102,7 @@ fn gpu_vs_cpu(node: &OcioTransformNode, src: Vec<f16>) -> Stats {
     // The GPU result is stored as f16 (working format); quantize the reference the same way.
     let c: Vec<f32> = c.iter().map(|&v| f16::from_f32(v).to_f32()).collect();
 
-    for (i, (gp, sp)) in g.as_chunks::<4>().0.iter().zip(src.chunks_exact(4)).enumerate() {
+    for (i, (gp, sp)) in g.as_chunks::<4>().0.iter().zip(src.as_chunks::<4>().0.iter()).enumerate() {
         assert_eq!(gp[3], sp[3].to_f32(), "alpha must pass through unchanged (pixel {i})");
         if sp[3].to_f32() == 0.0 {
             assert_eq!(&gp[..3], &[0.0, 0.0, 0.0], "alpha=0 pixel must stay black when premultiplied (pixel {i})");
