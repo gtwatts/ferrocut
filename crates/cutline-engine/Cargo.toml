@@ -7,5 +7,6 @@ description = "Cutline engine: timeline, scheduler, pull-based render graph, FFm
 [dependencies]
 cutline-core.workspace = true
 anyhow = "1"
+ffmpeg-next = { version = "9.0.0", default-features = false, features = ["codec", "format", "software-scaling"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
