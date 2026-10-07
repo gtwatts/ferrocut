@@ -233,3 +233,30 @@ fn frame_geometry_is_preserved_and_partial_windows_rejected() {
     assert_eq!(err.kind, ErrorKind::Permanent);
     assert!(!node.supports_data_window());
 }
+
+#[test]
+fn pipeline_is_rebuilt_for_a_recreated_device() {
+    // After device loss the engine replaces the shared GpuContext with
+    // `recreate()` (new device, new id). A pipeline cached from the old device
+    // must not be used on the new one.
+    let cfg = Config::builtin_default().unwrap();
+    let node = OcioTransformNode::colorspace(&cfg, "ACEScg", "sRGB - Texture").unwrap();
+    let a = gpu();
+    let b = a.recreate().expect("recreate device");
+    assert_ne!(a.id(), b.id());
+    let read = |g: &GpuContext, f: &Frame| -> Vec<u16> {
+        match &f.to_cpu(g).expect("readback").storage {
+            FrameStorage::Cpu(img) => img.pixels.iter().map(|v| v.to_bits()).collect(),
+            FrameStorage::Gpu(_) => unreachable!(),
+        }
+    };
+    let src = cpu_frame(test_pattern(), "ACEScg");
+    let out_a = read(a, &node.apply(a, &src.to_gpu(a)).unwrap());
+    let out_b = read(&b, &node.apply(&b, &src.to_gpu(&b)).unwrap());
+    assert_eq!(node.cached_devices(), 2, "one pipeline per device");
+    assert!(!Arc::ptr_eq(&node.prepare(a).unwrap(), &node.prepare(&b).unwrap()));
+    assert!(out_a == out_b, "same transform on a rebuilt device must be bit-identical");
+    // Again on the old one: still cached, no rebuild.
+    assert!(Arc::ptr_eq(&node.prepare(a).unwrap(), &node.prepare(a).unwrap()));
+    assert_eq!(node.cached_devices(), 2);
+}

@@ -1,6 +1,6 @@
 //! [`OcioTransformNode`]: an OCIO transform as a Ferrocut render node.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use ferrocut_core::{ColorSpace, Frame, GpuContext, GpuRequirements, NodeError, NodeHash, Pull, RenderCtx, RenderNode, RationalTime};
 
@@ -17,7 +17,8 @@ pub const NODE_VERSION: &str = "ferrocut.ocio.v1";
 /// Frames are premultiplied; the node unpremultiplies, transforms, and
 /// re-premultiplies (alpha passes through unchanged). The OCIO GLSL is
 /// translated to WGSL when the node is created; the wgpu pipeline is built
-/// lazily on the first render for the device in use.
+/// lazily on the first render for each device, keyed by [`GpuContext::id`], so a
+/// device rebuilt after loss gets a fresh pipeline.
 pub struct OcioTransformNode {
     processor: Arc<Processor>,
     src_space: ColorSpace,
@@ -25,8 +26,13 @@ pub struct OcioTransformNode {
     shader: GpuShader,
     translated: TranslatedShader,
     hash: NodeHash,
-    gpu: OnceLock<Result<Arc<GpuTransform>, String>>,
+    /// Pipelines per [`GpuContext::id`], most recent last.
+    gpu: Mutex<Vec<(u64, Arc<GpuTransform>)>>,
 }
+
+/// Pipelines kept per node: the live device plus a few recently replaced
+/// ones (multi-device setups); older ones are dropped with their device.
+const MAX_CACHED_DEVICES: usize = 4;
 
 impl OcioTransformNode {
     /// Scene-referred `src` -> display/view. Output is tagged `"<display> | <view>"`.
@@ -63,7 +69,7 @@ impl OcioTransformNode {
             shader,
             translated,
             hash,
-            gpu: OnceLock::new(),
+            gpu: Mutex::new(Vec::new()),
         })
     }
 
@@ -83,12 +89,27 @@ impl OcioTransformNode {
         &self.out_space
     }
 
-    /// Build (once) the wgpu pipeline for `gpu`.
+    /// The wgpu pipeline for `gpu`, built on first use per [`GpuContext::id`].
+    /// Failures are not cached (they may come from a lost or out-of-memory
+    /// device), so the next call on a recreated device builds again.
     pub fn prepare(&self, gpu: &GpuContext) -> Result<Arc<GpuTransform>, NodeError> {
-        self.gpu
-            .get_or_init(|| GpuTransform::new(gpu, &self.shader, &self.translated).map(Arc::new).map_err(|e| e.message))
-            .clone()
-            .map_err(NodeError::new)
+        let id = gpu.id();
+        let mut cache = self.gpu.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((_, t)) = cache.iter().find(|(k, _)| *k == id) {
+            return Ok(t.clone());
+        }
+        let t = Arc::new(GpuTransform::new(gpu, &self.shader, &self.translated)?);
+        if cache.len() >= MAX_CACHED_DEVICES {
+            cache.remove(0);
+        }
+        cache.push((id, t.clone()));
+        Ok(t)
+    }
+
+    /// How many device pipelines this node holds (tests).
+    #[doc(hidden)]
+    pub fn cached_devices(&self) -> usize {
+        self.gpu.lock().map(|c| c.len()).unwrap_or(0)
     }
 
     /// Render one frame directly (outside a graph).
