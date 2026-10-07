@@ -1,0 +1,12 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "TBD"
+repository = ""
+
+[workspace.dependencies]
+cutline-core = { path = "crates/cutline-core" }

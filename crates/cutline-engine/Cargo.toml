@@ -1,0 +1,6 @@
+[package]
+name = "cutline-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
