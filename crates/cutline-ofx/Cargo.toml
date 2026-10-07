@@ -1,0 +1,8 @@
+[package]
+name = "cutline-ofx"
+version.workspace = true
+edition.workspace = true
+license = "Apache-2.0"
+description = "PLACEHOLDER (SeePlus): real crate lands in a follow-up commit"
+
+[dependencies]
