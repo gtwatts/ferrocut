@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- ferrocut-html determinism fixture: every moving thing here is driven by a
+     different browser clock (CSS animation, setInterval, requestAnimationFrame,
+     Date.now, setTimeout-triggered CSS animation). Rendered at 320x320. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; width: 320px; height: 320px; overflow: hidden; background: transparent; }
+  .box { position: absolute; left: 10px; width: 40px; height: 40px; }
+  #css   { top: 10px;  background: #e53935; animation: slide 2s linear infinite; }
+  #timer { top: 70px;  background: #43a047; }
+  #raf   { top: 130px; background: #1e88e5; }
+  #clock { top: 190px; height: 20px; background: #fdd835; }
+  #late  { top: 240px; left: 140px; background: #8e24aa; border-radius: 6px; opacity: 0; }
+  #late.go { animation: spin 1s ease-in-out infinite, show 0.3s forwards; }
+  #panel { position: absolute; right: 8px; bottom: 8px; width: 120px; height: 60px;
+           background: rgba(255,255,255,0.5); border-radius: 10px; }
+  @keyframes slide { from { transform: translateX(0); opacity: 1; } 50% { opacity: 0.35; } to { transform: translateX(240px); opacity: 1; } }
+  @keyframes spin  { to { transform: rotate(360deg); } }
+  @keyframes show  { to { opacity: 1; } }
+</style>
+</head>
+<body>
+  <div id="css" class="box"></div>
+  <div id="timer" class="box"></div>
+  <div id="raf" class="box"></div>
+  <div id="clock" class="box"></div>
+  <div id="late" class="box"></div>
+  <div id="panel"></div>
+<script>
+  // setInterval: jumps 12px every 100ms of page time.
+  let ticks = 0;
+  const timer = document.getElementById('timer');
+  setInterval(() => { ticks++; timer.style.transform = `translateX(${(ticks * 12) % 240}px)`; }, 100);
+
+  // requestAnimationFrame: smooth sine driven by the rAF timestamp.
+  const raf = document.getElementById('raf');
+  function frame(ts) {
+    raf.style.transform = `translateX(${120 + 110 * Math.sin(ts / 400)}px)`;
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // Date.now: bar width grows with wall-clock (virtual) time since load.
+  const t0 = Date.now();
+  const clock = document.getElementById('clock');
+  setInterval(() => { clock.style.width = `${40 + ((Date.now() - t0) / 10) % 260}px`; }, 16);
+
+  // setTimeout-triggered CSS animation starting at 500ms.
+  setTimeout(() => document.getElementById('late').classList.add('go'), 500);
+</script>
+</body>
+</html>

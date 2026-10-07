@@ -447,6 +447,13 @@ dependencies = [
 [[package]]
 name = "ferrocut-html"
 version = "0.0.1"
+dependencies = [
+ "cmake",
+ "ferrocut-core",
+ "half",
+ "memmap2",
+ "thiserror",
+]
 
 [[package]]
 name = "ferrocut-lottie"

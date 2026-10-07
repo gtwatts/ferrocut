@@ -4,5 +4,17 @@ version.workspace = true
 edition.workspace = true
 license = "Apache-2.0"
 publish = false
+description = "HTML/CSS/JS layer for Ferrocut: offscreen Chromium (CEF, BSD) in an isolated host process; page clocks follow graph time only"
+build = "build.rs"
 
 [dependencies]
+ferrocut-core = { workspace = true }
+half = "2.7"
+memmap2 = "0.9"
+thiserror = "2"
+
+[build-dependencies]
+cmake = "0.1.54"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ferrocut_html_no_host)"] }
