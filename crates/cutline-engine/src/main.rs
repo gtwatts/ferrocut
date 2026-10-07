@@ -43,10 +43,17 @@ enum Cmd {
     Plan { timeline: PathBuf },
     /// List GPU adapters and show which one Cutline would pick.
     Adapters,
+    /// Show the FFmpeg libraries cutline is running against (version, license, configure flags).
+    Ffmpeg,
 }
 
 fn main() -> anyhow::Result<()> {
+    cutline_engine::media::init();
     match Cli::parse().cmd {
+        Cmd::Ffmpeg => {
+            let (v, l, c) = cutline_engine::media::ffmpeg_info();
+            println!("version: {v}\nlicense: {l}\nconfiguration: {c}");
+        }
         Cmd::Adapters => {
             for (i, a) in GpuContext::list_adapters().iter().enumerate() {
                 println!(
@@ -82,6 +89,13 @@ fn main() -> anyhow::Result<()> {
             let c = compile(&tl)?;
             let gpu = GpuContext::new(AdapterPreference::default())?;
             eprintln!("adapter: {}", gpu.describe());
+            let (v, l, _) = cutline_engine::media::ffmpeg_info();
+            eprintln!("ffmpeg:  {v} ({l})");
+            if !cutline_engine::media::ffmpeg_is_lgpl() {
+                eprintln!(
+                    "WARNING: running against a non-LGPL FFmpeg; output is fine but this build must not be distributed"
+                );
+            }
             let cache_dir = cache_dir.unwrap_or_else(|| {
                 output
                     .parent()

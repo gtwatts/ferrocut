@@ -1,0 +1,9 @@
+# Link the engine against the project-local LGPL FFmpeg built by
+# scripts/build-ffmpeg-lgpl.sh (installed to third_party/ffmpeg-lgpl, gitignored).
+# Not forced: an explicit PKG_CONFIG_PATH in your environment wins, e.g. for a
+# prefix elsewhere (PKG_CONFIG_PATH=~/.local/opt/ffmpeg-lgpl/lib/pkgconfig).
+# If the directory doesn't exist, pkg-config falls back to whatever FFmpeg the
+# system has; crates/cutline-engine/build.rs then prints a FALLBACK warning.
+[env]
+PKG_CONFIG_PATH = { value = "third_party/ffmpeg-lgpl/lib/pkgconfig", relative = true }
+CUTLINE_LGPL_FFMPEG_PREFIX = { value = "third_party/ffmpeg-lgpl", relative = true }

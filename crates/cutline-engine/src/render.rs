@@ -53,6 +53,8 @@ pub struct ChunkReport {
 pub struct RenderReport {
     pub engine: String,
     pub adapter: String,
+    /// FFmpeg version + license of the libavcodec actually loaded.
+    pub ffmpeg: String,
     pub output: PathBuf,
     pub total_frames: i64,
     pub chunk_frames: i64,
@@ -233,6 +235,10 @@ pub fn render(
     Ok(RenderReport {
         engine: ENGINE_VERSION.to_string(),
         adapter: gpu.describe(),
+        ffmpeg: {
+            let (v, l, _) = crate::media::ffmpeg_info();
+            format!("{v} ({l})")
+        },
         output: out.to_path_buf(),
         total_frames: tl.frame_count(),
         chunk_frames: tl.chunk_frames(),

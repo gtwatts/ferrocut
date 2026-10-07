@@ -17,6 +17,25 @@ pub(crate) fn to_ff(r: Rational) -> ffmpeg_next::Rational {
     )
 }
 
+/// Runtime FFmpeg identity: (version, license, configure flags).
+pub fn ffmpeg_info() -> (String, String, String) {
+    use std::ffi::CStr;
+    // SAFETY: these return pointers to static NUL-terminated strings.
+    unsafe {
+        let s = |p: *const std::os::raw::c_char| CStr::from_ptr(p).to_string_lossy().into_owned();
+        (
+            s(ffmpeg_next::ffi::av_version_info()),
+            s(ffmpeg_next::ffi::avcodec_license()),
+            s(ffmpeg_next::ffi::avcodec_configuration()),
+        )
+    }
+}
+
+/// True when the loaded libavcodec reports an LGPL license.
+pub fn ffmpeg_is_lgpl() -> bool {
+    ffmpeg_info().1.starts_with("LGPL")
+}
+
 pub fn init() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
