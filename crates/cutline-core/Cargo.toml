@@ -2,16 +2,12 @@
 name = "cutline-core"
 version.workspace = true
 edition.workspace = true
-description = "Shared types for Cutline: rational time, frames, render node trait (PROVISIONAL)"
+description = "Cutline's GPU-side core: the shared wgpu context, GPU frames, texture pool and the render node contract"
 
 [dependencies]
-blake3 = "1.8"
+cutline-types = { workspace = true }
 bytemuck = "1"
 half = { version = "2.7", features = ["bytemuck"] }
 pollster = "1"
-serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 wgpu = "30"
-
-[dev-dependencies]
-serde_json = "1"

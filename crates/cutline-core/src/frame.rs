@@ -1,62 +1,67 @@
-//! The frame type that flows between render nodes.
+//! The frame that flows between render nodes.
 //!
-//! PROVISIONAL: pending SeePlus review.
-//!
-//! Conventions (agreed in the room, Oct 7 2026):
+//! Conventions (agreed between Rusty and SeePlus, Oct 7 2026):
 //! - Pixels are linear-light RGBA, half float (`Rgba16Float`) on the GPU.
-//! - Every frame is tagged with the OCIO color space name it is encoded in;
-//!   the working space is `ACEScg`.
+//! - Every frame is tagged with the OCIO color space it is encoded in; the
+//!   working space is `ACEScg`.
 //! - Alpha is **premultiplied**. Nodes that need straight alpha (e.g. OCIO
 //!   transforms) unpremultiply internally and re-premultiply on output.
-//! - A frame can be staged to the CPU (`to_cpu`) for nodes that can't work on
-//!   wgpu textures (OpenFX round trip), and back (`to_gpu`).
+//! - `width`/`height` are the **display window**. Pixels are stored for the
+//!   **data window** only, which may be smaller (a lower third) or larger
+//!   (overscan) than the display window; outside it everything is transparent
+//!   black. Storage dimensions == data window dimensions.
+//! - Pixel aspect ratio is an exact rational (1 = square pixels).
+//! - A frame can be staged to the CPU (`to_cpu`, `to_cpu_frame`) for nodes that
+//!   can't work on wgpu textures (OpenFX round trip), and back (`to_gpu`).
 
 use std::sync::Arc;
 
+use cutline_types::{AlphaMode, ColorSpace, CpuFrame, CpuImage, PixelRect, Rational};
 use half::f16;
 
 use crate::gpu::{GpuContext, GpuError};
+use crate::pool::Lease;
 
 /// GPU pixel format of every working frame.
 pub const WORKING_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const WORKING_BPP: u32 = 8;
+/// Usage of every working-format frame texture (one pool key per size).
+pub const WORKING_USAGE: wgpu::TextureUsages = wgpu::TextureUsages::TEXTURE_BINDING
+    .union(wgpu::TextureUsages::STORAGE_BINDING)
+    .union(wgpu::TextureUsages::COPY_SRC)
+    .union(wgpu::TextureUsages::COPY_DST);
 
-// PROVISIONAL: pending SeePlus review
-/// OCIO color space name, e.g. `ACEScg`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct ColorSpace(Arc<str>);
-
-impl ColorSpace {
-    pub const ACESCG: &'static str = "ACEScg";
-    pub fn new(name: &str) -> Self {
-        ColorSpace(Arc::from(name))
-    }
-    pub fn acescg() -> Self {
-        Self::new(Self::ACESCG)
-    }
-    pub fn name(&self) -> &str {
-        &self.0
-    }
-}
-
-// PROVISIONAL: pending SeePlus review
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub enum AlphaMode {
-    /// Color channels are already multiplied by alpha. The only mode the engine produces.
-    #[default]
-    Premultiplied,
-}
-
+/// A GPU texture, usually leased from the [`GpuContext`] pool: it goes back to
+/// the pool when the last clone of this `GpuImage` drops. Don't keep raw
+/// `texture.clone()`s beyond the image's lifetime.
 #[derive(Clone, Debug)]
 pub struct GpuImage {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
+    lease: Option<Arc<Lease>>,
 }
 
-/// CPU staging copy: RGBA half floats, tightly packed rows, top row first.
-#[derive(Clone, Debug)]
-pub struct CpuImage {
-    pub pixels: Vec<f16>,
+impl GpuImage {
+    pub(crate) fn from_lease(texture: wgpu::Texture, lease: Arc<Lease>) -> Self {
+        let view = texture.create_view(&Default::default());
+        GpuImage {
+            texture,
+            view,
+            lease: Some(lease),
+        }
+    }
+    /// Wrap a texture that isn't pooled.
+    pub fn unpooled(texture: wgpu::Texture) -> Self {
+        let view = texture.create_view(&Default::default());
+        GpuImage {
+            texture,
+            view,
+            lease: None,
+        }
+    }
+    pub fn is_pooled(&self) -> bool {
+        self.lease.is_some()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -65,43 +70,75 @@ pub enum FrameStorage {
     Cpu(Arc<CpuImage>),
 }
 
-// PROVISIONAL: pending SeePlus review
 #[derive(Clone, Debug)]
 pub struct Frame {
+    /// Display window size.
     pub width: u32,
     pub height: u32,
+    /// Pixel bounds of `storage` in display-window coordinates.
+    pub data_window: PixelRect,
+    /// Pixel aspect ratio (pixel width / pixel height).
+    pub pixel_aspect: Rational,
     pub color_space: ColorSpace,
     pub alpha: AlphaMode,
     pub storage: FrameStorage,
 }
 
 impl Frame {
-    /// Allocate an uninitialized working-format GPU frame that compute shaders can write.
+    /// Pooled, uninitialized, full-window, square-pixel working-format GPU frame
+    /// that compute shaders can write.
     pub fn new_gpu(gpu: &GpuContext, width: u32, height: u32, color_space: ColorSpace) -> Frame {
-        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("cutline.frame"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: WORKING_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&Default::default());
+        Self::new_gpu_window(
+            gpu,
+            width,
+            height,
+            PixelRect::full(width, height),
+            Rational::ONE,
+            color_space,
+        )
+    }
+
+    /// Pooled, uninitialized GPU frame whose storage covers `data_window`.
+    pub fn new_gpu_window(
+        gpu: &GpuContext,
+        width: u32,
+        height: u32,
+        data_window: PixelRect,
+        pixel_aspect: Rational,
+        color_space: ColorSpace,
+    ) -> Frame {
+        assert!(
+            !data_window.is_empty(),
+            "GPU frames need a non-empty data window"
+        );
+        let img = gpu.pooled_texture(
+            data_window.width,
+            data_window.height,
+            WORKING_FORMAT,
+            WORKING_USAGE,
+            "cutline.frame",
+        );
         Frame {
             width,
             height,
+            data_window,
+            pixel_aspect,
             color_space,
             alpha: AlphaMode::Premultiplied,
-            storage: FrameStorage::Gpu(GpuImage { texture, view }),
+            storage: FrameStorage::Gpu(img),
+        }
+    }
+
+    /// Wrap a CPU frame (no copy of the pixels).
+    pub fn from_cpu(f: &CpuFrame) -> Frame {
+        Frame {
+            width: f.width,
+            height: f.height,
+            data_window: f.data_window,
+            pixel_aspect: f.pixel_aspect,
+            color_space: f.color_space.clone(),
+            alpha: f.alpha,
+            storage: FrameStorage::Cpu(f.image.clone()),
         }
     }
 
@@ -112,7 +149,21 @@ impl Frame {
         }
     }
 
-    /// Stage to CPU memory (no-op clone if already there).
+    /// True if the data window is exactly the display window.
+    pub fn is_full_window(&self) -> bool {
+        self.data_window == PixelRect::full(self.width, self.height)
+    }
+
+    /// Same metadata, different pixels.
+    pub fn with_storage(&self, storage: FrameStorage) -> Frame {
+        Frame {
+            storage,
+            ..self.clone()
+        }
+    }
+
+    /// Stage to CPU memory (no-op clone if already there). Blocking; inside a
+    /// batching node, [`crate::RenderCtx::flush`] first.
     pub fn to_cpu(&self, gpu: &GpuContext) -> Result<Frame, GpuError> {
         let img = match &self.storage {
             FrameStorage::Cpu(_) => return Ok(self.clone()),
@@ -120,24 +171,49 @@ impl Frame {
         };
         let bytes = gpu.read_texture(&img.texture, WORKING_BPP)?;
         let pixels: Vec<f16> = bytemuck::cast_slice::<u8, f16>(&bytes).to_vec();
-        Ok(Frame {
-            storage: FrameStorage::Cpu(Arc::new(CpuImage { pixels })),
-            ..self.clone()
+        Ok(self.with_storage(FrameStorage::Cpu(Arc::new(CpuImage { pixels }))))
+    }
+
+    /// [`Self::to_cpu`] as a GPU-free [`CpuFrame`] (e.g. to ship to another process).
+    pub fn to_cpu_frame(&self, gpu: &GpuContext) -> Result<CpuFrame, GpuError> {
+        let f = self.to_cpu(gpu)?;
+        let FrameStorage::Cpu(image) = f.storage else {
+            unreachable!("to_cpu yields CPU storage")
+        };
+        Ok(CpuFrame {
+            width: f.width,
+            height: f.height,
+            data_window: f.data_window,
+            pixel_aspect: f.pixel_aspect,
+            color_space: f.color_space,
+            alpha: f.alpha,
+            image,
         })
     }
 
-    /// Upload to the GPU (no-op clone if already there).
+    /// Upload to the GPU (no-op clone if already there). Uses a fresh, unpooled
+    /// texture so the upload can't race unsubmitted reads of a pooled one.
     pub fn to_gpu(&self, gpu: &GpuContext) -> Frame {
         let img = match &self.storage {
             FrameStorage::Gpu(_) => return self.clone(),
             FrameStorage::Cpu(c) => c,
         };
-        let f = Frame::new_gpu(gpu, self.width, self.height, self.color_space.clone());
-        gpu.write_texture(
-            &f.gpu().expect("gpu").texture,
-            WORKING_BPP,
-            bytemuck::cast_slice(&img.pixels),
-        );
-        f
+        let (w, h) = (self.data_window.width, self.data_window.height);
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cutline.frame.upload"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: WORKING_FORMAT,
+            usage: WORKING_USAGE,
+            view_formats: &[],
+        });
+        gpu.write_texture(&texture, WORKING_BPP, bytemuck::cast_slice(&img.pixels));
+        self.with_storage(FrameStorage::Gpu(GpuImage::unpooled(texture)))
     }
 }

@@ -1,17 +1,13 @@
 //! Content hashes used as cache keys.
-//!
-//! PROVISIONAL: pending SeePlus review.
 
 use std::fmt;
 
 use crate::time::RationalTime;
 
-// PROVISIONAL: pending SeePlus review
 /// Hash of a node's own parameters (not its inputs).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeHash(pub [u8; 32]);
 
-// PROVISIONAL: pending SeePlus review
 /// Cache key for one rendered frame: Merkle hash of
 /// `(node hash at t, t, frame keys of every input pulled at t)`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

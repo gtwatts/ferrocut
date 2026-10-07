@@ -1,18 +1,17 @@
-//! Shared types for Cutline.
+//! Cutline's GPU-side core: the shared [`GpuContext`] (one device per render,
+//! created from the union of what the graph's nodes ask for), the GPU-capable
+//! [`Frame`], a texture pool, and the pull-based [`RenderNode`] contract.
 //!
-//! PROVISIONAL: pending SeePlus review. Everything in this crate is a first
-//! draft written for Rusty's engine spike so `cutline-engine`, `cutline-color`
-//! and `cutline-ofx` have a common vocabulary. SeePlus owns the final shape of
-//! [`Frame`] and [`RenderNode`]; expect breaking changes.
+//! Everything that doesn't need wgpu lives in [`cutline_types`] and is
+//! re-exported here, so `cutline_core::RationalTime` etc. keep working.
 
 pub mod frame;
 pub mod gpu;
-pub mod hash;
 pub mod node;
-pub mod time;
+mod pool;
 
-pub use frame::{AlphaMode, ColorSpace, CpuImage, Frame, FrameStorage, GpuImage, WORKING_FORMAT};
-pub use gpu::{AdapterPreference, GpuContext, GpuError};
-pub use hash::{FrameKey, NodeHash};
-pub use node::{NodeError, Pull, RenderCtx, RenderNode, WorkerState};
-pub use time::{FrameRate, Rational, RationalTime, TimeError};
+pub use cutline_types;
+pub use cutline_types::*;
+pub use frame::{Frame, FrameStorage, GpuImage, WORKING_FORMAT};
+pub use gpu::{AdapterPreference, GpuContext, GpuError, GpuRequirements, PoolStats};
+pub use node::{Pull, RenderCtx, RenderNode, WorkerState};

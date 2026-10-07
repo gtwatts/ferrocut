@@ -362,12 +362,10 @@ dependencies = [
 name = "cutline-core"
 version = "0.0.1"
 dependencies = [
- "blake3",
  "bytemuck",
+ "cutline-types",
  "half",
  "pollster",
- "serde",
- "serde_json",
  "thiserror",
  "wgpu",
 ]
@@ -397,6 +395,18 @@ dependencies = [
  "cutline-core",
  "half",
  "memmap2",
+ "thiserror",
+]
+
+[[package]]
+name = "cutline-types"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "bytemuck",
+ "half",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

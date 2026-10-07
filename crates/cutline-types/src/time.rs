@@ -1,6 +1,9 @@
 //! Exact rational time. No floating point timestamps anywhere in Cutline.
 //!
-//! PROVISIONAL: pending SeePlus review.
+//! Every time -> integer conversion (pts, frame index) rounds to nearest with
+//! exact halves going **away from zero**, matching FFmpeg's
+//! `av_rescale_rnd(.., AV_ROUND_NEAR_INF)`, so our timestamps agree with
+//! libavformat's to the tick.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -30,7 +33,6 @@ fn gcd(mut a: i128, mut b: i128) -> i128 {
     a
 }
 
-// PROVISIONAL: pending SeePlus review
 /// An exact fraction `num/den`, always normalized (`den > 0`, `gcd(num, den) == 1`),
 /// so derived `Eq`/`Hash` are structural and correct.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -104,9 +106,16 @@ impl Rational {
     pub fn ceil(self) -> i64 {
         -(-self).floor()
     }
-    /// Nearest integer; ties round toward +infinity (`floor(x + 1/2)`).
+    /// Nearest integer; exact halves round **away from zero** (FFmpeg's
+    /// `AV_ROUND_NEAR_INF`): 5/2 -> 3, -5/2 -> -3.
     pub fn round(self) -> i64 {
-        (self + Rational::new(1, 2)).floor()
+        let (n, d) = (self.num as i128, self.den as i128);
+        let r = if n >= 0 {
+            (2 * n + d) / (2 * d)
+        } else {
+            -((-2 * n + d) / (2 * d))
+        };
+        r as i64
     }
     pub fn is_zero(self) -> bool {
         self.num == 0
@@ -224,7 +233,6 @@ impl<'de> Deserialize<'de> for Rational {
 /// Frames per second, e.g. `24/1` or `30000/1001`.
 pub type FrameRate = Rational;
 
-// PROVISIONAL: pending SeePlus review
 /// A point in time, in seconds, as an exact rational.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -250,7 +258,12 @@ impl RationalTime {
     pub fn frame_ceil(self, rate: FrameRate) -> i64 {
         (self.0 * rate).ceil()
     }
-    /// Convert to an FFmpeg-style integer timestamp in `time_base` units (rounded to nearest).
+    /// Nearest frame index at `rate` (halves away from zero).
+    pub fn frame_round(self, rate: FrameRate) -> i64 {
+        (self.0 * rate).round()
+    }
+    /// Convert to an FFmpeg-style integer timestamp in `time_base` units,
+    /// rounding like `av_rescale_q_rnd(.., AV_ROUND_NEAR_INF)`.
     pub fn to_pts(self, time_base: Rational) -> i64 {
         (self.0 / time_base).round()
     }
@@ -313,8 +326,89 @@ mod tests {
         assert_eq!(Rational::new(7, 2).floor(), 3);
         assert_eq!(Rational::new(-7, 2).floor(), -4);
         assert_eq!(Rational::new(7, 2).ceil(), 4);
-        assert_eq!(Rational::new(7, 2).round(), 4);
+        assert_eq!(Rational::new(-7, 2).ceil(), -3);
         assert_eq!(Rational::new(10, 3).round(), 3);
+        assert_eq!(Rational::new(-10, 3).round(), -3);
+        assert_eq!(Rational::new(11, 3).round(), 4);
+        assert_eq!(Rational::new(-11, 3).round(), -4);
+    }
+
+    #[test]
+    fn halves_round_away_from_zero() {
+        for (n, want) in [
+            (1, 1),
+            (3, 2),
+            (5, 3),
+            (7, 4),
+            (-1, -1),
+            (-3, -2),
+            (-5, -3),
+            (-7, -4),
+        ] {
+            assert_eq!(Rational::new(n, 2).round(), want, "{n}/2");
+        }
+        assert_eq!(Rational::ZERO.round(), 0);
+        assert_eq!(Rational::new(1, 4).round(), 0);
+        assert_eq!(Rational::new(-1, 4).round(), 0);
+        assert_eq!(Rational::new(3, 4).round(), 1);
+        assert_eq!(Rational::new(-3, 4).round(), -1);
+    }
+
+    #[test]
+    fn to_pts_halves_match_near_inf() {
+        // 1/2000 s in a 1/1000 time base is exactly half a tick.
+        let tb = Rational::new(1, 1000);
+        assert_eq!(RationalTime::new(1, 2000).to_pts(tb), 1);
+        assert_eq!(RationalTime::new(-1, 2000).to_pts(tb), -1);
+        assert_eq!(RationalTime::new(3, 2000).to_pts(tb), 2);
+        assert_eq!(RationalTime::new(-3, 2000).to_pts(tb), -2);
+        // 29.97 fps frame 1 in a 1/60000 base: 2002 ticks exactly; frame 1 at 1/1000: 33.3667 -> 33.
+        let ntsc = Rational::new(30000, 1001);
+        assert_eq!(
+            RationalTime::from_frames(1, ntsc).to_pts(Rational::new(1, 60000)),
+            2002
+        );
+        assert_eq!(RationalTime::from_frames(1, ntsc).to_pts(tb), 33);
+        // 50 fps at 1/1000 lands on whole ms; 48 fps frame 1 = 20.8333 ms -> 21.
+        assert_eq!(
+            RationalTime::from_frames(3, Rational::from_int(50)).to_pts(tb),
+            60
+        );
+        assert_eq!(
+            RationalTime::from_frames(1, Rational::from_int(48)).to_pts(tb),
+            21
+        );
+        assert_eq!(RationalTime::new(-5, 2).frame_round(Rational::ONE), -3);
+    }
+
+    #[test]
+    fn pts_round_trip_recovers_frame_index() {
+        // Container time bases that can't represent the frame period exactly.
+        let rates = [
+            Rational::from_int(24),
+            Rational::new(24000, 1001),
+            Rational::new(30000, 1001),
+            Rational::from_int(60),
+        ];
+        let tbs = [
+            Rational::new(1, 1000),
+            Rational::new(1, 12288),
+            Rational::new(1, 90000),
+            Rational::new(1, 25),
+        ];
+        for rate in rates {
+            for tb in tbs {
+                // Skip bases coarser than half a frame: they can't round-trip by construction.
+                if tb * rate * Rational::from_int(2) > Rational::ONE {
+                    continue;
+                }
+                for n in (-500..5000).step_by(7) {
+                    let pts = RationalTime::from_frames(n, rate).to_pts(tb);
+                    let back = RationalTime::from_pts(pts, tb).frame_round(rate);
+                    assert_eq!(back, n, "rate {rate} tb {tb} frame {n} pts {pts}");
+                }
+            }
+        }
     }
 
     #[test]

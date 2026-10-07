@@ -10,3 +10,4 @@ repository = ""
 
 [workspace.dependencies]
 cutline-core = { path = "crates/cutline-core" }
+cutline-types = { path = "crates/cutline-types" }

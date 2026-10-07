@@ -1,8 +1,18 @@
-//! GPU device selection and the CPU<->GPU staging helpers behind [`crate::Frame`].
+//! The one shared GPU context per render, device selection from the graph's
+//! declared requirements, the texture pool, and CPU<->GPU staging helpers.
 //!
-//! PROVISIONAL: pending SeePlus review.
+//! Nodes never create devices. Each node declares what it needs
+//! ([`crate::RenderNode::gpu_requirements`]); the engine unions those, picks an
+//! adapter, and requests `required ∪ (optional ∩ adapter)` features plus the
+//! field-wise best of the requested limits. Nodes then query what they actually
+//! got ([`GpuContext::has_features`]) and fall back when an optional feature is
+//! missing.
 
-use std::sync::mpsc;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, mpsc};
+
+use crate::frame::GpuImage;
+use crate::pool::{PoolInner, TexKey};
 
 #[derive(Debug, thiserror::Error)]
 pub enum GpuError {
@@ -14,6 +24,67 @@ pub enum GpuError {
     Map(String),
     #[error("device poll failed: {0}")]
     Poll(#[from] wgpu::PollError),
+    #[error("adapter {adapter} lacks required features {missing:?}")]
+    MissingFeatures {
+        adapter: String,
+        missing: wgpu::Features,
+    },
+    #[error("adapter {adapter} can't satisfy the required limits")]
+    Limits { adapter: String },
+}
+
+/// What a node needs from the shared device.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpuRequirements {
+    /// Device creation fails if the adapter lacks any of these.
+    pub required_features: wgpu::Features,
+    /// Requested when the adapter has them; the node must check
+    /// [`GpuContext::has_features`] and fall back otherwise.
+    pub optional_features: wgpu::Features,
+    /// Minimum limits (`None` = `wgpu::Limits::default()`). Unions take the
+    /// better value per field (max for maxima, min for alignments).
+    pub limits: Option<wgpu::Limits>,
+}
+
+impl GpuRequirements {
+    pub fn none() -> Self {
+        Self::default()
+    }
+    pub fn required(features: wgpu::Features) -> Self {
+        GpuRequirements {
+            required_features: features,
+            ..Self::default()
+        }
+    }
+    pub fn optional(features: wgpu::Features) -> Self {
+        GpuRequirements {
+            optional_features: features,
+            ..Self::default()
+        }
+    }
+    pub fn with_limits(mut self, limits: wgpu::Limits) -> Self {
+        self.limits = Some(limits);
+        self
+    }
+    pub fn union(&self, o: &GpuRequirements) -> GpuRequirements {
+        GpuRequirements {
+            required_features: self.required_features | o.required_features,
+            optional_features: self.optional_features | o.optional_features,
+            limits: match (&self.limits, &o.limits) {
+                (None, None) => None,
+                (Some(l), None) | (None, Some(l)) => Some(l.clone()),
+                (Some(a), Some(b)) => Some(a.clone().or_better_values_from(b)),
+            },
+        }
+    }
+}
+
+/// Texture pool counters.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PoolStats {
+    pub allocated: u64,
+    pub reused: u64,
+    pub idle: usize,
 }
 
 /// How to pick an adapter.
@@ -45,12 +116,14 @@ fn score(info: &wgpu::AdapterInfo) -> i32 {
     s
 }
 
-/// One device + queue shared by every render worker.
+/// One device + queue shared by every node and render worker. Created by the
+/// engine (or a test) via [`GpuContext::with_requirements`]; nodes never make their own.
 pub struct GpuContext {
     pub adapter: wgpu::Adapter,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub info: wgpu::AdapterInfo,
+    pool: Arc<PoolInner>,
 }
 
 impl GpuContext {
@@ -66,8 +139,17 @@ impl GpuContext {
             .collect()
     }
 
-    /// Pick an adapter per `pref` (overridable with `CUTLINE_ADAPTER=<name substring>`).
+    /// A context with no special requirements. See [`Self::with_requirements`].
     pub fn new(pref: AdapterPreference) -> Result<Self, GpuError> {
+        Self::with_requirements(pref, &GpuRequirements::none())
+    }
+
+    /// Pick an adapter per `pref` (overridable with `CUTLINE_ADAPTER=<name substring>`)
+    /// and create the device with `required ∪ (optional ∩ adapter)` features.
+    pub fn with_requirements(
+        pref: AdapterPreference,
+        req: &GpuRequirements,
+    ) -> Result<Self, GpuError> {
         let pref = match std::env::var("CUTLINE_ADAPTER") {
             Ok(s) if !s.is_empty() => AdapterPreference::NameContains(s),
             _ => pref,
@@ -89,11 +171,26 @@ impl GpuContext {
         }
         .ok_or(GpuError::NoAdapter)?;
         let info = adapter.get_info();
+        let have = adapter.features();
+        let missing = req.required_features - have;
+        if !missing.is_empty() {
+            return Err(GpuError::MissingFeatures {
+                adapter: info.name.clone(),
+                missing,
+            });
+        }
+        let limits = req.limits.clone().unwrap_or_default();
+        if !limits.check_limits(&adapter.limits()) {
+            return Err(GpuError::Limits {
+                adapter: info.name.clone(),
+            });
+        }
+        let features = req.required_features | (req.optional_features & have);
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("cutline"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_features: features,
+                required_limits: limits,
                 ..Default::default()
             }))?;
         Ok(GpuContext {
@@ -101,7 +198,46 @@ impl GpuContext {
             device,
             queue,
             info,
+            pool: Arc::default(),
         })
+    }
+
+    /// Features the shared device was actually created with.
+    pub fn features(&self) -> wgpu::Features {
+        self.device.features()
+    }
+
+    /// True if the device has all of `f` (use for optional-feature fallbacks).
+    pub fn has_features(&self, f: wgpu::Features) -> bool {
+        self.device.features().contains(f)
+    }
+
+    /// A 2D texture from the pool (returned on last drop of the [`GpuImage`]).
+    /// Pool shards are per allocating thread; see the `pool` module docs for why.
+    pub fn pooled_texture(
+        &self,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        usage: wgpu::TextureUsages,
+        label: &str,
+    ) -> GpuImage {
+        let key = TexKey {
+            width,
+            height,
+            format,
+            usage,
+        };
+        let (texture, lease) = self.pool.acquire(&self.device, key, label);
+        GpuImage::from_lease(texture, lease)
+    }
+
+    pub fn pool_stats(&self) -> PoolStats {
+        PoolStats {
+            allocated: self.pool.allocated.load(Ordering::Relaxed),
+            reused: self.pool.reused.load(Ordering::Relaxed),
+            idle: self.pool.idle_count(),
+        }
     }
 
     pub fn describe(&self) -> String {
@@ -116,7 +252,9 @@ impl GpuContext {
         )
     }
 
-    /// Copy a 2D texture back to tightly packed CPU bytes (handles the 256-byte row alignment).
+    /// Copy a 2D texture back to tightly packed CPU bytes (handles the 256-byte
+    /// row alignment). Blocking, its own submission: callers inside a batching
+    /// node must [`crate::RenderCtx::flush`] first.
     pub fn read_texture(
         &self,
         texture: &wgpu::Texture,
@@ -172,7 +310,9 @@ impl GpuContext {
         Ok(out)
     }
 
-    /// Upload tightly packed bytes into a 2D texture.
+    /// Upload tightly packed bytes into a 2D texture via `queue.write_texture`
+    /// (ordered before the *next* submission). Only safe on textures with no
+    /// unsubmitted reads, e.g. freshly created ones.
     pub fn write_texture(&self, texture: &wgpu::Texture, bytes_per_pixel: u32, data: &[u8]) {
         self.queue.write_texture(
             texture.as_image_copy(),
