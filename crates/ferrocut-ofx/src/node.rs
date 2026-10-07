@@ -158,6 +158,14 @@ impl OfxNode {
 
     /// Render using an explicit session (outside a graph / for tests).
     pub fn render_with(&self, session: &mut OfxSession, gpu: Option<&ferrocut_core::GpuContext>, t: RationalTime, input: &Frame) -> Result<Frame, NodeError> {
+        // OfxNode doesn't opt into data windows: in a graph the engine reframes
+        // inputs to the full window first; direct callers must do the same.
+        if !input.is_full_window() {
+            return Err(NodeError::permanent(format!(
+                "ofx node {}: input has data window {:?} inside {}x{}; reframe to the full window first",
+                self.spec.plugin_id, input.data_window, input.width, input.height
+            )));
+        }
         let staged;
         let cpu = match &input.storage {
             FrameStorage::Cpu(c) => c.clone(),
@@ -173,7 +181,13 @@ impl OfxNode {
         let src: Vec<f32> = cpu.pixels.iter().map(|v| v.to_f32()).collect();
         let (mut out, reply) = session
             .render_rgba_f32(t, self.rate, input.width, input.height, &src, PREMULTIPLIED)
-            .map_err(|e| NodeError::new(format!("ofx node {} ({}): {e}", self.spec.plugin_id, self.label)))?;
+            .map_err(|e| {
+                let msg = format!("ofx node {} ({}): {e}", self.spec.plugin_id, self.label);
+                // Host crash / OOM kill / hang: the session starts a fresh host on the
+                // next render, so let the engine retry (bounded). Plugin-reported
+                // failures repeat deterministically.
+                if e.host_lost() { NodeError::retryable(msg) } else { NodeError::permanent(msg) }
+            })?;
         match reply.output_premult.as_str() {
             PREMULTIPLIED => {}
             UNPREMULTIPLIED => {

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ferrocut_core::{ColorSpace, CpuImage, Frame, FrameStorage, PixelRect, Rational, RationalTime, RenderNode};
+use ferrocut_core::{ColorSpace, CpuImage, ErrorKind, Frame, FrameStorage, PixelRect, Rational, RationalTime, RenderNode};
 use ferrocut_ofx::{HostConfig, OfxNode, OfxPluginSpec, OfxSession, PREMULTIPLIED, UNPREMULTIPLIED, bundled_plugin_dir};
 use half::f16;
 
@@ -121,6 +121,7 @@ fn expect_node_error(id: &str, cfg: HostConfig, want: &str) -> String {
     let msg = err.to_string();
     eprintln!("{id}: NodeError after {:?}: {msg}", start.elapsed());
     assert!(msg.contains(want), "error should mention {want}: {msg}");
+    assert_eq!(err.kind, ErrorKind::Retryable, "a lost host is retryable: {msg}");
     // The test process is obviously still alive; the failed host is gone, and the
     // next render on the same session starts a fresh host (and fails the same way).
     let err2 = node.render_with(&mut s, None, t(), &frame(&pattern())).expect_err("still failing");
@@ -194,4 +195,14 @@ fn missing_plugin_fails_at_graph_build_time() {
     let err = OfxNode::new(cfg(), spec("com.example.DoesNotExist"), rate()).err().expect("must fail");
     eprintln!("{err}");
     assert!(err.to_string().contains("not found"));
+}
+
+#[test]
+fn partial_data_window_input_is_rejected_outside_the_engine() {
+    let node = OfxNode::new(cfg(), spec(INVERT), rate()).unwrap();
+    let mut f = frame(&pattern());
+    f.data_window = PixelRect::new(0, 0, W / 2, H);
+    let err = node.render_with(&mut node.session(), None, t(), &f).expect_err("partial window");
+    assert_eq!(err.kind, ErrorKind::Permanent);
+    assert!(err.message.contains("reframe"), "{err}");
 }

@@ -8,7 +8,7 @@
 use std::sync::{Arc, OnceLock};
 
 use ferrocut_color::{Config, GpuShaderOptions, OcioTransformNode};
-use ferrocut_core::{AdapterPreference, CancelToken, ColorSpace, CpuImage, Frame, FrameStorage, GpuContext, GpuRequirements, PixelRect, Rational, RenderCtx, RenderNode, RationalTime, WorkerState};
+use ferrocut_core::{AdapterPreference, CancelToken, ColorSpace, ErrorKind, CpuImage, Frame, FrameStorage, GpuContext, GpuRequirements, PixelRect, Rational, RenderCtx, RenderNode, RationalTime, WorkerState};
 use half::f16;
 
 fn gpu() -> &'static GpuContext {
@@ -214,4 +214,22 @@ fn render_node_contract() {
     let wrong = Arc::new(cpu_frame(test_pattern(), "Linear Rec.709 (sRGB)"));
     let err = a.render(&mut ctx, t, &[wrong]).expect_err("must reject mismatched color space");
     eprintln!("mismatch error: {err}");
+}
+
+#[test]
+fn frame_geometry_is_preserved_and_partial_windows_rejected() {
+    let cfg = Config::builtin_default().unwrap();
+    let node = OcioTransformNode::colorspace(&cfg, "ACEScg", "sRGB - Texture").unwrap();
+    // Anamorphic input: the output keeps its pixel aspect.
+    let mut f = cpu_frame(test_pattern(), "ACEScg");
+    f.pixel_aspect = Rational::new(2, 1);
+    let out = node.apply(gpu(), &f).unwrap();
+    assert_eq!(out.pixel_aspect, Rational::new(2, 1));
+    assert_eq!((out.width, out.height, out.data_window), (W as u32, H as u32, PixelRect::full(W as u32, H as u32)));
+    // A partial data window must be reframed by the caller (the engine does it in graphs).
+    let mut p = cpu_frame(test_pattern(), "ACEScg");
+    p.data_window = PixelRect::new(0, 0, (W / 2) as u32, H as u32);
+    let err = node.apply(gpu(), &p).expect_err("partial window");
+    assert_eq!(err.kind, ErrorKind::Permanent);
+    assert!(!node.supports_data_window());
 }

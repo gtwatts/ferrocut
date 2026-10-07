@@ -195,7 +195,8 @@ impl GpuTransform {
                 staged.gpu().expect("to_gpu yields a GPU frame")
             }
         };
-        let out = Frame::new_gpu(gpu, input.width, input.height, out_space);
+        // Same geometry as the input (pixel aspect included); the transform is per pixel.
+        let out = Frame::new_gpu_window(gpu, input.width, input.height, input.data_window, input.pixel_aspect, out_space);
         let dst = out.gpu().expect("new_gpu");
         let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let io = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {

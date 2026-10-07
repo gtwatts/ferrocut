@@ -93,6 +93,14 @@ impl OcioTransformNode {
 
     /// Render one frame directly (outside a graph).
     pub fn apply(&self, gpu: &GpuContext, input: &Frame) -> Result<Frame, NodeError> {
+        // Not opted into data windows yet (see README): in a graph the engine
+        // reframes inputs to the full window; direct callers must do the same.
+        if !input.is_full_window() {
+            return Err(NodeError::permanent(format!(
+                "ocio: input has data window {:?} inside {}x{}; reframe to the full window first",
+                input.data_window, input.width, input.height
+            )));
+        }
         if input.color_space != self.src_space {
             return Err(NodeError::new(format!(
                 "ocio: input is tagged {:?}, node expects {:?}",
