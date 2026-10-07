@@ -2,7 +2,22 @@
 name = "cutline-color"
 version.workspace = true
 edition.workspace = true
+description = "OpenColorIO v2 color transforms as wgpu render nodes (OCIO GLSL -> naga -> WGSL)"
 license = "Apache-2.0"
-description = "PLACEHOLDER (SeePlus): real crate lands in a follow-up commit"
+build = "build.rs"
+links = "cutline_ocio"
 
 [dependencies]
+cutline-core = { workspace = true }
+bytemuck = "1"
+half = { version = "2.7", features = ["bytemuck"] }
+naga = { version = "30", features = ["glsl-in", "wgsl-out"] }
+pollster = "1"
+thiserror = "2"
+wgpu = "30"
+
+[build-dependencies]
+cc = "1.2"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(cutline_no_ocio)"] }
