@@ -3,7 +3,9 @@
 # Uses only LGPL-native encoders (mpeg4); long-GOP with B-frames on purpose so the
 # decoder's keyframe-seek + decode-forward path gets exercised.
 set -euo pipefail
-FFMPEG="${FFMPEG:-ffmpeg}"
+# Prefer the project's LGPL FFmpeg CLI (scripts/build-ffmpeg-lgpl.sh) when present.
+LGPL_FFMPEG="$(cd "$(dirname "$0")/.." && pwd)/third_party/ffmpeg-lgpl/bin/ffmpeg"
+if [ -x "$LGPL_FFMPEG" ]; then FFMPEG="${FFMPEG:-$LGPL_FFMPEG}"; else FFMPEG="${FFMPEG:-ffmpeg}"; fi
 OUT="${1:-$(cd "$(dirname "$0")/.." && pwd)/media}"
 SIZE="${SIZE:-1920x1080}"
 RATE="${RATE:-24}"
