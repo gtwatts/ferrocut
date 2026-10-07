@@ -14,6 +14,7 @@ use std::time::Duration;
 use ferrocut_ipc::{HostSlot, IpcError, ShmBuffer};
 
 use crate::host::{HOST_NAME, HostConfig, HtmlError, spawn_host};
+use crate::policy::ResolvedPolicy;
 
 /// Output size and the frame grid the page is stepped on (frames per second as
 /// an exact rational, e.g. 30000/1001).
@@ -51,6 +52,7 @@ fn fmt_ms(us: i64) -> String {
 pub struct HtmlSession {
     cfg: HostConfig,
     url: String,
+    policy: ResolvedPolicy,
     params: SessionParams,
     slot: HostSlot,
     /// BGRA8 capture buffer shared with the host.
@@ -61,8 +63,16 @@ pub struct HtmlSession {
 }
 
 impl HtmlSession {
+    /// A session with the default policy: no network, `file://` only from the
+    /// page's own directory (decided by the host from the URL).
     pub fn new(cfg: HostConfig, url: String, params: SessionParams) -> Self {
-        HtmlSession { cfg, url, params, slot: HostSlot::new(), shm: None, stepped: None, load_ms: None }
+        Self::with_policy(cfg, url, params, ResolvedPolicy::default())
+    }
+
+    /// A session whose host enforces `policy` (empty roots: the page's own
+    /// directory).
+    pub fn with_policy(cfg: HostConfig, url: String, params: SessionParams, policy: ResolvedPolicy) -> Self {
+        HtmlSession { cfg, url, policy, params, slot: HostSlot::new(), shm: None, stepped: None, load_ms: None }
     }
 
     pub fn params(&self) -> &SessionParams {
@@ -81,6 +91,22 @@ impl HtmlSession {
     /// Virtual ms the page needed to load (reported by OPEN), once open.
     pub fn load_ms(&self) -> Option<u32> {
         self.load_ms
+    }
+
+    /// URLs the current host refused so far (first-seen order, deduplicated).
+    /// Empty if no host is running. Blocked requests fail inside the page
+    /// (fetch rejects, images fire `error`, ...); the render itself goes on.
+    pub fn blocked_requests(&mut self) -> Result<Vec<String>, HtmlError> {
+        let step_t = self.cfg.step_timeout;
+        if !self.slot.is_running() {
+            return Ok(Vec::new());
+        }
+        let r = self.slot.current().expect("running").request("BLOCKED", step_t);
+        let mut f = self.slot.check(r)?;
+        if f.is_empty() {
+            return Err(IpcError::Protocol { host: HOST_NAME, message: "empty BLOCKED reply".into() });
+        }
+        Ok(f.split_off(1))
     }
 
     /// SIGKILL the host (tests: simulate a crash / OOM kill).
@@ -122,10 +148,10 @@ impl HtmlSession {
             }
         }
         let p = self.params;
-        let (cfg, url) = (&self.cfg, &self.url);
+        let (cfg, url, policy) = (&self.cfg, &self.url, &self.policy);
         let mut opened = None;
         let host = self.slot.get(
-            || spawn_host(cfg),
+            || spawn_host(cfg, policy),
             |h| {
                 let r = h.request(&format!("OPEN\t{}\t{}\t{}", p.width, p.height, url), open_t)?;
                 opened = Some(r.first().and_then(|s| s.parse().ok()));

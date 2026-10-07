@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use ferrocut_ipc::{Host, HostSpec, IpcError};
 
+use crate::policy::ResolvedPolicy;
+
 pub const PROTOCOL_VERSION: &str = "1";
 /// Version of the injected time shim, from host/src/shim.h. Part of node hashes.
 pub const SHIM_VERSION: &str = env!("FERROCUT_HTML_SHIM_VERSION");
@@ -61,10 +63,13 @@ impl HostConfig {
     }
 }
 
-/// Start one `ferrocut-html-host` process and check that it is the build this
-/// crate expects (protocol, CEF and shim versions all feed node hashes).
-pub fn spawn_host(cfg: &HostConfig) -> Result<Host, HtmlError> {
-    let mut h = Host::spawn(&cfg.host_spec())?;
+/// Start one `ferrocut-html-host` process with `policy` and check that it is
+/// the build this crate expects (protocol, CEF and shim versions all feed node
+/// hashes).
+pub fn spawn_host(cfg: &HostConfig, policy: &ResolvedPolicy) -> Result<Host, HtmlError> {
+    let mut spec = cfg.host_spec();
+    spec.env.extend(policy.host_env());
+    let mut h = Host::spawn(&spec)?;
     h.handshake(&["ferrocut-html-host", PROTOCOL_VERSION, CEF_VERSION, SHIM_VERSION], cfg.open_timeout)?;
     Ok(h)
 }

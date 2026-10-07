@@ -13,6 +13,8 @@ mod adapter;
 #[cfg(not(ferrocut_html_no_host))]
 pub mod host;
 #[cfg(not(ferrocut_html_no_host))]
+pub mod policy;
+#[cfg(not(ferrocut_html_no_host))]
 pub mod session;
 
 pub use color::OutputEncoding;
@@ -21,5 +23,7 @@ pub use color::OutputEncoding;
 pub use adapter::{HtmlNode, HtmlParams, HtmlSource};
 #[cfg(not(ferrocut_html_no_host))]
 pub use host::{HostConfig, HtmlError};
+#[cfg(not(ferrocut_html_no_host))]
+pub use policy::NetworkPolicy;
 #[cfg(not(ferrocut_html_no_host))]
 pub use session::{HtmlSession, SessionParams};

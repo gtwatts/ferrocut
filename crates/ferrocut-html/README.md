@@ -105,7 +105,97 @@ background is transparent unless the page paints one.
 | Missing host binary, page load failure, script exception in a step, paint never settled | `Permanent` |
 | `CancelToken` / deadline (checked between steps of a pre-roll) | `Cancelled` |
 
-## Tests (`tests/determinism.rs`)
+## Network policy
+
+By default a page can load only:
+
+- `file://` URLs under its own directory (symlinks are resolved, so a link
+  pointing outside doesn't count), plus any `NetworkPolicy::extra_roots`;
+- in-memory `data:`, `blob:` and `about:` URLs.
+
+Everything else is refused: `http(s)`, `ws(s)`, `file://` outside the roots,
+popups, navigations away, and OS protocol handlers. A refused request fails
+in the page the same way every run. `fetch` rejects; images, scripts and
+stylesheets fire `error`; XHR ends with status 0; EventSource and WebSocket
+fire `error`. No connection is attempted, so frames can't depend on the
+network.
+
+```rust
+use ferrocut_html::{HtmlNode, HtmlSource, NetworkPolicy};
+// Default: no network, page dir only.
+let node = HtmlNode::new(HtmlSource::File(page), params)?;
+// Also allow loading shared assets from another directory (hashed too).
+let node = HtmlNode::with_policy(HtmlSource::File(page), params,
+    NetworkPolicy { allow_remote: false, extra_roots: vec![assets_dir] })?;
+```
+
+A remote page URL with `allow_remote: false` is rejected when the node is
+built (`Permanent`). So is a missing extra root.
+
+How it's enforced (in `host/src/main.cpp`):
+
+- `NetGuard`, a `CefResourceRequestHandler` installed both per browser and as
+  the default request-context handler, cancels requests in
+  `OnBeforeResourceLoad`. That covers sub-resources, fetch/XHR, fonts,
+  EventSource, beacons and workers.
+- `OnBeforeBrowse`, `OnOpenURLFromTab` and `OnBeforePopup` cancel
+  navigations.
+- `OnProtocolExecution` refuses OS handlers.
+- **WebSocket:** CEF 154 has no hook for WebSocket handshakes. In deny mode
+  they are stopped instead by `--host-resolver-rules="MAP * ~NOTFOUND"`,
+  which (verified by the test) also covers IP literals and `localhost`.
+  WebSockets therefore don't show up in `BLOCKED`.
+- `HtmlSession::blocked_requests()` (host command `BLOCKED`) lists what was
+  refused, which helps when a page renders incomplete.
+
+The host reads the policy from the environment (`FERROCUT_HTML_NET`,
+`FERROCUT_HTML_FILE_ROOTS`; see the header of `main.cpp`).
+
+### Node hash
+
+The hash (`ferrocut.html/2`) covers:
+
+- the page's file name and bytes;
+- the params and the policy;
+- a digest of **every file under the allowed roots**: `(relative path,
+  blake3)`, sorted, with absolute paths left out.
+
+The page can load nothing else, so editing an image, stylesheet, font or
+script it uses changes the hash, while moving the project keeps cache keys.
+Roots holding more than 20,000 files or 2 GiB are an error: give the page its
+own directory. With `allow_remote` on, remote content is outside the hash.
+
+The digest is a `ferrocut_types::FileManifest` per root. The node reports
+`AccessPattern::Sequential`, so the scheduler keeps each worker on contiguous
+chunks (a backward seek replays the page from frame 0).
+
+## Tests
+
+`tests/network.rs`:
+
+- `remote_and_outside_requests_are_blocked_deterministically` runs 16 probes
+  against a local TCP listener:
+  - fetch, XHR, img, CSS, script, WebSocket (IP and `localhost`), FontFace,
+    EventSource, iframe, beacon, a DNS name;
+  - `../outside` and absolute `file://` outside the page dir;
+  - an allowed local image.
+
+  Each probe paints a square green on the expected outcome. `gate.js`
+  re-inserts itself until every probe has settled, which holds back `load`
+  (and therefore OPEN), so frame 0 already shows every outcome without
+  waiting on a clock. The test asserts:
+  - the listener accepts **0 connections**;
+  - all squares are green;
+  - the `BLOCKED` list matches exactly;
+  - frames and lists are byte-identical across two hosts.
+- `allow_remote_reaches_the_listener`: the control. With `allow_remote`, the
+  same listener sees the fetch and the WebSocket, but files outside are still
+  refused.
+- `extra_roots_allow_files_and_feed_the_hash`: editing a sub-resource in the
+  page dir or an extra root changes the node hash.
+- `bad_policies_fail_permanently_up_front`
+
+`tests/determinism.rs`:
 
 - `two_runs_render_identical_frames`: 45 frames from two independent hosts
   are byte-identical, and all 45 are distinct (the page really animates).
@@ -134,10 +224,7 @@ The fixture is `tests/data/anim.html`.
   separate process tree. **Only render trusted pages** until the sandbox is
   enabled (needs `sudo chown root:root chrome-sandbox && sudo chmod 4755
   chrome-sandbox`, or an AppArmor/userns policy).
-- **Network access.** Pages have network access. `file://` pages can read
-  other local files. A hardening follow-up is to intercept requests in the
-  host (`CefResourceRequestHandler`) and allow only the page's directory, or
-  an explicit allowlist.
+- **Network and files: blocked by default.** See "Network policy" below.
 - The host disables core dumps (`RLIMIT_CORE=0`, override with
   `FERROCUT_HTML_CORE_DUMPS=1`). Each host gets a client-owned temporary
   Chromium profile that is removed even if the host was killed.
@@ -149,9 +236,6 @@ The fixture is `tests/data/anim.html`.
   (`shared_texture_enabled`, `OnAcceleratedPaint` dmabuf) imported into wgpu
   via Vulkan external memory. That needs GPU compositing, which in turn needs
   re-validating determinism.
-- **Sub-resources** (images, CSS, fonts the page loads) aren't part of the
-  node hash. Only the HTML file's bytes (or the URL string) are. Follow-up:
-  record loaded URLs + content hashes in the host.
 - **Cross-machine determinism.** Text rendering depends on installed fonts
   and fontconfig. Results are byte-identical on one machine, not guaranteed
   across machines. Bundle fonts with the page for portable renders.
@@ -179,6 +263,8 @@ it can be driven by hand.
   profile dir and the shared-memory buffer come from `ferrocut-ipc`.
 - `src/session.rs`: frame grid, budgets, pre-roll, and respawn on seek or
   crash.
+- `src/policy.rs`: `NetworkPolicy`, canonical roots, the host environment
+  and the page's `FileManifest`.
 - `src/color.rs`: BGRA8 premultiplied → ACEScg f16 (math in `ferrocut-colorspace`).
 - `src/adapter.rs`: `HtmlNode`. This is the only module touching
   ferrocut-core.

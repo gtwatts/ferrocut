@@ -12,6 +12,17 @@
 //     carry the browser's wall-clock frame time.
 //   - Software compositing and determinism flags; a capture is accepted only
 //     when two consecutive full repaints are identical.
+//   - No network by default (see "Network and file policy" below): requests
+//     go through NetGuard, which cancels anything but file:// under the
+//     allowed roots (and in-memory data:/blob:/about:), so pages can't depend
+//     on the network and fail the same way every run.
+//
+// Environment (read once at startup):
+//   FERROCUT_HTML_NET=allow-remote   also allow http(s)/ws(s) (default: deny)
+//   FERROCUT_HTML_FILE_ROOTS=<dirs>  newline-separated directories file://
+//                                    loads may come from (default: the
+//                                    directory of the page OPEN loads)
+//   FERROCUT_HTML_PROFILE_DIR=<dir>  Chromium profile dir owned by the client
 //
 // Protocol (one request per line, tab-separated; reply "OK\t..." or "ERR\t<msg>"):
 //   HELLO                          -> OK  ferrocut-html-host  1  <cef version>  <shim version>
@@ -19,6 +30,7 @@
 //   ADVANCE <ms>                   -> OK                    (advance virtual time by exactly <ms>)
 //   STEP <ms since OPEN>           -> OK <json>            (run one graph frame of rAF/animation sync)
 //   CAPTURE <shm path>             -> OK  <paints>          (write BGRA8 premultiplied W*H*4 to file)
+//   BLOCKED                        -> OK <n> <url>...       (requests refused so far, first-seen order)
 //   QUIT                           -> OK                    (exit)
 // Any request may instead get "FATAL\t<msg>" (renderer process died); the host
 // then exits.
@@ -30,6 +42,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <climits>
+#include <cstdlib>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -40,6 +55,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -50,6 +66,7 @@
 #include "include/cef_client.h"
 #include "include/cef_devtools_message_observer.h"
 #include "include/cef_parser.h"
+#include "include/cef_request_context_handler.h"
 #include "include/cef_task.h"
 #include "include/cef_version.h"
 #include "shim.h"
@@ -90,6 +107,167 @@ void reply(const std::string& s) {
   std::lock_guard<std::mutex> l(out_mu);
   std::cout << s << "\n" << std::flush;
 }
+
+// ---- Network and file policy ------------------------------------------------
+//
+// Enforced in the browser process for every request CEF exposes (navigations,
+// popups, sub-resources, fetch/XHR, EventSource, beacons, fonts, workers), both
+// for the page's browser (Client::GetResourceRequestHandler) and for requests
+// without one (App::GetDefaultRequestContextHandler). CEF has no hook for
+// WebSocket handshakes; in deny mode those are stopped by the
+// host-resolver-rules switch (see App::OnBeforeCommandLineProcessing), which
+// is relied on for ws:// / wss:// only and is not listed by BLOCKED. Other
+// switches (no WebRTC UDP, no background networking) only shrink the surface.
+
+struct NetPolicy {
+  std::mutex mu;
+  bool allow_remote = false;
+  bool roots_given = false;
+  std::vector<std::string> roots;  // canonical absolute dirs, no trailing '/'
+  std::vector<std::string> blocked;
+  std::set<std::string> blocked_seen;
+};
+NetPolicy g_net;
+
+std::string canonical_path(const std::string& p) {
+  char buf[PATH_MAX];
+  if (::realpath(p.c_str(), buf)) return buf;
+  return "";
+}
+
+// Lexically normalize an absolute path ("/a/./b/../c" -> "/a/c").
+std::string normalize_path(const std::string& p) {
+  std::vector<std::string> parts;
+  std::stringstream ss(p);
+  std::string seg;
+  while (std::getline(ss, seg, '/')) {
+    if (seg.empty() || seg == ".") continue;
+    if (seg == "..") {
+      if (!parts.empty()) parts.pop_back();
+      continue;
+    }
+    parts.push_back(seg);
+  }
+  std::string out;
+  for (auto& x : parts) out += "/" + x;
+  return out.empty() ? "/" : out;
+}
+
+// Resolve symlinks in the longest existing prefix, so a link inside a root
+// that points outside it is judged by its target.
+std::string resolve_path(const std::string& abs) {
+  std::string p = normalize_path(abs), tail;
+  for (;;) {
+    std::string c = canonical_path(p);
+    if (!c.empty()) return normalize_path(c + tail);
+    auto slash = p.rfind('/');
+    if (slash == 0 || slash == std::string::npos) return normalize_path(abs);
+    tail = p.substr(slash) + tail;
+    p = p.substr(0, slash);
+  }
+}
+
+bool path_under(const std::string& path, const std::string& root) {
+  if (root == "/") return true;
+  return path == root || (path.size() > root.size() && path.compare(0, root.size(), root) == 0 && path[root.size()] == '/');
+}
+
+int hex_digit(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+// Percent-decode a URL path; "" if malformed or it contains NUL.
+std::string percent_decode(const std::string& s) {
+  std::string out;
+  for (size_t i = 0; i < s.size(); ++i) {
+    if (s[i] != '%') {
+      out += s[i];
+      continue;
+    }
+    if (i + 2 >= s.size()) return "";
+    int hi = hex_digit(s[i + 1]), lo = hex_digit(s[i + 2]);
+    if (hi < 0 || lo < 0 || (hi == 0 && lo == 0)) return "";
+    out += char(hi * 16 + lo);
+    i += 2;
+  }
+  return out;
+}
+
+std::string url_scheme(const std::string& url) {
+  auto c = url.find(':');
+  if (c == std::string::npos) return "";
+  std::string s = url.substr(0, c);
+  for (auto& ch : s) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+  return s;
+}
+
+// The local path of a file:// URL ("" if not a plain local file URL).
+std::string file_url_path(const std::string& url) {
+  if (url_scheme(url) != "file" || url.compare(5, 2, "//") != 0) return "";
+  std::string rest = url.substr(7);
+  auto slash = rest.find('/');
+  if (slash == std::string::npos) return "";
+  std::string host = rest.substr(0, slash);
+  if (!host.empty() && host != "localhost") return "";  // no UNC / remote file hosts
+  std::string path = rest.substr(slash);
+  path = path.substr(0, path.find_first_of("?#"));
+  path = percent_decode(path);
+  return path.empty() ? "" : resolve_path(path);
+}
+
+bool net_allowed(const std::string& url) {
+  const std::string scheme = url_scheme(url);
+  // In-memory content: no I/O happens.
+  if (scheme == "about" || scheme == "data" || scheme == "blob") return true;
+  std::lock_guard<std::mutex> l(g_net.mu);
+  if (scheme == "file") {
+    std::string path = file_url_path(url);
+    if (path.empty()) return false;
+    for (auto& r : g_net.roots)
+      if (path_under(path, r)) return true;
+    return false;
+  }
+  return g_net.allow_remote && (scheme == "http" || scheme == "https" || scheme == "ws" || scheme == "wss");
+}
+
+void record_blocked(std::string url) {
+  if (url.size() > 300) url = url.substr(0, 300) + "...";
+  for (auto& c : url)
+    if (c == '\t' || c == '\n' || c == '\r') c = ' ';
+  std::lock_guard<std::mutex> l(g_net.mu);
+  if (g_net.blocked.size() < 1000 && g_net.blocked_seen.insert(url).second) g_net.blocked.push_back(url);
+}
+
+// Cancels every request the policy doesn't allow. RV_CANCEL fails the request
+// immediately (net::ERR_ABORTED), without touching the network, so the page
+// sees the same failure at the same virtual time on every run.
+class NetGuard : public CefResourceRequestHandler, public CefRequestContextHandler {
+ public:
+  ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest> request,
+                                   CefRefPtr<CefCallback>) override {
+    std::string url = request->GetURL().ToString();
+    if (net_allowed(url)) return RV_CONTINUE;
+    record_blocked(url);
+    return RV_CANCEL;
+  }
+  void OnProtocolExecution(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest>,
+                           bool& allow_os_execution) override {
+    allow_os_execution = false;  // never hand mailto:/custom schemes to the OS
+  }
+  // Requests not associated with a browser (workers, browser-initiated).
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                                                                 CefRefPtr<CefRequest>, bool, bool,
+                                                                 const CefString&, bool&) override {
+    return this;
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(NetGuard);
+};
+CefRefPtr<NetGuard> g_guard;
 
 class FnTask : public CefTask {
  public:
@@ -178,6 +356,31 @@ class Client : public CefClient,
     CefQuitMessageLoop();
   }
 
+  // ---- network policy (see NetGuard) ----
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                                                                 CefRefPtr<CefRequest>, bool, bool,
+                                                                 const CefString&, bool&) override {
+    return g_guard;
+  }
+  bool OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefRequest> request, bool,
+                      bool) override {
+    std::string url = request->GetURL().ToString();
+    if (net_allowed(url)) return false;
+    record_blocked(url);
+    return true;  // cancel the navigation
+  }
+  bool OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString& url,
+                        cef_window_open_disposition_t, bool) override {
+    record_blocked(url.ToString());
+    return true;  // one page per host: no new tabs
+  }
+  bool OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int, const CefString& url, const CefString&,
+                     cef_window_open_disposition_t, bool, const CefPopupFeatures&, CefWindowInfo&, CefRefPtr<CefClient>&,
+                     CefBrowserSettings&, CefRefPtr<CefDictionaryValue>&, bool*) override {
+    record_blocked(url.ToString());
+    return true;  // no popups
+  }
+
   void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override {
     if (!frame->IsMain()) return;
     std::lock_guard<std::mutex> l(g.mu);
@@ -210,8 +413,11 @@ class Client : public CefClient,
   IMPLEMENT_REFCOUNTING(Client);
 };
 
-class App : public CefApp {
+class App : public CefApp, public CefBrowserProcessHandler {
  public:
+  CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+  CefRefPtr<CefRequestContextHandler> GetDefaultRequestContextHandler() override { return g_guard; }
+
   void OnBeforeCommandLineProcessing(const CefString& process_type, CefRefPtr<CefCommandLine> cl) override {
     if (!process_type.empty()) return;  // browser process only; switches propagate
     // Rendering path: software raster + software compositing, no GPU process.
@@ -244,6 +450,20 @@ class App : public CefApp {
     cl->AppendSwitch("disable-component-update");
     cl->AppendSwitch("disable-extensions");
     cl->AppendSwitchWithValue("password-store", "basic");
+    // Network: NetGuard enforces the policy for everything CEF routes through
+    // its request handlers. CEF has no hook for WebSocket handshakes, so in
+    // deny mode the resolver rule below is what stops ws:// / wss://: it maps
+    // every host, IP literals and localhost included, to NOTFOUND inside the
+    // network service (tests/network.rs checks no connection is made). The
+    // other switches only shrink the background-traffic surface.
+    cl->AppendSwitch("disable-background-networking");
+    cl->AppendSwitch("disable-domain-reliability");
+    cl->AppendSwitch("dns-prefetch-disable");
+    cl->AppendSwitch("no-pings");
+    cl->AppendSwitchWithValue("force-webrtc-ip-handling-policy", "disable_non_proxied_udp");
+    // Read the env directly: this may run before main() parses it.
+    const char* net = getenv("FERROCUT_HTML_NET");
+    if (!net || std::string(net) != "allow-remote") cl->AppendSwitchWithValue("host-resolver-rules", "MAP * ~NOTFOUND");
   }
 
  private:
@@ -367,6 +587,16 @@ std::string cmd_open(int w, int h, const std::string& url) {
   });
   if (!wait_for([] { return g.browser != nullptr; }, 20000)) return "ERR\t" + fatal_or("browser creation timed out");
   if (!wait_for([] { return g.load_end_seq >= 1; }, 20000)) return "ERR\t" + fatal_or("about:blank did not load");
+
+  {
+    std::lock_guard<std::mutex> l(g_net.mu);
+    if (!g_net.roots_given) {
+      g_net.roots.clear();
+      std::string path = file_url_path(url);
+      if (!path.empty()) g_net.roots.push_back(path.substr(0, std::max<size_t>(1, path.rfind('/'))));
+    }
+  }
+  if (!net_allowed(url)) return "ERR\tOPEN: page URL not allowed by the network policy: " + url;
 
   std::string r;
   // Order matters: shim and virtual time must be in place before the page loads.
@@ -569,6 +799,10 @@ void control_loop() {
         out = cmd_step(f[1]);
       } else if (cmd == "CAPTURE" && f.size() == 2) {
         out = cmd_capture(f[1]);
+      } else if (cmd == "BLOCKED" && f.size() == 1) {
+        std::lock_guard<std::mutex> l(g_net.mu);
+        out = "OK\t" + std::to_string(g_net.blocked.size());
+        for (auto& u : g_net.blocked) out += "\t" + u;
       } else if (cmd == "QUIT") {
         reply("OK");
         break;
@@ -616,6 +850,24 @@ int main(int argc, char* argv[]) {
   if (!getenv("FERROCUT_HTML_CORE_DUMPS")) {
     struct rlimit no_core = {0, 0};
     setrlimit(RLIMIT_CORE, &no_core);
+  }
+
+  g_guard = new NetGuard;
+  if (const char* n = getenv("FERROCUT_HTML_NET"); n && std::string(n) == "allow-remote") g_net.allow_remote = true;
+  if (const char* roots = getenv("FERROCUT_HTML_FILE_ROOTS"); roots && *roots) {
+    g_net.roots_given = true;
+    std::stringstream ss(roots);
+    std::string r;
+    while (std::getline(ss, r, '\n')) {
+      if (r.empty()) continue;
+      std::string c = canonical_path(r);
+      struct stat st {};
+      if (c.empty() || ::stat(c.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+        std::cerr << "FERROCUT_HTML_FILE_ROOTS: not a directory: " << r << std::endl;
+        return 3;
+      }
+      g_net.roots.push_back(c);
+    }
   }
 
   std::string dir = exe_dir();
