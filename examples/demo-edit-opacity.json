@@ -1,5 +1,5 @@
 {
-  "name": "cutline-demo",
+  "name": "ferrocut-demo",
   "output": { "width": 1920, "height": 1080, "fps": "24", "gop": 24, "gops_per_chunk": 1 },
   "tracks": [
     {

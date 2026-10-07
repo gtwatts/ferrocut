@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate short synthetic source clips for Cutline engine tests into media/ (gitignored).
+# Generate short synthetic source clips for Ferrocut engine tests into media/ (gitignored).
 # Uses only LGPL-native encoders (mpeg4); long-GOP with B-frames on purpose so the
 # decoder's keyframe-seek + decode-forward path gets exercised.
 set -euo pipefail

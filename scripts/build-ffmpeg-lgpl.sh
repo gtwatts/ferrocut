@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build an LGPL-only, shared FFmpeg for Cutline in user space (no sudo).
+# Build an LGPL-only, shared FFmpeg for Ferrocut in user space (no sudo).
 #
 #   ./scripts/build-ffmpeg-lgpl.sh            # -> third_party/ffmpeg-lgpl (gitignored)
 #   PREFIX=~/.local/opt/ffmpeg-lgpl ./scripts/build-ffmpeg-lgpl.sh
@@ -69,7 +69,7 @@ cd "$SRC"
   --enable-zlib \
   --enable-ffnvcodec --enable-nvenc --enable-nvdec --enable-cuvid \
   --extra-ldflags="-Wl,-rpath,$PREFIX/lib" \
-  --extra-version=cutline-lgpl
+  --extra-version=ferrocut-lgpl
 make -j"$JOBS"
 make install
 

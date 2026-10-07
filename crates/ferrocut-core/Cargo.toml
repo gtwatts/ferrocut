@@ -1,0 +1,13 @@
+[package]
+name = "ferrocut-core"
+version.workspace = true
+edition.workspace = true
+description = "Ferrocut's GPU-side core: the shared wgpu context, GPU frames, texture pool and the render node contract"
+
+[dependencies]
+ferrocut-types = { workspace = true }
+bytemuck = "1"
+half = { version = "2.7", features = ["bytemuck"] }
+pollster = "1"
+thiserror = "2"
+wgpu = "30"

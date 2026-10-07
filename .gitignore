@@ -3,5 +3,6 @@ target/
 *.mp4
 /out/
 /media/
+.ferrocut-cache/
 .cutline-cache/
 /third_party/

@@ -350,41 +350,11 @@ version = "0.0.1"
 dependencies = [
  "bytemuck",
  "cc",
- "cutline-core",
+ "ferrocut-core",
  "half",
  "naga",
  "pollster",
  "thiserror",
- "wgpu",
-]
-
-[[package]]
-name = "cutline-core"
-version = "0.0.1"
-dependencies = [
- "bytemuck",
- "cutline-types",
- "half",
- "pollster",
- "thiserror",
- "wgpu",
-]
-
-[[package]]
-name = "cutline-engine"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "blake3",
- "bytemuck",
- "clap",
- "cutline-core",
- "ffmpeg-next",
- "half",
- "rayon",
- "serde",
- "serde_json",
- "tempfile",
  "wgpu",
 ]
 
@@ -396,7 +366,7 @@ version = "0.0.1"
 name = "cutline-lottie"
 version = "0.0.1"
 dependencies = [
- "cutline-core",
+ "ferrocut-core",
  "half",
  "serde",
  "serde_json",
@@ -408,21 +378,9 @@ name = "cutline-ofx"
 version = "0.0.1"
 dependencies = [
  "cmake",
- "cutline-core",
+ "ferrocut-core",
  "half",
  "memmap2",
- "thiserror",
-]
-
-[[package]]
-name = "cutline-types"
-version = "0.0.1"
-dependencies = [
- "blake3",
- "bytemuck",
- "half",
- "serde",
- "serde_json",
  "thiserror",
 ]
 
@@ -481,6 +439,48 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
+name = "ferrocut-core"
+version = "0.0.1"
+dependencies = [
+ "bytemuck",
+ "ferrocut-types",
+ "half",
+ "pollster",
+ "thiserror",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrocut-engine"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "bytemuck",
+ "clap",
+ "ferrocut-core",
+ "ffmpeg-next",
+ "half",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wgpu",
+]
+
+[[package]]
+name = "ferrocut-types"
+version = "0.0.1"
+dependencies = [
+ "blake3",
+ "bytemuck",
+ "half",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "ffmpeg-next"
