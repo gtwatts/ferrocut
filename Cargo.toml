@@ -11,6 +11,3 @@ repository = "https://github.com/gtwatts/ferrocut"
 [workspace.dependencies]
 ferrocut-core = { path = "crates/ferrocut-core" }
 ferrocut-types = { path = "crates/ferrocut-types" }
-# TEMP alias until SeePlus renames: cutline-color, cutline-ofx and cutline-lottie
-# depend on `cutline-core = { workspace = true }` and use `cutline_core::...`.
-cutline-core = { path = "crates/ferrocut-core", package = "ferrocut-core" }

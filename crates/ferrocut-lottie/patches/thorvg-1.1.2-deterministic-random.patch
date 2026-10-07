@@ -1,0 +1,188 @@
+diff -ruN a/src/loaders/lottie/jerryscript/jerry-core/ecma/builtin-objects/ecma-builtin-math.cpp b/src/loaders/lottie/jerryscript/jerry-core/ecma/builtin-objects/ecma-builtin-math.cpp
+--- a/src/loaders/lottie/jerryscript/jerry-core/ecma/builtin-objects/ecma-builtin-math.cpp
++++ b/src/loaders/lottie/jerryscript/jerry-core/ecma/builtin-objects/ecma-builtin-math.cpp
+@@ -27,6 +27,7 @@
+ 
+ #include "jrt-libc-includes.h"
+ #include "jrt.h"
++#include "../../../../tvgLottieRandom.h"
+ 
+ #if defined(_WIN32)
+ #include <intrin.h>
+@@ -278,7 +279,7 @@
+   const ecma_number_t rand_max = (ecma_number_t) RAND_MAX;
+   const ecma_number_t rand_max_min_1 = (ecma_number_t) (RAND_MAX - 1);
+ 
+-  return ecma_make_number_value (((ecma_number_t) rand ()) / rand_max * rand_max_min_1 / rand_max);
++  return ecma_make_number_value (((ecma_number_t) tvglottie::rand ()) / rand_max * rand_max_min_1 / rand_max);
+ } /* ecma_builtin_math_object_random */
+ 
+ /**
+diff -ruN a/src/loaders/lottie/tvgLottieExpressions.cpp b/src/loaders/lottie/tvgLottieExpressions.cpp
+--- a/src/loaders/lottie/tvgLottieExpressions.cpp
++++ b/src/loaders/lottie/tvgLottieExpressions.cpp
+@@ -26,6 +26,7 @@
+ #include "tvgLottieModel.h"
+ #include "tvgLottieExpressions.h"
+ #include "tvgLock.h"
++#include "tvgLottieRandom.h"
+ 
+ #ifdef THORVG_LOTTIE_EXPRESSIONS_SUPPORT
+ 
+@@ -129,7 +130,7 @@
+ 
+ static float _rand()
+ {
+-    return (float)(rand() % 10000001) * 0.0000001f;
++    return (float)(tvglottie::rand() % 10000001) * 0.0000001f;
+ }
+ 
+ 
+@@ -1517,6 +1518,9 @@
+ {
+     if (exp->disabled) return jerry_undefined();
+ 
++    //Ferrocut: random()/wiggle()/Math.random are a pure function of (expression, frame)
++    tvglottie::seedFrame(exp->seed, frameNo);
++
+     auto& context = this->context();
+ 
+     buildGlobal(context, frameNo, exp);
+diff -ruN a/src/loaders/lottie/tvgLottieParser.cpp b/src/loaders/lottie/tvgLottieParser.cpp
+--- a/src/loaders/lottie/tvgLottieParser.cpp
++++ b/src/loaders/lottie/tvgLottieParser.cpp
+@@ -25,6 +25,7 @@
+ #include "tvgLottieModel.h"
+ #include "tvgLottieParser.h"
+ #include "tvgLottieExpressions.h"
++#include "tvgLottieRandom.h"
+ 
+ 
+ /************************************************************************/
+@@ -48,6 +49,7 @@
+ 
+     auto inst = new LottieExpression;
+     inst->code = code;
++    inst->seed = tvglottie::expressionSeed(code);
+     inst->comp = comp;
+     inst->layer = layer;
+     inst->object = object;
+@@ -1257,7 +1259,7 @@
+                     else if (KEY_AS("ne")) parseProperty(selector->minEase, selector);
+                     else if (KEY_AS("a")) parseProperty(selector->maxAmount, selector);
+                     else if (KEY_AS("b")) selector->based = (LottieTextRange::Based) getInt();
+-                    else if (KEY_AS("rn")) selector->random = getInt() ? rand() : 0;
++                    else if (KEY_AS("rn")) selector->random = getInt() ? tvglottie::parseRandom() : 0;
+                     else if (KEY_AS("sh")) selector->shape = (LottieTextRange::Shape) getInt();
+                     else if (KEY_AS("o")) parseProperty(selector->offset, selector);
+                     else if (KEY_AS("r")) selector->rangeUnit = (LottieTextRange::Unit) getInt();
+@@ -1773,6 +1775,8 @@
+ 
+ bool LottieParser::parse()
+ {
++    tvglottie::parseCounter() = 0;
++
+     //verify json.
+     if (!parseNext()) return false;
+ 
+diff -ruN a/src/loaders/lottie/tvgLottieProperty.h b/src/loaders/lottie/tvgLottieProperty.h
+--- a/src/loaders/lottie/tvgLottieProperty.h
++++ b/src/loaders/lottie/tvgLottieProperty.h
+@@ -118,6 +118,7 @@
+     LottieLayer* layer;
+     LottieObject* object;
+     LottieProperty* property;
++    uint32_t seed = 0;     //Ferrocut: deterministic random() seed
+     bool disabled = false;
+ 
+     LottieExpression() {}
+@@ -130,6 +131,7 @@
+         object = rhs->object;
+         property = rhs->property;
+         disabled = rhs->disabled;
++        seed = rhs->seed;
+     }
+ 
+     ~LottieExpression()
+diff -ruN a/src/loaders/lottie/tvgLottieRandom.h b/src/loaders/lottie/tvgLottieRandom.h
+--- a/src/loaders/lottie/tvgLottieRandom.h
++++ b/src/loaders/lottie/tvgLottieRandom.h
+@@ -0,0 +1,78 @@
++/*
++ * Ferrocut patch for ThorVG (MIT, same terms as ThorVG).
++ *
++ * Deterministic, thread-local replacement for libc rand() inside the Lottie
++ * loader (expression random()/wiggle(), JerryScript Math.random, text range
++ * selector "randomize"). libc rand() is process-global and history dependent,
++ * so the same frame rendered in a different order, process, or thread would
++ * differ. Here every expression evaluation is reseeded from
++ * (stable per-expression seed, frame number), so the result is a pure function
++ * of the document and the requested frame.
++ */
++#ifndef _TVG_LOTTIE_RANDOM_H_
++#define _TVG_LOTTIE_RANDOM_H_
++
++#include <cstdint>
++#include <cstring>
++
++namespace tvglottie
++{
++
++//function-local statics: one instance program-wide, valid C++11 (ThorVG builds as C++14)
++inline uint64_t& rngState()
++{
++    static thread_local uint64_t s = 0x853c49e6748fea9bULL;
++    return s;
++}
++
++inline uint32_t& parseCounter()
++{
++    static thread_local uint32_t c = 0;
++    return c;
++}
++
++inline uint64_t splitmix64(uint64_t& s)
++{
++    uint64_t z = (s += 0x9e3779b97f4a7c15ULL);
++    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
++    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
++    return z ^ (z >> 31);
++}
++
++inline uint32_t fnv1a(const char* s)
++{
++    uint32_t h = 2166136261u;
++    if (s) for (; *s; ++s) { h ^= (uint8_t)*s; h *= 16777619u; }
++    return h;
++}
++
++//stable across runs: content hash of the code + its position in document order
++inline uint32_t expressionSeed(const char* code)
++{
++    return fnv1a(code) ^ (++parseCounter() * 0x9E3779B9u);
++}
++
++//non-zero value in [1, 2^31-1] for parse-time randomization (text selectors)
++inline int parseRandom()
++{
++    uint64_t s = 0x5eedc0de00000000ULL ^ (uint64_t)(++parseCounter());
++    return (int)(splitmix64(s) >> 33) | 1;
++}
++
++inline void seedFrame(uint32_t expSeed, float frameNo)
++{
++    uint32_t bits;
++    memcpy(&bits, &frameNo, sizeof(bits));
++    uint64_t s = ((uint64_t)expSeed << 32) | bits;
++    rngState() = splitmix64(s);
++}
++
++//same range as glibc rand(): [0, RAND_MAX = 2^31-1]
++inline int rand()
++{
++    return (int)(splitmix64(rngState()) >> 33);
++}
++
++}
++
++#endif //_TVG_LOTTIE_RANDOM_H_

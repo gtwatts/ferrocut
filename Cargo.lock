@@ -345,46 +345,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
-name = "cutline-color"
-version = "0.0.1"
-dependencies = [
- "bytemuck",
- "cc",
- "ferrocut-core",
- "half",
- "naga",
- "pollster",
- "thiserror",
- "wgpu",
-]
-
-[[package]]
-name = "cutline-html"
-version = "0.0.1"
-
-[[package]]
-name = "cutline-lottie"
-version = "0.0.1"
-dependencies = [
- "ferrocut-core",
- "half",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "cutline-ofx"
-version = "0.0.1"
-dependencies = [
- "cmake",
- "ferrocut-core",
- "half",
- "memmap2",
- "thiserror",
-]
-
-[[package]]
 name = "dispatch2"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -441,6 +401,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "ferrocut-color"
+version = "0.0.1"
+dependencies = [
+ "bytemuck",
+ "cc",
+ "ferrocut-core",
+ "half",
+ "naga",
+ "pollster",
+ "thiserror",
+ "wgpu",
+]
+
+[[package]]
 name = "ferrocut-core"
 version = "0.0.1"
 dependencies = [
@@ -468,6 +442,32 @@ dependencies = [
  "serde_json",
  "tempfile",
  "wgpu",
+]
+
+[[package]]
+name = "ferrocut-html"
+version = "0.0.1"
+
+[[package]]
+name = "ferrocut-lottie"
+version = "0.0.1"
+dependencies = [
+ "ferrocut-core",
+ "half",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ferrocut-ofx"
+version = "0.0.1"
+dependencies = [
+ "cmake",
+ "ferrocut-core",
+ "half",
+ "memmap2",
+ "thiserror",
 ]
 
 [[package]]

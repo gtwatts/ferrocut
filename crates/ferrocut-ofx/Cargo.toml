@@ -1,0 +1,19 @@
+[package]
+name = "ferrocut-ofx"
+version.workspace = true
+edition.workspace = true
+description = "OpenFX plugins as Ferrocut render nodes, run in an isolated host process over shared memory"
+license = "Apache-2.0"
+build = "build.rs"
+
+[dependencies]
+ferrocut-core = { workspace = true }
+half = "2.7"
+memmap2 = "0.9"
+thiserror = "2"
+
+[build-dependencies]
+cmake = "0.1.54"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(ferrocut_ofx_no_host)"] }
