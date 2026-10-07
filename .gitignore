@@ -2,3 +2,5 @@ target/
 *.mov
 *.mp4
 /out/
+/media/
+.cutline-cache/

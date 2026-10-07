@@ -1,0 +1,21 @@
+{
+  "name": "cutline-demo",
+  "output": { "width": 1920, "height": 1080, "fps": "24", "gop": 24, "gops_per_chunk": 1 },
+  "tracks": [
+    {
+      "name": "V1",
+      "clips": [
+        { "id": "bars", "source": "../media/bars.mov", "start": "0", "source_in": "0", "duration": "4" },
+        { "id": "test", "source": "../media/testsrc2.mov", "start": "3", "source_in": "1", "duration": "4",
+          "transition_in": { "kind": "dissolve", "duration": "1" } },
+        { "id": "grad", "source": "../media/gradients.mov", "start": "7", "source_in": "1/2", "duration": "5" }
+      ]
+    },
+    {
+      "name": "V2",
+      "clips": [
+        { "id": "logo", "source": "../media/overlay.mov", "start": "8", "source_in": "0", "duration": "2", "opacity": "1/2" }
+      ]
+    }
+  ]
+}
