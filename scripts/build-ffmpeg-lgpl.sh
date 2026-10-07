@@ -12,9 +12,14 @@
 #   nv-codec-headers (MIT)          - NVENC/NVDEC/CUVID; libcuda/libnvidia-encode are
 #                                     dlopen'ed from the NVIDIA driver at runtime
 # Build-only tool: NASM (BSD-2) for FFmpeg's x86 SIMD; built locally if missing.
+#
+# The install is relocatable: libraries and tools carry RUNPATH $ORIGIN/../lib
+# (from lib/ that is lib/ itself) and the .pc files use ${pcfiledir}, so the
+# prefix can be moved or reached through a symlink without rebuilding.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# Physical path (pwd -P): never bake a symlinked checkout path into the build.
+REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 FFMPEG_VERSION="${FFMPEG_VERSION:-9.0.2}"
 FFMPEG_SHA256="${FFMPEG_SHA256:-8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e}"
 NASM_VERSION="2.16.03"
@@ -68,12 +73,37 @@ cd "$SRC"
   --disable-doc --disable-ffplay \
   --enable-zlib \
   --enable-ffnvcodec --enable-nvenc --enable-nvdec --enable-cuvid \
-  --extra-ldflags="-Wl,-rpath,$PREFIX/lib" \
+  --extra-ldflags='-Wl,-rpath,\$$ORIGIN/../lib' \
   --extra-version=ferrocut-lgpl
 make -j"$JOBS"
 make install
 
-# 4. Verify the license posture
+# 4. Make the install relocatable and check it
+echo "== relocatable install"
+for pc in "$PREFIX"/lib/pkgconfig/{libav,libsw,ffnvcodec}*.pc; do
+  [ -f "$pc" ] || continue
+  sed -i -e 's|^prefix=.*|prefix=${pcfiledir}/../..|' \
+         -e 's|^exec_prefix=.*|exec_prefix=${prefix}|' \
+         -e 's|^libdir=.*|libdir=${prefix}/lib|' \
+         -e 's|^includedir=.*|includedir=${prefix}/include|' "$pc"
+done
+want='$ORIGIN/../lib'
+for f in "$PREFIX"/lib/lib{av,sw}*.so.[0-9]* "$PREFIX"/bin/ff{mpeg,probe}; do
+  [ -L "$f" ] && continue
+  rp=$(readelf -d "$f" | sed -n 's/.*(RUNPATH).*\[\(.*\)\]/\1/p')
+  if [ "$rp" != "$want" ]; then
+    if command -v patchelf >/dev/null; then
+      patchelf --set-rpath "$want" "$f"
+    else
+      echo "ERROR: $f has RUNPATH '$rp', expected '$want' (and no patchelf)" >&2; exit 1
+    fi
+  fi
+done
+if grep -rl -- "$PREFIX" "$PREFIX"/lib/pkgconfig; then
+  echo "ERROR: absolute prefix left in .pc files" >&2; exit 1
+fi
+
+# 5. Verify the license posture
 echo "== verify"
 "$PREFIX/bin/ffmpeg" -hide_banner -L | head -3
 if "$PREFIX/bin/ffmpeg" -hide_banner -buildconf | grep -Eq -- '--enable-(gpl|nonfree|libx264|libx265)'; then

@@ -9,10 +9,18 @@
 //!   3. FALLBACK: pkg-config's default search path (e.g. linuxbrew's FFmpeg,
 //!      which is a GPL build: fine for local hacking, NOT for distribution).
 //!
+//! The rpath is relocatable where possible: the libdir is canonicalized (so a
+//! symlinked checkout path never gets baked in), and when it lives inside the
+//! workspace the binary gets `$ORIGIN`-relative entries for
+//! `target/<profile>/` (the CLI) and `target/<profile>/{deps,examples}/` (test
+//! and example binaries). A libdir outside the workspace is embedded as its
+//! canonical absolute path. The project FFmpeg's own libs carry
+//! RUNPATH `$ORIGIN/../lib`, so their inter-library deps resolve too.
+//!
 //! FERROCUT_FFMPEG_LIBDIR overrides the rpath (empty string disables it).
 //! FERROCUT_REQUIRE_LGPL_FFMPEG=1 turns the fallback warning into an error.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 fn pkg_libdir() -> Option<String> {
@@ -29,6 +37,44 @@ fn canon(p: &str) -> PathBuf {
     Path::new(p)
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(p))
+}
+
+/// `to` relative to `from` (both absolute, canonical).
+fn relative(from: &Path, to: &Path) -> PathBuf {
+    let (f, t): (Vec<Component>, Vec<Component>) =
+        (from.components().collect(), to.components().collect());
+    let common = f.iter().zip(&t).take_while(|(a, b)| a == b).count();
+    let mut r = PathBuf::new();
+    for _ in common..f.len() {
+        r.push("..");
+    }
+    for c in &t[common..] {
+        r.push(c);
+    }
+    r
+}
+
+/// rpath entries for `libdir`.
+fn rpaths(libdir: &str) -> Vec<String> {
+    let lib = canon(libdir);
+    let workspace = canon(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+    // OUT_DIR = <target>/<profile>/build/<pkg>-<hash>/out
+    let profile = std::env::var("OUT_DIR").ok().and_then(|o| {
+        Path::new(&o)
+            .ancestors()
+            .nth(3)
+            .map(|p| canon(&p.to_string_lossy()))
+    });
+    match profile {
+        Some(profile) if lib.starts_with(&workspace) && profile.starts_with(&workspace) => {
+            let rel = relative(&profile, &lib);
+            vec![
+                format!("$ORIGIN/{}", rel.display()),
+                format!("$ORIGIN/../{}", rel.display()),
+            ]
+        }
+        _ => vec![lib.display().to_string()],
+    }
 }
 
 fn main() {
@@ -59,6 +105,8 @@ fn main() {
     let libdir = std::env::var("FERROCUT_FFMPEG_LIBDIR").ok().or(resolved);
     if let Some(dir) = libdir.filter(|d| !d.is_empty() && !d.starts_with("/usr/lib") && d != "/lib")
     {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+        for rp in rpaths(&dir) {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{rp}");
+        }
     }
 }
