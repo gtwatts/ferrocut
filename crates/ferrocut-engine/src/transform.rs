@@ -11,17 +11,26 @@
 //! pixel center and filters the source with a separable Catmull-Rom
 //! (Mitchell-Netravali B=0, C=1/2) kernel in linear premultiplied space. The
 //! kernel is interpolating, so integer translations are exact copies, and it
-//! is widened by the minification factor along each source axis (capped at
-//! [`MAX_FILTER_SCALE`]) so downscales are filtered rather than aliased.
+//! is widened by the minification factor along each source axis so downscales
+//! are filtered rather than aliased.
+//!
+//! The widened kernel is used up to [`MAX_FILTER_SCALE`]. Beyond that, the
+//! source is first halved with exact 2x box averages (per axis, in premultiplied
+//! space, aligned to the even pixel grid) until the remaining factor is at most
+//! [`MAX_FILTER_SCALE`], and the kernel filters the reduced image. Minification
+//! up to 8x therefore renders exactly as before; only stronger downscales (which
+//! used to alias once the kernel stopped widening) take the box pre-pass.
 
 use ferrocut_core::{Animatable, PixelRect, Rational, RationalTime};
 use serde::{Deserialize, Serialize};
 
 /// Bump when the kernel or the math changes (part of the transform node hash).
-pub const TRANSFORM_VERSION: &[u8] = b"transform-v1";
-/// Widest kernel scale (minification factor) the filter follows; beyond this a
-/// downscale starts to alias (a mip pre-pass would lift the cap).
+pub const TRANSFORM_VERSION: &[u8] = b"transform-v2-mip";
+/// Widest kernel scale (minification factor) the filter follows; beyond this
+/// the source is pre-reduced with 2x box levels (see [`mip_levels`]).
 pub const MAX_FILTER_SCALE: f64 = 8.0;
+/// Most 2x box levels per axis (a 65536x reduction before the kernel).
+pub const MAX_MIP_LEVELS: u32 = 16;
 /// Kernel support radius at scale 1, in source pixels.
 pub const KERNEL_RADIUS: f64 = 2.0;
 pub const FILTER_B: f32 = 0.0;
@@ -158,10 +167,14 @@ impl Affine {
 pub struct KernelSetup {
     /// Destination pixel -> source pixel.
     pub inverse: Affine,
-    /// Kernel scale along source x / y (>= 1 when minifying).
+    /// Kernel scale along the (reduced) source x / y (>= 1 when minifying).
     pub filter_scale: [f64; 2],
-    /// Taps on each side along source x / y.
+    /// Taps on each side along the (reduced) source x / y.
     pub radius: [i32; 2],
+    /// 2x box levels applied to the source along x / y before the kernel
+    /// (`[0, 0]` up to [`MAX_FILTER_SCALE`]). `inverse` still maps to the
+    /// full-resolution source; the kernel divides by `2^mip`.
+    pub mip: [u32; 2],
     /// Output data window (display pixels), never empty.
     pub window: PixelRect,
 }
@@ -175,19 +188,28 @@ pub fn plan(fwd: &Affine, src_window: PixelRect, width: u32, height: u32) -> Opt
     // Source distance covered by one destination pixel along each source axis.
     let ex = (a * a + b * b).sqrt();
     let ey = (c * c + d * d).sqrt();
+    let mip = [mip_levels(ex), mip_levels(ey)];
     let filter_scale = [
-        ex.clamp(1.0, MAX_FILTER_SCALE),
-        ey.clamp(1.0, MAX_FILTER_SCALE),
+        (ex / f64::from(1u32 << mip[0])).clamp(1.0, MAX_FILTER_SCALE),
+        (ey / f64::from(1u32 << mip[1])).clamp(1.0, MAX_FILTER_SCALE),
     ];
     let radius = filter_scale.map(|s| (KERNEL_RADIUS * s).ceil() as i32);
+    // Kernel support in full-resolution source pixels: the reduced radius times
+    // the level size, plus one level pixel of slack for the grid alignment of
+    // each box pass (exactly `radius` without a pre-pass).
+    let margin = |r: i32, l: u32| {
+        if l == 0 {
+            f64::from(r)
+        } else {
+            f64::from(r + 1) * f64::from(1u32 << l)
+        }
+    };
+    let (mx, my) = (margin(radius[0], mip[0]), margin(radius[1], mip[1]));
     // Bounding box of the source window grown by the kernel support, mapped forward.
-    let (x0, y0) = (
-        src_window.x as f64 - radius[0] as f64,
-        src_window.y as f64 - radius[1] as f64,
-    );
+    let (x0, y0) = (src_window.x as f64 - mx, src_window.y as f64 - my);
     let (x1, y1) = (
-        src_window.right() as f64 + radius[0] as f64,
-        src_window.bottom() as f64 + radius[1] as f64,
+        src_window.right() as f64 + mx,
+        src_window.bottom() as f64 + my,
     );
     let corners = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map(|p| fwd.apply(p));
     let fold =
@@ -219,8 +241,30 @@ pub fn plan(fwd: &Affine, src_window: PixelRect, width: u32, height: u32) -> Opt
         inverse: inv,
         filter_scale,
         radius,
+        mip,
         window,
     })
+}
+
+/// 2x box levels needed so a minification of `e` leaves at most
+/// [`MAX_FILTER_SCALE`] for the kernel: 0 up to 8x, 1 up to 16x, and so on.
+pub fn mip_levels(e: f64) -> u32 {
+    let mut l = 0;
+    // Exact halvings (powers of two), so the boundary is not subject to log2 rounding.
+    while l < MAX_MIP_LEVELS && e / f64::from(1u32 << l) > MAX_FILTER_SCALE {
+        l += 1;
+    }
+    l
+}
+
+/// The data window of a 2x box level of `w` (factors 1 or 2 per axis): level
+/// pixel `k` averages source pixels `f*k .. f*k + f`, on the even grid.
+pub fn box_window(w: PixelRect, f: [u32; 2]) -> PixelRect {
+    let lo = |v: i64, f: u32| v.div_euclid(i64::from(f));
+    let hi = |v: i64, f: u32| (v + i64::from(f) - 1).div_euclid(i64::from(f));
+    let (x0, x1) = (lo(i64::from(w.x), f[0]), hi(w.right(), f[0]));
+    let (y0, y1) = (lo(i64::from(w.y), f[1]), hi(w.bottom(), f[1]));
+    PixelRect::new(x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32)
 }
 
 fn xy(v: &Option<[Animatable; 2]>, t: RationalTime, default: [f64; 2]) -> [f64; 2] {
@@ -369,7 +413,7 @@ mod tests {
         };
         let k = plan(&t.affine(1.0), full, 64, 32).unwrap();
         assert_eq!(k.filter_scale, [2.0, 2.0]);
-        assert_eq!(k.radius, [4, 4]);
+        assert_eq!((k.radius, k.mip), ([4, 4], [0, 0]));
         assert_eq!(k.window, PixelRect::new(14, 6, 36, 20));
         // Integer translation: magnification 1, window shifted and clipped.
         let t = TransformAt {
@@ -392,6 +436,35 @@ mod tests {
         assert_eq!(
             plan(&t.affine(1.0), full, 64, 32).unwrap().window,
             PixelRect::new(0, 0, 1, 1)
+        );
+    }
+
+    #[test]
+    fn mip_levels_start_past_the_kernel_cap() {
+        assert_eq!(mip_levels(1.0), 0);
+        assert_eq!(mip_levels(2.5), 0);
+        assert_eq!(mip_levels(8.0), 0);
+        assert_eq!(mip_levels(8.0001), 1);
+        assert_eq!(mip_levels(16.0), 1);
+        assert_eq!(mip_levels(16.5), 2);
+        assert_eq!(mip_levels(1e30), MAX_MIP_LEVELS);
+        // 20x horizontally, 4x vertically: two x levels, kernel 5 x 4.
+        let t = TransformAt {
+            scale: [0.05, 0.25],
+            ..TransformAt::identity(640, 320)
+        };
+        let k = plan(&t.affine(1.0), PixelRect::full(640, 320), 640, 320).unwrap();
+        assert_eq!(k.mip, [2, 0]);
+        assert!((k.filter_scale[0] - 5.0).abs() < 1e-9 && k.filter_scale[1] == 4.0);
+        assert_eq!(k.radius, [10, 8]);
+        // Box windows follow the even grid, including negative and odd origins.
+        assert_eq!(
+            box_window(PixelRect::new(-3, 1, 6, 4), [2, 1]),
+            PixelRect::new(-2, 1, 4, 4)
+        );
+        assert_eq!(
+            box_window(PixelRect::new(1, 1, 3, 3), [2, 2]),
+            PixelRect::new(0, 0, 2, 2)
         );
     }
 

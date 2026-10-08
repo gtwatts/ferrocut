@@ -41,6 +41,15 @@ struct TransformParams {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct DownParams {
+    src_origin: [i32; 2],
+    dst_origin: [i32; 2],
+    factor: [i32; 2],
+    _pad: [i32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct OutParams {
     src_origin: [i32; 2],
     _pad: [i32; 2],
@@ -54,6 +63,7 @@ pub struct Compositor {
     clear: wgpu::ComputePipeline,
     output: wgpu::ComputePipeline,
     transform: wgpu::ComputePipeline,
+    downsample: wgpu::ComputePipeline,
 }
 
 /// Worker-slot key under which the shared compositor is stored.
@@ -192,6 +202,10 @@ impl Compositor {
             label: Some("transform.wgsl"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/transform.wgsl").into()),
         });
+        let down = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("downsample.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/downsample.wgsl").into()),
+        });
         let mk = |m: &wgpu::ShaderModule, entry: &str| {
             dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
@@ -210,6 +224,7 @@ impl Compositor {
             clear: mk(&comp, "clear"),
             output: mk(&out, "output_rec709"),
             transform: mk(&xf, "transform"),
+            downsample: mk(&down, "downsample"),
         }
     }
 
@@ -468,12 +483,75 @@ impl Compositor {
         self.opacity_into(ctx, a, 1.0, window)
     }
 
+    /// One 2x box level of `a` (`factor` 1 or 2 per axis; see
+    /// `shaders/downsample.wgsl`). Coordinates are level pixels: the result's
+    /// data window is [`crate::transform::box_window`] of `a`'s.
+    pub fn box_reduce(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        a: &Frame,
+        factor: [u32; 2],
+    ) -> Result<Frame, NodeError> {
+        let win = crate::transform::box_window(a.data_window, factor);
+        let out = Frame::new_gpu_window(
+            ctx.gpu,
+            a.width.div_ceil(factor[0]),
+            a.height.div_ceil(factor[1]),
+            win,
+            a.pixel_aspect,
+            a.color_space.clone(),
+        );
+        let p = Self::uniform(
+            ctx.gpu,
+            &DownParams {
+                src_origin: origin(&a.data_window),
+                dst_origin: origin(&win),
+                factor: factor.map(|f| f as i32),
+                _pad: [0; 2],
+            },
+        );
+        let res = [
+            (0, Res::Params(&p)),
+            (1, Res::Tex(view(a)?)),
+            (3, Res::Tex(view(&out)?)),
+        ];
+        Self::dispatch(ctx, &self.downsample, &res, win.width, win.height);
+        Ok(out)
+    }
+
     /// Resample `a` through a planned layer transform (see [`crate::transform`]).
     /// The result covers `k.window` with `a`'s display window and pixel aspect.
+    /// Downscales past the kernel cap first run `k.mip` box levels.
     pub fn transform(
         &self,
         ctx: &mut RenderCtx<'_>,
         a: &Frame,
+        k: &crate::transform::KernelSetup,
+    ) -> Result<Frame, NodeError> {
+        let reduced;
+        let src = if k.mip == [0, 0] {
+            a
+        } else {
+            let mut cur: Option<Frame> = None;
+            let (mut lx, mut ly) = (k.mip[0], k.mip[1]);
+            while lx > 0 || ly > 0 {
+                let f = [if lx > 0 { 2 } else { 1 }, if ly > 0 { 2 } else { 1 }];
+                let next = self.box_reduce(ctx, cur.as_ref().unwrap_or(a), f)?;
+                cur = Some(next);
+                lx = lx.saturating_sub(1);
+                ly = ly.saturating_sub(1);
+            }
+            reduced = cur.expect("at least one level");
+            &reduced
+        };
+        self.transform_reduced(ctx, a, src, k)
+    }
+
+    fn transform_reduced(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        a: &Frame,
+        src: &Frame,
         k: &crate::transform::KernelSetup,
     ) -> Result<Frame, NodeError> {
         let win = k.window;
@@ -485,8 +563,16 @@ impl Compositor {
             a.pixel_aspect,
             a.color_space.clone(),
         );
+        // Rows of the inverse map divided by the level size (exact powers of
+        // two; a no-op without a pre-pass).
+        let (sx, sy) = (
+            1.0 / f64::from(1u32 << k.mip[0]),
+            1.0 / f64::from(1u32 << k.mip[1]),
+        );
         let [m0, m1, m2, m3] = k.inverse.m;
         let [t0, t1] = k.inverse.t;
+        let (m0, m1, t0) = (m0 * sx, m1 * sx, t0 * sx);
+        let (m2, m3, t1) = (m2 * sy, m3 * sy, t1 * sy);
         let p = Self::uniform(
             ctx.gpu,
             &TransformParams {
@@ -498,7 +584,7 @@ impl Compositor {
                     crate::transform::FILTER_B,
                     crate::transform::FILTER_C,
                 ],
-                src_origin: origin(&a.data_window),
+                src_origin: origin(&src.data_window),
                 dst_origin: origin(&win),
                 radius: k.radius,
                 _pad: [0; 2],
@@ -506,7 +592,7 @@ impl Compositor {
         );
         let res = [
             (0, Res::Params(&p)),
-            (1, Res::Tex(view(a)?)),
+            (1, Res::Tex(view(src)?)),
             (3, Res::Tex(view(&out)?)),
         ];
         Self::dispatch(ctx, &self.transform, &res, win.width, win.height);
