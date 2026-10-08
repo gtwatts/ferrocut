@@ -348,3 +348,56 @@ fn effect_ops_edit_the_chains() {
         assert_eq!(std::fs::read(&p).unwrap(), before);
     }
 }
+
+/// Final chunks of rejected loudness passes become header-only stubs; a
+/// re-render replays the passes from headers and records, bit for bit.
+#[test]
+fn rejected_loudness_passes_leave_header_only_stubs() {
+    let d = tempfile::tempdir().unwrap();
+    media(d.path());
+    let c = cache(d.path());
+    let mut tl = timeline(d.path(), true, "0");
+    // Hot target against a low ceiling: the limiter eats loudness, so the
+    // first pass misses and the loop corrects.
+    let l = tl.audio.loudness.as_mut().unwrap();
+    l.target_lufs = ferrocut_core::Rational::from_int(-7);
+    l.true_peak_dbtp = ferrocut_core::Rational::from_int(-3);
+    let first = prepare(&tl, &c, false).unwrap().unwrap();
+    let passes = first.analysis.passes;
+    assert!(passes >= 2, "{:?}", first.analysis);
+    let s = &first.cache;
+    assert_eq!(s.stubs_written, (passes - 1) as usize * s.chunks, "{s:?}");
+    // Every file in final/ is either an accepted chunk or a small stub.
+    let accepted: Vec<&Path> = first.finals.iter().map(|f| f.path.as_path()).collect();
+    let mut stubs = 0;
+    for e in std::fs::read_dir(c.join("audio-mix/final")).unwrap() {
+        let p = e.unwrap().path();
+        let len = std::fs::metadata(&p).unwrap().len();
+        if accepted.contains(&p.as_path()) {
+            assert!(len > 100_000, "{} {len}", p.display());
+        } else {
+            assert!(len < 1_000, "{} {len}", p.display());
+            stubs += 1;
+        }
+    }
+    assert_eq!(stubs, s.stubs_written);
+    let again = prepare(&tl, &c, false).unwrap().unwrap();
+    let s2 = &again.cache;
+    assert_eq!(
+        (
+            s2.premix_mixed,
+            s2.final_rendered,
+            s2.records_analyzed,
+            s2.stubs_written
+        ),
+        (0, 0, 0, 0),
+        "{s2:?}"
+    );
+    assert_eq!(again.analysis.passes, passes);
+    assert_eq!(bits(&all(&again)), bits(&all(&first)));
+    // Records gone: the stubs' samples are rendered again, same result.
+    std::fs::rename(c.join("audio"), d.path().join("records-moved")).unwrap();
+    let third = prepare(&tl, &c, false).unwrap().unwrap();
+    assert_eq!(third.analysis.passes, passes);
+    assert_eq!(bits(&all(&third)), bits(&all(&first)));
+}

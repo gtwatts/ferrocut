@@ -23,7 +23,7 @@ use serde::Serialize;
 
 use crate::audio_fx::to_effects;
 use crate::comp::{CompStack, is_comp};
-use crate::media::audio::{AUDIO_DECODE_VERSION, decode_audio};
+use crate::media::audio::AUDIO_DECODE_VERSION;
 use crate::mixdown::{self, CacheStats, DiskSrc, FinalChunk, FinalReader, PcmMeta, Store};
 use crate::retime::TimeMap;
 use crate::timeline::{BusSpec, ClipAudio, Timeline};
@@ -208,19 +208,10 @@ impl AudioLoader for DiskLoader<'_> {
         let file = self.store.source_path(&key);
         let (src, meta) = match DiskSrc::open(&key, &file).filter(|_| !self.store.force) {
             Some(x) => x,
-            None => {
-                let Some(d) = decode_audio(path, self.rate)? else {
-                    return Ok(None);
-                };
-                let meta = PcmMeta {
-                    codec: d.codec.clone(),
-                    source_rate: d.source_rate,
-                    source_channels: d.source_channels,
-                    ..Default::default()
-                };
-                let src = DiskSrc::write(&key, &file, &d.audio, meta.clone())?;
-                (src, meta)
-            }
+            None => match DiskSrc::write_stream(&key, &file, path, self.rate)? {
+                Some(x) => x,
+                None => return Ok(None),
+            },
         };
         self.info.push(SourceInfo {
             path: path.to_path_buf(),
@@ -261,7 +252,11 @@ impl AudioLoader for DiskLoader<'_> {
         if let Some((s, _)) = DiskSrc::open(&key, &file).filter(|_| !self.store.force) {
             return Ok(s);
         }
-        let derived = ferrocut_audio::retime::render(&base.load()?, positions, rate, backend);
+        // Only the source span the positions reach is read (not the whole
+        // media), so memory follows the clip, not the file.
+        let (lo, hi) = ferrocut_audio::retime::source_span(positions, rate, backend);
+        let win = base.window(lo, hi)?;
+        let derived = ferrocut_audio::retime::render_window(&win, lo, positions, rate, backend);
         DiskSrc::write(&key, &file, &derived, PcmMeta::default())
     }
     fn is_empty(&self, src: &DiskSrc) -> bool {

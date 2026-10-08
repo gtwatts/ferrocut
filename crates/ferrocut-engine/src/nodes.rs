@@ -50,6 +50,41 @@ impl SourceNode {
     }
 }
 
+/// Open decoders per worker, least recently used first out. Each decoder
+/// holds only its current and next frame (keyframe seek + decode forward),
+/// so a worker's decode memory is bounded by [`DecoderPool::CAP`] decoders
+/// however long the media or however many sources the timeline uses.
+/// Re-opening an evicted decoder is invisible in the output: frame lookup
+/// is by timestamp, never by decoder history.
+#[derive(Default)]
+pub struct DecoderPool {
+    open: Vec<(NodeHash, Decoder)>,
+    pub opened: u64,
+}
+
+impl DecoderPool {
+    pub const CAP: usize = 8;
+
+    pub fn get(
+        &mut self,
+        key: NodeHash,
+        open: impl FnOnce() -> Result<Decoder, NodeError>,
+    ) -> Result<&mut Decoder, NodeError> {
+        if let Some(i) = self.open.iter().position(|(k, _)| *k == key) {
+            let e = self.open.remove(i);
+            self.open.push(e);
+        } else {
+            let d = open()?;
+            self.opened += 1;
+            if self.open.len() >= Self::CAP {
+                self.open.remove(0);
+            }
+            self.open.push((key, d));
+        }
+        Ok(&mut self.open.last_mut().expect("just pushed").1)
+    }
+}
+
 impl RenderNode for SourceNode {
     fn kind(&self) -> &'static str {
         "source"
@@ -84,7 +119,12 @@ impl RenderNode for SourceNode {
         let gpu = ctx.gpu;
         let (w, h) = (self.width, self.height);
         let path = self.path.clone();
-        let dec = ctx.worker.slot::<Decoder>(self.content_hash(), || {
+        let pool = ctx
+            .worker
+            .slot::<DecoderPool>(NodeHash::of("decoder-pool", &[]), || {
+                Ok(DecoderPool::default())
+            })?;
+        let dec = pool.get(self.content_hash(), || {
             Decoder::open(&path, w, h).map_err(NodeError::new)
         })?;
         let rgba = dec

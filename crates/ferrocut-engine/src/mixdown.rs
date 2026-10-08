@@ -25,7 +25,9 @@
 //!    premix chunks), measured again from records, corrected until within
 //!    tolerance. Each pass's chunks are cached by (premix keys of the window,
 //!    gain, ceiling, limiter state), so a re-render replays the loop from
-//!    headers alone.
+//!    headers alone. Chunks of rejected passes are cut down to header-only
+//!    stubs (`stub: true`) once a pass is accepted: the replay needs only
+//!    their headers and records, never their samples.
 //!
 //! The final chunks are what the muxer interleaves, and their records give
 //! the report's output loudness: by construction identical to what
@@ -79,6 +81,8 @@ pub fn chunk_ranges(total: i64, rate: u32) -> Vec<(i64, i64)> {
 // ---------------------------------------------------------------- blobs
 
 const MAGIC: &[u8; 8] = b"FCAUDIO1";
+/// Header bytes reserved by [`BlobWriter::create_deferred`].
+const DEFERRED_HEADER: usize = 512;
 
 /// A cache file: magic, u64 LE header length, JSON header, then interleaved
 /// f32 LE samples. Written to a temp file and renamed into place.
@@ -106,6 +110,36 @@ impl BlobWriter {
             path: path.to_path_buf(),
             w,
         })
+    }
+    /// A writer whose header is only known at the end: a space-padded
+    /// placeholder of [`DEFERRED_HEADER`] bytes, rewritten by
+    /// [`Self::finish_with`] (JSON allows the trailing spaces).
+    fn create_deferred(path: &Path) -> anyhow::Result<Self> {
+        let w = Self::create(path, &serde_json::Value::Null)?;
+        let mut w = w;
+        // Replace the 4-byte `null` header by the padded placeholder.
+        w.w.flush()?;
+        let f = w.w.get_mut();
+        f.seek(SeekFrom::Start(8))?;
+        f.write_all(&(DEFERRED_HEADER as u64).to_le_bytes())?;
+        f.write_all(&[b' '; DEFERRED_HEADER])?;
+        Ok(w)
+    }
+    fn finish_with<H: Serialize>(mut self, header: &H) -> anyhow::Result<()> {
+        let mut h = serde_json::to_vec(header)?;
+        ensure!(h.len() <= DEFERRED_HEADER, "cache header too long");
+        h.resize(DEFERRED_HEADER, b' ');
+        self.w.flush()?;
+        let f = self.w.get_mut();
+        f.seek(SeekFrom::Start(16))?;
+        f.write_all(&h)?;
+        self.finish()
+    }
+    /// Drop the temp file (nothing was written into the cache).
+    fn abort(self) {
+        let tmp = self.tmp.clone();
+        drop(self);
+        std::fs::remove_file(tmp).ok();
     }
     fn samples(&mut self, s: &[f32]) -> anyhow::Result<()> {
         for v in s {
@@ -270,6 +304,53 @@ impl DiskSrc {
         DiskSrc::open(key, path)
             .map(|d| d.0)
             .with_context(|| format!("re-opening {}", path.display()))
+    }
+
+    /// Decode `path`'s audio at `rate` straight into a cached source, block
+    /// by block (memory does not grow with the media's length). `None`: no
+    /// audio stream.
+    pub fn write_stream(
+        key: &str,
+        file: &Path,
+        path: &Path,
+        rate: u32,
+    ) -> anyhow::Result<Option<(DiskSrc, PcmMeta)>> {
+        let Some(s) = crate::media::audio::AudioStream::open(path, rate)? else {
+            return Ok(None);
+        };
+        let ch = s.channels();
+        ensure!((1..=2).contains(&ch), "sources are mono or stereo");
+        let mut meta = PcmMeta {
+            channels: ch,
+            len: 0,
+            codec: s.codec.clone(),
+            source_rate: s.source_rate,
+            source_channels: s.source_channels,
+        };
+        let mut w = BlobWriter::create_deferred(file)?;
+        let mut buf: Vec<f32> = Vec::new();
+        let mut len = 0i64;
+        let r = s.run(&mut |block| {
+            let n = block[0].len();
+            buf.clear();
+            buf.reserve(n * ch);
+            for i in 0..n {
+                for p in block {
+                    buf.push(p[i]);
+                }
+            }
+            len += n as i64;
+            w.samples(&buf)
+        });
+        if let Err(e) = r {
+            w.abort();
+            return Err(e);
+        }
+        meta.len = len;
+        w.finish_with(&meta)?;
+        let d =
+            DiskSrc::open(key, file).with_context(|| format!("re-opening {}", file.display()))?;
+        Ok(Some(d))
     }
 
     /// Samples `[m0, m1)` (silence outside the source).
@@ -448,6 +529,9 @@ struct FinalHeader {
     env_out: u64,
     min_gain: u64,
     pcm_blake3: String,
+    /// Samples dropped (a rejected loudness pass): header and records only.
+    #[serde(default)]
+    stub: bool,
 }
 
 /// One final (muxed) chunk on disk.
@@ -458,6 +542,7 @@ pub struct FinalChunk {
     pub path: PathBuf,
     off: u64,
     pub pcm_blake3: String,
+    stub: bool,
 }
 
 /// Cache counters of one mixdown.
@@ -473,6 +558,8 @@ pub struct CacheStats {
     /// Block-energy records analysed vs. read from the cache.
     pub records_analyzed: usize,
     pub records_reused: usize,
+    /// Final chunks of rejected loudness passes cut down to header-only stubs.
+    pub stubs_written: usize,
 }
 
 /// The result: final chunks, the analysis report and the output loudness.
@@ -520,7 +607,7 @@ pub fn run(p: &Program, srcs: &[DiskSrc], store: &Store) -> anyhow::Result<Mixdo
     r.stats.chunks = r.chunks.len();
     r.stats.chunk_samples = r.chunks.first().map_or(0, |c| c.b - c.a);
     let Some(target) = p.loudness else {
-        let (finals, _) = r.finals(1.0, None)?;
+        let (finals, _) = r.finals(1.0, None, false)?;
         let output = r.measure_finals(&finals)?;
         return Ok(Mixdown {
             finals,
@@ -536,7 +623,7 @@ pub fn run(p: &Program, srcs: &[DiskSrc], store: &Store) -> anyhow::Result<Mixdo
     report.before = Some(before);
     if !before.integrated_lufs.is_finite() {
         // Silence (or below the absolute gate): nothing to normalize.
-        let (finals, _) = r.finals(1.0, None)?;
+        let (finals, _) = r.finals(1.0, None, false)?;
         let output = r.measure_finals(&finals)?;
         return Ok(Mixdown {
             finals,
@@ -547,15 +634,27 @@ pub fn run(p: &Program, srcs: &[DiskSrc], store: &Store) -> anyhow::Result<Mixdo
     }
     let mut norm_db = target.target_lufs - before.integrated_lufs;
     let mut ceiling_db = target.true_peak_dbtp;
-    let mut accepted = None;
+    let mut accepted: Option<(Vec<FinalChunk>, Measurement, f64, f64)> = None;
+    let mut rejected: Vec<Vec<FinalChunk>> = Vec::new();
     for pass in 1..=MAX_PASSES {
-        let (finals, min_g) = r.finals(db_to_gain(norm_db), Some(db_to_gain(ceiling_db)))?;
-        let m = r.measure_finals(&finals)?;
+        let (norm, ceil) = (db_to_gain(norm_db), db_to_gain(ceiling_db));
+        let (mut finals, min_g) = r.finals(norm, Some(ceil), true)?;
+        let m = match r.measure_finals(&finals) {
+            Ok(m) => m,
+            // A stub whose record is gone: render the samples again.
+            Err(_) if finals.iter().any(|f| f.stub) => {
+                finals = r.finals(norm, Some(ceil), false)?.0;
+                r.measure_finals(&finals)?
+            }
+            Err(e) => return Err(e),
+        };
         report.after = Some(m);
         report.norm_gain_db = norm_db;
         report.limiter_max_reduction_db = -gain_to_db(min_g);
         report.passes = pass;
-        accepted = Some((finals, m));
+        if let Some((prev, ..)) = accepted.replace((finals, m, norm, ceil)) {
+            rejected.push(prev);
+        }
         let err = target.target_lufs - m.integrated_lufs;
         let tp_over = m.true_peak_dbtp - target.true_peak_dbtp;
         if err.abs() <= LOUDNESS_TOLERANCE_LU && tp_over <= 0.0 {
@@ -566,7 +665,18 @@ pub fn run(p: &Program, srcs: &[DiskSrc], store: &Store) -> anyhow::Result<Mixdo
             ceiling_db -= tp_over + 0.01;
         }
     }
-    let (finals, output) = accepted.expect("at least one pass");
+    let (mut finals, output, norm, ceil) = accepted.expect("at least one pass");
+    if finals.iter().any(|f| f.stub) {
+        // Normally impossible (the accepted pass was kept whole last time).
+        finals = r.finals(norm, Some(ceil), false)?.0;
+    }
+    let keep: std::collections::HashSet<&Path> = finals.iter().map(|f| f.path.as_path()).collect();
+    for f in rejected.iter().flatten() {
+        if !f.stub && !keep.contains(f.path.as_path()) {
+            stub_final(&f.path)?;
+            r.stats.stubs_written += 1;
+        }
+    }
     Ok(Mixdown {
         finals,
         analysis: report,
@@ -767,16 +877,19 @@ impl Run<'_> {
         let hashes: Vec<String> = finals.iter().map(|f| f.pcm_blake3.clone()).collect();
         self.measure(&hashes, |_, i| {
             let f = &finals[i];
+            ensure!(!f.stub, "{}: samples were dropped", f.path.display());
             read_f32s(&f.path, f.off, 0, (f.b - f.a) as usize * 2)
         })
     }
 
     /// Phase 3: every chunk normalized by `norm` and (with a ceiling)
     /// true-peak limited. Returns the chunks and the minimum limiter gain.
+    /// `allow_stub`: a cached header-only stub counts as a hit.
     fn finals(
         &mut self,
         norm: f64,
         ceiling: Option<f64>,
+        allow_stub: bool,
     ) -> anyhow::Result<(Vec<FinalChunk>, f64)> {
         let (p, n) = (self.p, self.chunks.len());
         let mut loaded: BTreeMap<usize, Stereo> = BTreeMap::new();
@@ -807,7 +920,8 @@ impl Run<'_> {
             let cached = if self.store.force {
                 None
             } else {
-                read_header::<FinalHeader>(&path).filter(|(h, _)| h.a == a && h.b == b)
+                read_header::<FinalHeader>(&path)
+                    .filter(|(h, _)| h.a == a && h.b == b && (allow_stub || !h.stub))
             };
             let (hd, off) = match cached {
                 Some(x) => {
@@ -868,6 +982,7 @@ impl Run<'_> {
                         env_out: env.to_bits(),
                         min_gain: min_g.to_bits(),
                         pcm_blake3: pcm_blake3(&interleave(&o)),
+                        stub: false,
                     };
                     write_blob(&path, &hd, &o)?;
                     read_header::<FinalHeader>(&path)
@@ -882,10 +997,20 @@ impl Run<'_> {
                 path,
                 off,
                 pcm_blake3: hd.pcm_blake3,
+                stub: hd.stub,
             });
         }
         Ok((out, min_all))
     }
+}
+
+/// Cut a final chunk down to its header (marked `stub`).
+fn stub_final(path: &Path) -> anyhow::Result<()> {
+    let Some((mut h, _)) = read_header::<FinalHeader>(path) else {
+        return Ok(());
+    };
+    h.stub = true;
+    write_blob(path, &h, &Stereo::silence(0))
 }
 
 // ---------------------------------------------------------------- loudness

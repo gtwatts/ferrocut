@@ -34,15 +34,79 @@ pub fn render(
     rate: u32,
     backend: StretchBackend,
 ) -> SourceAudio {
+    render_window(src, 0, positions, rate, backend)
+}
+
+/// [`render`] reading from a window of the source: `win` holds source
+/// samples starting at `origin` (see [`source_span`] for the range needed).
+/// Identical output to rendering from the whole source.
+pub fn render_window(
+    win: &SourceAudio,
+    origin: i64,
+    positions: &[f64],
+    rate: u32,
+    backend: StretchBackend,
+) -> SourceAudio {
+    let src = Shifted { a: win, origin };
     match backend {
-        StretchBackend::Varispeed => varispeed(src, positions),
-        StretchBackend::Wsola => wsola(src, positions, rate),
+        StretchBackend::Varispeed => varispeed_in(&src, positions),
+        StretchBackend::Wsola => wsola_in(&src, positions, rate),
     }
+}
+
+/// Source samples `[lo, hi)` that [`render`] may read for `positions`.
+pub fn source_span(positions: &[f64], rate: u32, backend: StretchBackend) -> (i64, i64) {
+    if positions.is_empty() {
+        return (0, 0);
+    }
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for &p in positions {
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    let margin = match backend {
+        StretchBackend::Varispeed => 3,
+        StretchBackend::Wsola => {
+            let (win, hop, tol) = wsola_sizes(rate);
+            // Grains start up to a hop before the first output sample.
+            let p = pos_at(positions, -(hop as i64));
+            lo = lo.min(p);
+            hi = hi.max(p);
+            (win + hop) as i64 + tol + 4
+        }
+    };
+    (lo.floor() as i64 - margin, hi.ceil() as i64 + margin + 1)
+}
+
+/// A source window addressed in whole-source sample indices.
+struct Shifted<'a> {
+    a: &'a SourceAudio,
+    origin: i64,
+}
+
+impl Shifted<'_> {
+    #[inline]
+    fn get(&self, c: usize, m: i64) -> f32 {
+        self.a.get(c, m - self.origin)
+    }
+    fn channels(&self) -> usize {
+        self.a.planes.len()
+    }
+}
+
+fn wsola_sizes(rate: u32) -> (usize, usize, i64) {
+    let win = (((rate as f64 * 0.040).round() as usize).max(16)) & !1;
+    let tol = ((rate as f64 * 0.010).round() as i64).max(1);
+    (win, win / 2, tol)
 }
 
 /// 4-point Catmull-Rom interpolation along `positions`.
 pub fn varispeed(src: &SourceAudio, positions: &[f64]) -> SourceAudio {
-    let planes = (0..src.planes.len())
+    varispeed_in(&Shifted { a: src, origin: 0 }, positions)
+}
+
+fn varispeed_in(src: &Shifted<'_>, positions: &[f64]) -> SourceAudio {
+    let planes = (0..src.channels())
         .map(|c| {
             positions
                 .iter()
@@ -87,11 +151,13 @@ fn pos_at(positions: &[f64], o: i64) -> f64 {
 
 /// Pitch-preserving time-stretch (WSOLA) along `positions`.
 pub fn wsola(src: &SourceAudio, positions: &[f64], rate: u32) -> SourceAudio {
+    wsola_in(&Shifted { a: src, origin: 0 }, positions, rate)
+}
+
+fn wsola_in(src: &Shifted<'_>, positions: &[f64], rate: u32) -> SourceAudio {
     let n = positions.len();
-    let ch = src.planes.len().max(1);
-    let win = (((rate as f64 * 0.040).round() as usize).max(16)) & !1;
-    let hop = win / 2;
-    let tol = ((rate as f64 * 0.010).round() as i64).max(1);
+    let ch = src.channels().max(1);
+    let (win, hop, tol) = wsola_sizes(rate);
     let w: Vec<f64> = (0..win)
         .map(|k| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * k as f64 / win as f64).cos())
         .collect();
@@ -239,6 +305,49 @@ mod tests {
         let s = wsola(&src, &ident, rate);
         for i in 400..7600 {
             assert!((s.planes[0][i] - src.planes[0][i]).abs() < 1e-5, "{i}");
+        }
+    }
+
+    #[test]
+    fn windowed_render_equals_whole_source() {
+        let rate = 16_000;
+        let n = rate as usize * 6;
+        let src = SourceAudio {
+            planes: vec![
+                (0..n)
+                    .map(|i| ((i * 7919) % 1000) as f32 / 1000.0 - 0.5)
+                    .collect(),
+                (0..n)
+                    .map(|i| ((i * 104_729) % 997) as f32 / 997.0 - 0.5)
+                    .collect(),
+            ],
+        };
+        // A ramp from 1x to 0.4x starting 2 s in, then reverse at 1.5x.
+        let mut pos = Vec::new();
+        let mut p = 2.0 * rate as f64;
+        for k in 0..rate as usize * 2 {
+            pos.push(p);
+            p += 1.0 - 0.6 * k as f64 / (2 * rate) as f64;
+        }
+        for _ in 0..rate as usize {
+            pos.push(p);
+            p -= 1.5;
+        }
+        for b in [StretchBackend::Varispeed, StretchBackend::Wsola] {
+            let (lo, hi) = source_span(&pos, rate, b);
+            assert!(lo > 0 && hi < n as i64, "{lo}..{hi}");
+            let win = SourceAudio {
+                planes: src
+                    .planes
+                    .iter()
+                    .map(|p| p[lo as usize..hi as usize].to_vec())
+                    .collect(),
+            };
+            assert_eq!(
+                render_window(&win, lo, &pos, rate, b),
+                render(&src, &pos, rate, b),
+                "{b:?}"
+            );
         }
     }
 }

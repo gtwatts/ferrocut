@@ -1,8 +1,10 @@
 //! Source audio decode + resample (swresample) to the project rate, f32 planar.
 //!
-//! The whole stream is decoded once per render, single-threaded, and
-//! resampled by one `SwrContext` with fixed default options, so the result
-//! is deterministic. Mono stays mono (panned later with a constant-power
+//! The stream is decoded front to back, single-threaded, and resampled by
+//! one `SwrContext` with fixed default options, so the result is
+//! deterministic. [`AudioStream`] hands the samples to a sink block by block
+//! (bounded memory: the mixdown writes them straight to its disk cache);
+//! [`decode_audio`] collects them in memory (tests, reference path). Mono stays mono (panned later with a constant-power
 //! law); everything else is downmixed by swresample to stereo.
 //!
 //! Alignment: source time 0 is the video stream's first timestamp when the
@@ -36,99 +38,167 @@ fn nopts(v: i64) -> Option<i64> {
     (v != ffmpeg_next::ffi::AV_NOPTS_VALUE).then_some(v)
 }
 
-/// Decode the best audio stream of `path` resampled to `rate` Hz, or `None`
-/// if the file has no audio stream.
+/// Decode the best audio stream of `path` resampled to `rate` Hz into
+/// memory, or `None` if the file has no audio stream.
 pub fn decode_audio(path: &Path, rate: u32) -> anyhow::Result<Option<DecodedAudio>> {
-    init();
-    let mut ictx = format::input(path).with_context(|| format!("opening {}", path.display()))?;
-    let Some(ist) = ictx.streams().best(media::Type::Audio) else {
+    let Some(s) = AudioStream::open(path, rate)? else {
         return Ok(None);
     };
-    let idx = ist.index();
-    let tb = to_core(ist.time_base());
-    // Origin of source time: the video stream's start (see module docs).
-    let origin = match ictx.streams().best(media::Type::Video) {
-        Some(v) => {
-            RationalTime::from_pts(nopts(v.start_time()).unwrap_or(0), to_core(v.time_base()))
+    let mut planes = vec![Vec::new(); s.channels()];
+    let (source_rate, source_channels, codec) = (s.source_rate, s.source_channels, s.codec.clone());
+    s.run(&mut |block| {
+        for (p, b) in planes.iter_mut().zip(block) {
+            p.extend_from_slice(b);
         }
-        None => RationalTime::from_pts(nopts(ist.start_time()).unwrap_or(0), tb),
-    };
-    let mut cctx = codec::context::Context::from_parameters(ist.parameters())?;
-    cctx.set_threading(codec::threading::Config {
-        kind: codec::threading::Type::None,
-        count: 1,
-    });
-    let mut dec = cctx.decoder().audio().context("opening audio decoder")?;
-    let codec_name = dec
-        .codec()
-        .map(|c| c.name().to_string())
-        .unwrap_or_default();
-    let source_rate = dec.rate();
-    let source_channels = dec.channels();
-    ensure!(
-        source_rate > 0 && source_channels > 0,
-        "{}: bad audio stream",
-        path.display()
-    );
-    let out_layout = if source_channels == 1 {
-        ChannelLayout::MONO
-    } else {
-        ChannelLayout::STEREO
-    };
-    let out_ch = out_layout.channels() as usize;
-    let mut st = State {
-        swr: None,
-        out_layout,
-        rate,
-        planes: vec![Vec::new(); out_ch],
-        first: None,
-        out: frame::Audio::empty(),
-    };
-    let mut decoded = frame::Audio::empty();
-    for (s, pkt) in ictx.packets() {
-        if s.index() != idx {
-            continue;
-        }
-        dec.send_packet(&pkt)
-            .with_context(|| format!("{}: decoding audio", path.display()))?;
-        while dec.receive_frame(&mut decoded).is_ok() {
-            st.push(&mut decoded)?;
-        }
-    }
-    dec.send_eof()?;
-    while dec.receive_frame(&mut decoded).is_ok() {
-        st.push(&mut decoded)?;
-    }
-    st.flush()?;
-    let mut planes = st.planes;
-    // Place the first decoded sample relative to the origin.
-    if let Some(first) = st.first {
-        let lead =
-            (RationalTime::from_pts(first, tb).0 - origin.0) * Rational::from_int(rate as i64);
-        let lead = lead.round();
-        for p in &mut planes {
-            if lead > 0 {
-                p.splice(0..0, std::iter::repeat_n(0.0, lead as usize));
-            } else if lead < 0 {
-                p.drain(..((-lead) as usize).min(p.len()));
-            }
-        }
-    }
+        Ok(())
+    })?;
     Ok(Some(DecodedAudio {
         audio: SourceAudio { planes },
         source_rate,
         source_channels,
-        codec: codec_name,
+        codec,
     }))
+}
+
+/// An opened audio stream, decoded by [`AudioStream::run`].
+pub struct AudioStream {
+    ictx: format::context::Input,
+    idx: usize,
+    tb: Rational,
+    origin: RationalTime,
+    dec: codec::decoder::Audio,
+    rate: u32,
+    out_layout: ChannelLayout,
+    path: std::path::PathBuf,
+    pub source_rate: u32,
+    pub source_channels: u16,
+    pub codec: String,
+}
+
+impl AudioStream {
+    /// `None` if `path` has no audio stream.
+    pub fn open(path: &Path, rate: u32) -> anyhow::Result<Option<AudioStream>> {
+        init();
+        let ictx = format::input(path).with_context(|| format!("opening {}", path.display()))?;
+        let Some(ist) = ictx.streams().best(media::Type::Audio) else {
+            return Ok(None);
+        };
+        let idx = ist.index();
+        let tb = to_core(ist.time_base());
+        // Origin of source time: the video stream's start (see module docs).
+        let origin = match ictx.streams().best(media::Type::Video) {
+            Some(v) => {
+                RationalTime::from_pts(nopts(v.start_time()).unwrap_or(0), to_core(v.time_base()))
+            }
+            None => RationalTime::from_pts(nopts(ist.start_time()).unwrap_or(0), tb),
+        };
+        let mut cctx = codec::context::Context::from_parameters(ist.parameters())?;
+        cctx.set_threading(codec::threading::Config {
+            kind: codec::threading::Type::None,
+            count: 1,
+        });
+        let dec = cctx.decoder().audio().context("opening audio decoder")?;
+        let codec_name = dec
+            .codec()
+            .map(|c| c.name().to_string())
+            .unwrap_or_default();
+        let source_rate = dec.rate();
+        let source_channels = dec.channels();
+        ensure!(
+            source_rate > 0 && source_channels > 0,
+            "{}: bad audio stream",
+            path.display()
+        );
+        let out_layout = if source_channels == 1 {
+            ChannelLayout::MONO
+        } else {
+            ChannelLayout::STEREO
+        };
+        Ok(Some(AudioStream {
+            ictx,
+            idx,
+            tb,
+            origin,
+            dec,
+            rate,
+            out_layout,
+            path: path.to_path_buf(),
+            source_rate,
+            source_channels,
+            codec: codec_name,
+        }))
+    }
+
+    /// Output channels (1 or 2).
+    pub fn channels(&self) -> usize {
+        self.out_layout.channels() as usize
+    }
+
+    /// Decode to the end, handing `sink` consecutive planar blocks aligned
+    /// to the source-time origin (leading silence inserted, or samples
+    /// before the origin dropped): the concatenation equals what the
+    /// whole-stream decode produced.
+    pub fn run(
+        mut self,
+        sink: &mut dyn FnMut(&[Vec<f32>]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let out_ch = self.channels();
+        let mut st = State {
+            swr: None,
+            out_layout: self.out_layout,
+            rate: self.rate,
+            planes: vec![Vec::new(); out_ch],
+            first: None,
+            out: frame::Audio::empty(),
+            align: Align {
+                tb: self.tb,
+                origin: self.origin,
+                rate: self.rate,
+                lead: None,
+            },
+        };
+        let mut decoded = frame::Audio::empty();
+        let path = self.path.clone();
+        for (s, pkt) in self.ictx.packets() {
+            if s.index() != self.idx {
+                continue;
+            }
+            self.dec
+                .send_packet(&pkt)
+                .with_context(|| format!("{}: decoding audio", path.display()))?;
+            while self.dec.receive_frame(&mut decoded).is_ok() {
+                st.push(&mut decoded)?;
+                st.emit(sink)?;
+            }
+        }
+        self.dec.send_eof()?;
+        while self.dec.receive_frame(&mut decoded).is_ok() {
+            st.push(&mut decoded)?;
+            st.emit(sink)?;
+        }
+        st.flush()?;
+        st.emit(sink)
+    }
+}
+
+/// Places the first decoded sample relative to the origin.
+struct Align {
+    tb: Rational,
+    origin: RationalTime,
+    rate: u32,
+    /// Samples still to insert (> 0) or drop (< 0); `None` before the first frame.
+    lead: Option<i64>,
 }
 
 struct State {
     swr: Option<resampling::Context>,
     out_layout: ChannelLayout,
     rate: u32,
+    /// Resampled samples not yet handed to the sink.
     planes: Vec<Vec<f32>>,
     first: Option<i64>,
     out: frame::Audio,
+    align: Align,
 }
 
 const F32P: Sample = Sample::F32(SampleType::Planar);
@@ -136,7 +206,12 @@ const F32P: Sample = Sample::F32(SampleType::Planar);
 impl State {
     fn push(&mut self, f: &mut frame::Audio) -> anyhow::Result<()> {
         if self.first.is_none() {
-            self.first = Some(f.pts().unwrap_or(0));
+            let first = f.pts().unwrap_or(0);
+            self.first = Some(first);
+            let a = &mut self.align;
+            let lead = (RationalTime::from_pts(first, a.tb).0 - a.origin.0)
+                * Rational::from_int(a.rate as i64);
+            a.lead = Some(lead.round());
         }
         let layout = {
             let l = f.channel_layout();
@@ -173,6 +248,42 @@ impl State {
         let swr = self.swr.as_mut().expect("swr");
         swr.run(f, &mut self.out).context("resampling")?;
         Self::take(&mut self.planes, &self.out);
+        Ok(())
+    }
+
+    /// Hand buffered samples to the sink (after the origin alignment).
+    fn emit(
+        &mut self,
+        sink: &mut dyn FnMut(&[Vec<f32>]) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        match self.align.lead {
+            None => return Ok(()),
+            Some(lead) if lead > 0 => {
+                // Leading silence, in bounded blocks.
+                let mut left = lead as usize;
+                while left > 0 {
+                    let n = left.min(1 << 16);
+                    sink(&vec![vec![0.0f32; n]; self.planes.len()])?;
+                    left -= n;
+                }
+                self.align.lead = Some(0);
+            }
+            Some(lead) if lead < 0 => {
+                let have = self.planes.first().map_or(0, Vec::len);
+                let d = ((-lead) as usize).min(have);
+                for p in &mut self.planes {
+                    p.drain(..d);
+                }
+                self.align.lead = Some(lead + d as i64);
+            }
+            _ => {}
+        }
+        if self.planes.first().is_some_and(|p| !p.is_empty()) {
+            sink(&self.planes)?;
+            for p in &mut self.planes {
+                p.clear();
+            }
+        }
         Ok(())
     }
 
