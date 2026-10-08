@@ -16,9 +16,13 @@ place Ferrocut got in your way. Both are deliverables.
   timeline JSON Schema, edit-op schema, parameter registry, integration docs).
   Use the CLI; the session's `ferrocut` MCP server runs an older installed
   build and must not be used for this task.
-- Read first: `docs/parity/AGENT_GUIDE.md`, then `ferrocut-mcp --doc timeline-guide`.
-  Discover exact payloads from the schemas and `ferrocut effects --query <word> --details`
-  (limit ≤ 100 per page) instead of guessing. `examples/*.json` and
+- Read first: `docs/parity/AGENT_GUIDE.md`, then `ferrocut-mcp --doc timeline-guide`
+  (27 KB; read it whole). The schema documents are large (`docs://timeline/schema.json`
+  and `docs://timeline/edit-ops.schema.json` about 840 KB each, `params.json`
+  540 KB): never read them whole; pipe `--doc` through `grep -n` or a short
+  Python snippet to pull the one op, clip field or parameter you need. For
+  effect controls use `ferrocut effects --query <word> --details` (limit ≤ 100
+  per page). Discover exact payloads this way instead of guessing. `examples/*.json` and
   `examples/*.ops` are working references for native text, shapes, masks,
   vector groups, effects and tracking.
 - Work only inside your task directory `out/claude-videos-20261008/<slug>/`
