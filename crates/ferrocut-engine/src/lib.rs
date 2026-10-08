@@ -9,6 +9,7 @@ pub mod edit;
 pub mod graph;
 pub mod media;
 pub mod nodes;
+pub mod perceive;
 pub mod project;
 pub mod render;
 pub mod timeline;

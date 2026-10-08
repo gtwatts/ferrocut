@@ -2,7 +2,7 @@
 //! structured diffs, chunk plans, renders and render reports, over stdio.
 //!
 //! Tools: `timeline_get`, `edit_apply`, `diff`, `plan`, `render`,
-//! `report_read`, `log`, `undo`, `branch`. Every input schema is hand-written
+//! `report_read`, `quality_check`, `log`, `undo`, `branch`. Every input schema is hand-written
 //! JSON Schema ([`schema`]); every result is structured JSON (also sent as
 //! text). Tool failures (bad op, missing file, render error) come back as
 //! `isError` results with `{"error": "..."}` so agents can read and react.
@@ -16,6 +16,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, bail};
 use ferrocut_core::{AdapterPreference, GpuContext, SharedGpu};
 use ferrocut_engine::edit::EditOp;
+use ferrocut_engine::perceive;
 use ferrocut_engine::project::{self, EditOptions, read_timeline, timeline_hash};
 use ferrocut_engine::render::RenderOptions;
 use ferrocut_engine::{Timeline, compile, plan, render};
@@ -104,6 +105,13 @@ pub fn tools() -> Vec<Tool> {
             ro().idempotent(true),
         ),
         tool(
+            "quality_check",
+            "Quality check a render",
+            "Perceptual quality check of a render (eval grader hook, runs ferrocut-perceive): status pass/fail/error/skipped (skipped = checker not installed, not a verdict), and one problem per issue with a reason code (missed_cut, extra_cut, black_frames, frozen_frames, flash, loudness_off_target, true_peak_over), rational time range, measured value and threshold, plus the raw report.",
+            schema::quality_check(),
+            ro().idempotent(true),
+        ),
+        tool(
             "log",
             "Journal log",
             "The timeline's edit journal: entries (edit/undo/branch/checkout/merge with ops, change summaries and before/after hashes; undone edits flagged), current branch, branch tips, and whether the file matches the journal.",
@@ -178,6 +186,20 @@ struct RenderArgs {
     report: Option<PathBuf>,
     #[serde(default)]
     cpu: bool,
+    timeout_s: Option<f64>,
+    #[serde(default)]
+    check: bool,
+    #[serde(default)]
+    check_args: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckArgs {
+    render: PathBuf,
+    timeline: PathBuf,
+    #[serde(default)]
+    args: Vec<String>,
     timeout_s: Option<f64>,
 }
 
@@ -378,6 +400,16 @@ fn render_tool(a: RenderArgs) -> anyhow::Result<Value> {
         .with_context(|| format!("writing {}", report_path.display()))?;
     let mut s = summarize(&v);
     s["report_path"] = json!(report_path);
+    if a.check {
+        s["check"] = serde_json::to_value(perceive::check(
+            &r.output,
+            &a.timeline,
+            &perceive::CheckOptions {
+                extra_args: a.check_args,
+                ..Default::default()
+            },
+        ))?;
+    }
     Ok(s)
 }
 
@@ -422,6 +454,17 @@ pub fn call(name: &str, a: Value) -> Option<anyhow::Result<Value>> {
         "plan" => args(name, a).and_then(plan_tool),
         "render" => args(name, a).and_then(render_tool),
         "report_read" => args(name, a).and_then(report_read),
+        "quality_check" => args::<CheckArgs>(name, a).and_then(|a| {
+            Ok(serde_json::to_value(perceive::check(
+                &a.render,
+                &a.timeline,
+                &perceive::CheckOptions {
+                    binary: None,
+                    extra_args: a.args,
+                    timeout: a.timeout_s.map(std::time::Duration::from_secs_f64),
+                },
+            ))?)
+        }),
         "log" => args::<TimelineArgs>(name, a)
             .and_then(|a| Ok(serde_json::to_value(project::log(&a.timeline)?)?)),
         "undo" => args::<UndoArgs>(name, a)

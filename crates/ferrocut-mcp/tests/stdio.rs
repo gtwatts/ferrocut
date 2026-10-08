@@ -70,8 +70,11 @@ async fn stdio_server_end_to_end() {
     std::fs::write(d.join("orig.json"), TL).unwrap();
     let p = |n: &str| d.join(n).to_string_lossy().into_owned();
 
+    // Fake quality checker (SeePlus's ferrocut-perceive may not be installed);
+    // created later, so the first quality_check sees it missing.
+    let checker = d.join("perceive.sh");
     let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_ferrocut-mcp"));
-    cmd.current_dir(d);
+    cmd.current_dir(d).env("FERROCUT_PERCEIVE", &checker);
     let client = ().serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap();
 
     // Tools.
@@ -84,6 +87,7 @@ async fn stdio_server_end_to_end() {
         "plan",
         "render",
         "report_read",
+        "quality_check",
         "log",
         "undo",
         "branch",
@@ -215,6 +219,34 @@ async fn stdio_server_end_to_end() {
         assert_eq!(r3["chunks"]["rendered_indices"], json!([4, 5, 6, 7]));
         assert_eq!(r3["chunks"]["reused"], 8);
     }
+    // Quality check: skipped while the checker is missing, then a verdict.
+    let qc = json!({ "render": p("out.mkv"), "timeline": p("tl.json"), "args": ["--true-peak-max", "-2"] });
+    let (err, v) = call(&client, "quality_check", qc.clone()).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["status"], "skipped");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = d.join("perceive.tmp");
+        std::fs::write(
+            &tmp,
+            "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/perceive-args.txt\"\n\
+             echo '{\"schema_version\":1,\"pass\":false,\"problems\":[{\"reason\":\"true_peak_over\",\"range\":[\"2\",\"5/2\"],\"measured\":\"-1.4\",\"threshold\":\"-2\"}]}'\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&tmp, &checker).unwrap();
+    }
+    let (err, v) = call(&client, "quality_check", qc).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["status"], "fail", "{v}");
+    assert_eq!(v["problems"][0]["reason"], "true_peak_over");
+    assert_eq!(v["problems"][0]["start"], "2");
+    let argv = std::fs::read_to_string(d.join("perceive-args.txt")).unwrap();
+    assert!(
+        argv.trim_end().ends_with("--json --true-peak-max -2"),
+        "{argv}"
+    );
+
     let (err, v) = call(&client, "report_read", json!({ "report": p("tl.json") })).await;
     assert!(err, "{v}");
     client.cancel().await.unwrap();

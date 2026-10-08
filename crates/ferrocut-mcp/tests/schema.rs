@@ -98,6 +98,7 @@ fn every_tool_schema_is_a_strict_object() {
             "plan",
             "render",
             "report_read",
+            "quality_check",
             "log",
             "undo",
             "branch"

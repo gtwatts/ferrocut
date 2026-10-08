@@ -290,7 +290,9 @@ pub fn render() -> Value {
             "cache_dir": path("chunk cache directory (default <output dir>/.ferrocut-cache)"),
             "report": path("report JSON path (default <output>.report.json)"),
             "cpu": { "type": "boolean", "default": false, "description": "render on the software (CPU) Vulkan adapter (Mesa lavapipe)" },
-            "timeout_s": { "type": "number", "exclusiveMinimum": 0, "description": "cancel the render after this many seconds" }
+            "timeout_s": { "type": "number", "exclusiveMinimum": 0, "description": "cancel the render after this many seconds" },
+            "check": { "type": "boolean", "default": false, "description": "run the perceptual quality check (ferrocut-perceive) on the result; skipped if the checker isn't installed" },
+            "check_args": check_args()
         }),
         &["timeline", "output"],
     )
@@ -333,5 +335,24 @@ pub fn branch() -> Value {
             "force": { "type": "boolean", "default": false, "description": "checkout: discard unjournaled changes" }
         }),
         &["timeline", "action", "name"],
+    )
+}
+
+fn check_args() -> Value {
+    json!({
+        "type": "array", "items": { "type": "string" },
+        "description": "extra ferrocut-perceive arguments, verbatim (threshold flags, config file). Defaults: -14 LUFS ±1 LU, true peak ≤ -1 dBTP"
+    })
+}
+
+pub fn quality_check() -> Value {
+    object(
+        json!({
+            "render": path("rendered file to check"),
+            "timeline": path("the timeline it was rendered from"),
+            "args": check_args(),
+            "timeout_s": { "type": "number", "exclusiveMinimum": 0, "description": "kill the checker after this many seconds" }
+        }),
+        &["render", "timeline"],
     )
 }

@@ -47,6 +47,32 @@ enum Cmd {
         /// Render on a software (CPU) Vulkan adapter (Mesa lavapipe); same as FERROCUT_ADAPTER=cpu.
         #[arg(long)]
         cpu: bool,
+        /// Run the perceptual quality check (ferrocut-perceive) on the result; writes
+        /// <output>.check.json and exits 1 on fail, 2 on checker error (skipped if not installed).
+        #[arg(long)]
+        check: bool,
+        /// Extra argument for the checker (threshold flags, config file); repeatable.
+        #[arg(long = "check-arg", allow_hyphen_values = true)]
+        check_args: Vec<String>,
+    },
+    /// Perceptual quality check of a render via ferrocut-perceive (eval grader hook).
+    /// Prints JSON; exits 0 pass (or skipped: checker not installed), 1 fail, 2 error.
+    Check {
+        render: PathBuf,
+        #[arg(long)]
+        timeline: PathBuf,
+        /// Path to ferrocut-perceive (default: FERROCUT_PERCEIVE, next to ferrocut, then PATH).
+        #[arg(long)]
+        perceive: Option<PathBuf>,
+        /// Treat a missing checker as an error (exit 2) instead of skipping.
+        #[arg(long)]
+        require: bool,
+        /// Kill the checker after this many seconds.
+        #[arg(long)]
+        timeout: Option<f64>,
+        /// Passed to the checker verbatim (after `--`), e.g. threshold flags or a config file.
+        #[arg(last = true)]
+        args: Vec<String>,
     },
     /// Print the chunk plan (frame/chunk keys) without decoding or touching the GPU.
     Plan { timeline: PathBuf },
@@ -268,6 +294,28 @@ fn main() -> anyhow::Result<()> {
                 print_edit(&r);
             }
         }
+        Cmd::Check {
+            render,
+            timeline,
+            perceive,
+            require,
+            timeout,
+            args,
+        } => {
+            use ferrocut_engine::perceive;
+            let o = perceive::check(
+                &render,
+                &timeline,
+                &perceive::CheckOptions {
+                    binary: perceive,
+                    extra_args: args,
+                    timeout: timeout.map(std::time::Duration::from_secs_f64),
+                },
+            );
+            println!("{}", serde_json::to_string_pretty(&o)?);
+            eprintln!("{}", check_line(&o));
+            std::process::exit(o.exit_code_for(require));
+        }
         Cmd::Plan { timeline } => {
             let tl = Timeline::load(&timeline)?;
             let c = compile(&tl)?;
@@ -291,6 +339,8 @@ fn main() -> anyhow::Result<()> {
             timeout,
             retries,
             cpu,
+            check,
+            check_args,
         } => {
             let started = std::time::Instant::now();
             let tl = Timeline::load(&timeline)?;
@@ -428,6 +478,25 @@ fn main() -> anyhow::Result<()> {
             let report_path = report.unwrap_or_else(|| output.with_extension("report.json"));
             std::fs::write(&report_path, serde_json::to_string_pretty(&r)?)
                 .with_context(|| format!("writing {}", report_path.display()))?;
+            if check {
+                use ferrocut_engine::perceive;
+                let o = perceive::check(
+                    &r.output,
+                    &timeline,
+                    &perceive::CheckOptions {
+                        extra_args: check_args,
+                        ..Default::default()
+                    },
+                );
+                let path = output.with_extension("check.json");
+                std::fs::write(&path, serde_json::to_string_pretty(&o)?)
+                    .with_context(|| format!("writing {}", path.display()))?;
+                println!("{}", check_line(&o));
+                let code = o.exit_code_for(false);
+                if code != 0 {
+                    std::process::exit(code);
+                }
+            }
         }
     }
     Ok(())
@@ -530,5 +599,32 @@ fn adapter_pref(cpu: bool) -> AdapterPreference {
         AdapterPreference::Cpu
     } else {
         AdapterPreference::default()
+    }
+}
+
+fn check_line(o: &ferrocut_engine::perceive::CheckOutcome) -> String {
+    use ferrocut_engine::perceive::CheckStatus;
+    match o.status {
+        CheckStatus::Pass => "quality check: PASS".to_string(),
+        CheckStatus::Fail => format!(
+            "quality check: FAIL ({} problem(s): {})",
+            o.problems.len(),
+            o.problems
+                .iter()
+                .map(|p| serde_json::to_value(&p.reason)
+                    .ok()
+                    .and_then(|v| v.as_str().map(String::from))
+                    .unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        CheckStatus::Error => format!(
+            "quality check: ERROR ({})",
+            o.message.as_deref().unwrap_or("")
+        ),
+        CheckStatus::Skipped => format!(
+            "quality check: skipped ({})",
+            o.message.as_deref().unwrap_or("")
+        ),
     }
 }

@@ -520,6 +520,7 @@ dependencies = [
  "ferrocut-core",
  "ffmpeg-next",
  "half",
+ "libc",
  "proptest",
  "rayon",
  "serde",
