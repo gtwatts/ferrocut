@@ -111,6 +111,45 @@ enum Cmd {
     },
     /// Print the chunk plan (frame/chunk keys) without decoding or touching the GPU.
     Plan { timeline: PathBuf },
+    /// Render chosen output frames to PNG stills and a labeled contact sheet: the
+    /// same pixels a master render would hold (8-bit Rec.709), no video encode.
+    Stills {
+        timeline: PathBuf,
+        /// Directory for the PNGs.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Timeline time of a frame to render (exact rational, e.g. 2 or 5/2); repeatable.
+        #[arg(long = "at")]
+        at: Vec<String>,
+        /// Output frame index to render; repeatable.
+        #[arg(long)]
+        frame: Vec<i64>,
+        /// Also render N evenly spaced frames over the whole timeline (default 12
+        /// when no --at/--frame is given).
+        #[arg(long)]
+        spread: Option<usize>,
+        /// Write one full-resolution PNG per frame (<prefix>-f<frame>.png).
+        #[arg(long)]
+        each: bool,
+        /// Skip the contact sheet (implies --each).
+        #[arg(long)]
+        no_sheet: bool,
+        /// Contact sheet columns.
+        #[arg(long, default_value_t = 4)]
+        cols: u32,
+        /// Contact sheet cell width in pixels.
+        #[arg(long, default_value_t = 480)]
+        cell_width: u32,
+        /// File name prefix (default: the timeline file stem).
+        #[arg(long)]
+        prefix: Option<String>,
+        /// Render on a software (CPU) Vulkan adapter (Mesa lavapipe).
+        #[arg(long)]
+        cpu: bool,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Import/export plain-text SRT/WebVTT captions as editable native text clips.
     Captions {
         #[command(subcommand)]
@@ -816,6 +855,59 @@ fn main() -> anyhow::Result<()> {
                     p.start_frame + p.frames,
                     &p.key[..16]
                 );
+            }
+        }
+        Cmd::Stills {
+            timeline,
+            output,
+            at,
+            frame,
+            spread,
+            each,
+            no_sheet,
+            cols,
+            cell_width,
+            prefix,
+            cpu,
+            json,
+        } => {
+            use ferrocut_engine::preview;
+            let tl = Timeline::load(&timeline)?;
+            let c = compile(&tl)?;
+            let at = at
+                .iter()
+                .map(|s| preview::parse_time(s))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let frames = preview::select_frames(&tl, &at, &frame, spread)?;
+            let gpu =
+                GpuContext::with_requirements(adapter_pref(cpu), &c.graph.gpu_requirements())?;
+            let stills =
+                preview::render_stills(&tl, &c, &gpu, &frames, &ferrocut_core::CancelToken::new())?;
+            let prefix = prefix.unwrap_or_else(|| {
+                timeline
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "stills".into())
+            });
+            let sheet = (!no_sheet).then_some((cols, cell_width));
+            let r = preview::write_stills(&tl, &stills, &output, &prefix, each || no_sheet, sheet)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            } else {
+                for f in &r.frames {
+                    println!(
+                        "frame {:>6}  {:<16} {}",
+                        f.frame,
+                        f.timecode,
+                        f.path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default()
+                    );
+                }
+                if let Some(s) = &r.sheet {
+                    println!("sheet {}", s.display());
+                }
             }
         }
         Cmd::Render {

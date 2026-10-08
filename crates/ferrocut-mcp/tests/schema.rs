@@ -150,6 +150,7 @@ fn every_tool_schema_is_a_strict_object() {
             "diff",
             "plan",
             "render",
+            "preview_frames",
             "markers_list",
             "media_status",
             "proxy_generate",
@@ -177,4 +178,45 @@ fn every_tool_schema_is_a_strict_object() {
         }
         assert!(t.description.as_ref().unwrap().len() > 40);
     }
+}
+
+/// Agents receive the tool list on every session: keep it small. The expanded
+/// edit_apply schema alone used to be ~15 MB.
+#[test]
+fn published_tool_list_stays_small() {
+    let total: usize = ferrocut_mcp::tools()
+        .iter()
+        .map(|t| serde_json::to_string(&*t.input_schema).unwrap().len())
+        .sum();
+    assert!(total < 200_000, "tool input schemas total {total} bytes");
+}
+
+/// Compaction only moves repeated subtrees into `$defs`: resolving the refs
+/// gives back exactly the hand-written schemas.
+#[test]
+fn published_schemas_expand_to_the_source_schemas() {
+    use ferrocut_mcp::compact::{compact, expand};
+    let tl = ferrocut_mcp::schema::timeline();
+    let c = compact(tl.clone());
+    assert!(c.to_string().len() * 20 < tl.to_string().len());
+    assert_eq!(expand(&c), tl);
+    let ops = ferrocut_mcp::schema::edit_op();
+    assert_eq!(
+        expand(&compact(serde_json::json!({ "items": ops.clone() })))["items"],
+        ops
+    );
+    // edit_apply: exact apart from the per-type video effect branches.
+    let published = expand(&ferrocut_mcp::schema::edit_apply_published());
+    let full = ferrocut_mcp::schema::edit_apply();
+    assert_eq!(published["required"], full["required"]);
+    assert_eq!(
+        published["properties"]["ops"]["items"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .len(),
+        full["properties"]["ops"]["items"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .len()
+    );
 }

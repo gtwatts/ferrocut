@@ -8,8 +8,10 @@ use std::path::PathBuf;
 
 use rmcp::ServiceExt as _;
 
-const USAGE: &str = "usage: ferrocut-mcp [--root DIR] [--list-tools] [--version]\n\
-    Serves MCP over stdio. All paths must resolve inside DIR (default $FERROCUT_MCP_ROOT, else the cwd).";
+const USAGE: &str = "usage: ferrocut-mcp [--root DIR] [--list-tools] [--list-docs] [--doc URI|NAME] [--version]\n\
+    Serves MCP over stdio. All paths must resolve inside DIR (default $FERROCUT_MCP_ROOT, else the cwd).\n\
+    --list-tools prints the tool definitions, --list-docs the docs:// resources and --doc one of them\n\
+    (by uri or name, e.g. --doc timeline-guide), without starting a client session.";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -24,6 +26,27 @@ async fn main() -> anyhow::Result<()> {
             "--list-tools" => {
                 let tools = ferrocut_mcp::tools();
                 println!("{}", serde_json::to_string_pretty(&tools)?);
+                return Ok(());
+            }
+            "--list-docs" => {
+                for r in ferrocut_mcp::resources() {
+                    println!("{}\t{}\t{}", r.uri, r.name, r.description);
+                }
+                return Ok(());
+            }
+            "--doc" => {
+                let want = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--doc needs a docs:// uri or a name\n{USAGE}"))?;
+                let uri = ferrocut_mcp::resources()
+                    .into_iter()
+                    .find(|r| r.uri == want || r.name == want)
+                    .map(|r| r.uri)
+                    .ok_or_else(|| anyhow::anyhow!("unknown doc {want:?}; --list-docs lists them"))?;
+                match ferrocut_mcp::read_doc(uri) {
+                    Some(text) => println!("{text}"),
+                    None => anyhow::bail!("{uri}: no content"),
+                }
                 return Ok(());
             }
             "--help" | "-h" => {

@@ -20,13 +20,14 @@ Start with the tools and schemas exposed by the running build. An agent should r
 | Probe source duration, dimensions, rates and streams | `media_probe {"path":"media/interview.mov"}` |
 | Inspect offline media and proxies | `media_status {"timeline":"project.json"}` |
 | Plan render keys without decoding or GPU execution | `plan {"timeline":"project.json"}` |
+| See frames before encoding any video | `preview_frames {"timeline":"project.json","spread":12}` or `{"at":["5/2"],"each":true}` |
 | Inspect edit history / restore the last journaled edit | `log` / `undo`, each with `timeline` |
 | Import/export an editable foreign timeline with explicit loss reports | `timeline_import` / `timeline_export`, `format:"otio"` or `"fcp7"`, start with `dry_run:true` |
 | Measure rendered picture with numeric video scopes | `scopes_read {"path":"renders/title-draft.mkv","at":"1/2"}` |
 | Measure seeded point motion, confidence and failures | `tracking_analyze {"path":"media/shot.mkv","output":"shot.analysis.json","settings":{...}}` |
 | Generate ordinary attachment/stabilization edits for review | `tracking_keyframes {"analysis":"shot.analysis.json","timeline":"project.json","options":{...}}` then `edit_apply` |
 
-The same documentation is available through MCP resources: `docs://timeline/guide.md`, `docs://timeline/schema.json`, `docs://timeline/edit-ops.schema.json`, `docs://timeline/params.json`, and `docs://perceive/check.schema.json`. The MCP server's `--list-tools` option prints tool definitions without starting a client session.
+The same documentation is available through MCP resources: `docs://timeline/guide.md`, `docs://timeline/schema.json`, `docs://timeline/edit-ops.schema.json`, `docs://timeline/params.json`, and `docs://perceive/check.schema.json`. The MCP server's `--list-tools` option prints tool definitions, `--list-docs` the resources and `--doc <uri|name>` one resource (for example `ferrocut-mcp --doc timeline-guide`), without starting a client session.
 
 `docs://integrations/storytold.md` explains the reused engines and their limits;
 `docs://capabilities.json` provides their package and connection inventory.
@@ -178,7 +179,7 @@ Agree on measurable delivery goals from the brief: duration, aspect ratio, frame
 1. Inspect the current timeline and media. Retrieve relevant schema/parameter entries and probe real assets before cutting beyond their available handles.
 2. Apply a small coherent edit batch with `dry_run:true,plan:true`. Read every result and any asset/validation errors.
 3. Apply the accepted batch normally, keeping its journal and hashes. Use `diff` for a separate candidate file or `branch` for an alternative direction.
-4. Render a draft and inspect its actual picture, sound and text. The current MCP interface has no dedicated `preview_frame` tool; a short draft render is the visual preview. Proxies help media drafts; final renders use original media.
+4. Look at the picture with `preview_frames`: stills and a labeled contact sheet rendered straight from the graph (the same pixels a master would hold), returned inline as an image; `each:true` writes full-resolution PNGs for reading small text. Render a short draft for motion and sound. Proxies help media drafts; final renders use original media.
 5. Read the render report, run the quality checker when available, and check the brief. Revise through another typed batch. Use `undo` to restore the newest journaled edit when necessary; there is no advertised redo tool.
 
 For the title example, MCP `render` arguments are:

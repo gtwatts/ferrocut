@@ -1190,6 +1190,28 @@ pub fn timeline_schema() -> Value {
     )
 }
 
+/// `preview_frames`: stills and a contact sheet straight from the graph.
+pub fn preview_frames() -> Value {
+    object(
+        json!({
+            "timeline": path(TL),
+            "output_dir": path("directory for the PNGs (default: <timeline dir>/stills)"),
+            "at": { "type": "array", "maxItems": 64, "items": rational("timeline time"), "description": "timeline times to render; each is snapped to the output frame containing it" },
+            "frames": { "type": "array", "maxItems": 64, "items": { "type": "integer", "minimum": 0 }, "description": "output frame indices to render" },
+            "spread": { "type": "integer", "minimum": 1, "maximum": 64, "description": "also render this many evenly spaced frames over the whole timeline (default 12 when at/frames are empty)" },
+            "each": { "type": "boolean", "default": false, "description": "write one full-resolution PNG per frame (<prefix>-f<frame>.png); read those to check small text" },
+            "sheet": { "type": "boolean", "default": true, "description": "write the labeled contact sheet (<prefix>-sheet.png)" },
+            "cols": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4, "description": "contact sheet columns" },
+            "cell_width": { "type": "integer", "minimum": 64, "maximum": 1920, "default": 480, "description": "contact sheet cell width in pixels" },
+            "prefix": { "type": "string", "minLength": 1, "description": "file name prefix (default: the timeline file stem)" },
+            "cpu": { "type": "boolean", "default": false, "description": "render on the software (CPU) Vulkan adapter (Mesa lavapipe)" },
+            "inline": { "type": "boolean", "default": true, "description": "also return the sheet (or the single frame) as an image content block, shrunk so its longer side is inline_max" },
+            "inline_max": { "type": "integer", "minimum": 256, "maximum": 4096, "default": 1568, "description": "longer side of the inline image in pixels" }
+        }),
+        &["timeline"],
+    )
+}
+
 pub fn markers_list() -> Value {
     object(json!({ "timeline": path(TL) }), &["timeline"])
 }
@@ -1266,4 +1288,40 @@ pub fn expect_audio() -> Value {
         "enum": ["auto", "yes", "no"], "default": "auto",
         "description": "audio expectation for the check: auto = audio iff the timeline has any (a silent timeline doesn't fail missing_audio)"
     })
+}
+
+/// Replace every copy of `target` inside `v` with `with`.
+fn replace_subtree(v: &mut Value, target: &Value, with: &Value) {
+    if v == target {
+        *v = with.clone();
+        return;
+    }
+    match v {
+        Value::Object(m) => m
+            .values_mut()
+            .for_each(|c| replace_subtree(c, target, with)),
+        Value::Array(xs) => xs.iter_mut().for_each(|c| replace_subtree(c, target, with)),
+        _ => {}
+    }
+}
+
+/// The `edit_apply` input schema as published in the tool list: exact except
+/// that each video effect is `{type, id?, enabled?, ...params}` without its
+/// per-type branch (170+ types). `effects_catalog` (details=true) gives each
+/// type's controls and `timeline_schema` the full union; the engine validates
+/// every op strictly either way.
+pub fn edit_apply_published() -> Value {
+    let mut s = edit_apply();
+    let loose = json!({
+        "description": "One video effect: {type, id?, enabled?, ...params}. Find types and their exact params with effects_catalog {query, details:true}; numeric params take a constant, {keyframes} (clip-local on clips, timeline time on tracks) or {expression}. The engine rejects unknown types and params.",
+        "type": "object",
+        "properties": {
+            "type": { "type": "string", "minLength": 1 },
+            "id": { "type": "string", "minLength": 1 },
+            "enabled": { "type": "boolean", "default": true }
+        },
+        "required": ["type"]
+    });
+    replace_subtree(&mut s, &video_effect(), &loose);
+    crate::compact::compact(s)
 }

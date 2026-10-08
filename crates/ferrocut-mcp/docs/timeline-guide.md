@@ -361,6 +361,13 @@ into the timeline format; until then they are not valid timeline content.
 
 ## Rendering and checking
 
+`preview_frames` renders chosen output frames to PNG stills and a labeled contact sheet
+straight from the graph (no video encode): the same 8-bit Rec.709 pixels a master would
+hold. Pick frames by timeline time (`at`), index (`frames`) or `spread` (N evenly spaced,
+default 12). The sheet (or a single frame) comes back inline as an image; `each: true` also
+writes full-resolution PNGs, the right way to check small text. Look before and after every
+edit batch; it is far cheaper than a draft render and shows exactly what will be encoded.
+
 `render` writes a lossless FFV1/PCM MKV and reuses unchanged chunks. `quality_check` (or
 `render` with `check: true`) runs the perceptual checker: cuts, black/frozen/flash frames,
 loudness, true peak, audio presence. `expect_audio` defaults to `auto`: a timeline with no audio

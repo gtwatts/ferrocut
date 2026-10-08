@@ -52,6 +52,7 @@ cargo test --release
 ./target/release/ferrocut adapters           # which GPU wgpu picks (discrete NVIDIA preferred; FERROCUT_ADAPTER=<name> overrides)
 ./target/release/ferrocut render examples/demo.json -o out/demo-cpu.mkv --cpu   # software Vulkan (lavapipe), no GPU needed
 ./target/release/ferrocut plan examples/demo.json          # chunk keys, no decode/GPU
+./target/release/ferrocut stills examples/demo-av.json -o out/stills --spread 12 --each   # PNG stills + labeled contact sheet, no video encode
 ./target/release/ferrocut render examples/demo.json -o out/demo.mkv
 ./target/release/ferrocut render examples/demo-edit-opacity.json -o out/edit.mkv   # only chunks 8,9 re-render
 ./target/release/ferrocut render examples/demo-av.json -o out/av.mkv   # dialogue + ducked music, J/L cuts, animated overlay, -14 LUFS
@@ -278,6 +279,7 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 ```sh
 cargo build --release -p ferrocut-mcp
 ./target/release/ferrocut-mcp --list-tools     # prints every tool with its JSON Schema
+./target/release/ferrocut-mcp --doc timeline-guide   # the authoring guide (--list-docs: every docs:// resource)
 ```
 
 **Register with Codex.** Add this to `~/.codex/config.toml`, or to a trusted project's `.codex/config.toml`.

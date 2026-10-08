@@ -398,3 +398,22 @@ async fn transcript_tools_over_stdio() {
     assert!(err, "{v}");
     client.cancel().await.unwrap();
 }
+
+/// `--list-docs` and `--doc` print the docs:// resources without a client.
+#[test]
+fn docs_print_from_the_command_line() {
+    let bin = env!("CARGO_BIN_EXE_ferrocut-mcp");
+    let out = std::process::Command::new(bin).arg("--list-docs").output().unwrap();
+    assert!(out.status.success());
+    let list = String::from_utf8(out.stdout).unwrap();
+    assert!(list.contains("docs://timeline/guide.md\ttimeline-guide\t"), "{list}");
+    for want in ["docs://timeline/guide.md", "timeline-guide"] {
+        let out = std::process::Command::new(bin).args(["--doc", want]).output().unwrap();
+        assert!(out.status.success(), "{want}");
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert!(text.contains("add_transition") && text.contains("preview_frames"), "{want}");
+    }
+    let out = std::process::Command::new(bin).args(["--doc", "nope"]).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8(out.stderr).unwrap().contains("--list-docs"));
+}

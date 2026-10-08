@@ -24,7 +24,7 @@ impl EncodeSettings {
     /// Every parameter that affects encoded bytes; part of the chunk cache key.
     pub fn fingerprint(&self) -> String {
         format!(
-            "ffv1 level=3 slices=4 slicecrc=1 threads=1 pix=bgr0 g={} {}x{} fps={} packet-duration=1-frame mux=matroska+bitexact",
+            "ffv1 level=3 slices=4 slicecrc=1 threads=1 pix=bgr0 g={} {}x{} fps={} packet-duration=1-frame default-duration mux=matroska+bitexact",
             self.gop, self.width, self.height, self.fps
         )
     }
@@ -82,6 +82,11 @@ impl ChunkEncoder {
         let mut ost = octx.add_stream(codec)?;
         ost.set_parameters(&enc);
         ost.set_time_base(enc_tb);
+        // Matroska writes the track's DefaultDuration from avg_frame_rate.
+        // Without it readers guess the rate from millisecond timestamps
+        // (30 fps reads as 30000/1001).
+        ost.set_avg_frame_rate(to_ff(settings.fps));
+        ost.set_rate(to_ff(settings.fps));
         octx.write_header()?;
         let ost_tb = octx.stream(0).expect("stream").time_base();
         let frame = frame::Video::new(Pixel::BGRZ, settings.width, settings.height);

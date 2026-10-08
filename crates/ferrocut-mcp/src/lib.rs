@@ -3,7 +3,7 @@
 //!
 //! Tools: `timeline_get`, `timeline_schema`, `media_probe`, `index_media`,
 //! `transcript_search`, `shots_list`, `edit_apply`,
-//! `diff`, `plan`, `render`, `report_read`, `quality_check`, `log`, `undo`,
+//! `diff`, `plan`, `render`, `preview_frames`, `report_read`, `quality_check`, `log`, `undo`,
 //! `branch`, `openh264`. Resources: `docs://` documents (timeline JSON
 //! Schema, authoring guide, edit-op schema, parameter registry, the
 //! checker's report schema), see [`resources`]. Every input schema is hand-written
@@ -30,6 +30,7 @@
 //! downloads one: the `openh264` tool's `enable` action is the one way to
 //! fetch Cisco's binary, and it is never called implicitly.
 
+pub mod compact;
 pub mod native_schema;
 pub mod root;
 pub mod schema;
@@ -47,10 +48,10 @@ use ferrocut_engine::project::{self, EditOptions, read_timeline, timeline_hash};
 use ferrocut_engine::render::RenderOptions;
 use ferrocut_engine::{ProgressFn, RenderProgress, RenderStage, Timeline, compile, plan, render};
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, ErrorData, Implementation, JsonObject,
-    ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProgressNotificationParam,
-    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
-    ResourceContents, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorData,
+    Implementation, JsonObject, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+    ProgressNotificationParam, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
+    Resource, ResourceContents, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler};
@@ -214,7 +215,7 @@ pub fn tools() -> Vec<Tool> {
             "edit_apply",
             "Apply edit ops",
             "Apply edit ops atomically: build (add_track, add_clip, add_transition, set_param, set_keyframes) and edit (split, trim, ripple_delete, ripple_insert, roll, slip, slide, move, jl_cut, set_speed, freeze_frame) and nest (nest, unnest: nested compositions) and audio effects (add_effect, set_effect_param, remove_effect) and video effects (add_video_effect, set_video_effect_param, remove_video_effect, move_video_effect) and annotate/manage (add_marker, update_marker, remove_marker, relink). Writes the timeline (in place, or to `output`) and appends the ops with before/after hashes to the journal, unless dry_run. Returns per-op change summaries and affected spans, before/after hashes, the journal seq, and with plan=true the output chunks that would re-render. A failing op changes nothing and names the op and reason.",
-            schema::edit_apply(),
+            schema::edit_apply_published(),
             rw(false),
         ),
         tool(
@@ -236,6 +237,13 @@ pub fn tools() -> Vec<Tool> {
             "Render",
             "Render the timeline to a lossless FFV1/PCM MKV with the incremental chunk cache. Blocks until done. Returns the report JSON path, output hashes, chunk reuse stats (total/reused/rendered chunk indices, reuse ratio, frames), fps and adapter. Use report_read for the full report.",
             schema::render(),
+            rw(false).idempotent(true),
+        ),
+        tool(
+            "preview_frames",
+            "Preview frames (stills)",
+            "Render chosen output frames to PNG stills and a labeled contact sheet without encoding video: the same pixels a master render would hold at those frames (8-bit Rec.709), through the real graph and compositor. Choose frames by timeline time (`at`), index (`frames`) or `spread` (N evenly spaced over the whole timeline; default 12). Returns each frame's time, timecode and path, the sheet path, and (inline=true, default) the sheet or single frame as an image so you can look at it immediately. Use each=true and read the full-resolution PNGs to check small text. Look before and after every edit batch; it is much cheaper than a draft render.",
+            schema::preview_frames(),
             rw(false).idempotent(true),
         ),
         tool(
@@ -306,7 +314,16 @@ pub fn tools() -> Vec<Tool> {
                 .destructive(true)
                 .open_world(true),
         ),
-    ].into_iter().chain(storytold_tools::tools()).collect()
+    ]
+    .into_iter()
+    .chain(storytold_tools::tools())
+    .map(|mut t| {
+        let s = Value::Object((*t.input_schema).clone());
+        let s = if s.get("$defs").is_some() { s } else { compact::compact(s) };
+        t.input_schema = obj(s);
+        t
+    })
+    .collect()
 }
 
 fn d_true() -> bool {
@@ -820,6 +837,140 @@ fn plan_tool(cx: &Ctx, a: TimelineArgs) -> anyhow::Result<Value> {
     }))
 }
 
+fn d_cols() -> u32 {
+    4
+}
+fn d_cell_width() -> u32 {
+    480
+}
+fn d_inline_max() -> u32 {
+    1568
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviewArgs {
+    timeline: PathBuf,
+    output_dir: Option<PathBuf>,
+    #[serde(default)]
+    at: Vec<ferrocut_core::RationalTime>,
+    #[serde(default)]
+    frames: Vec<i64>,
+    spread: Option<usize>,
+    #[serde(default)]
+    each: bool,
+    #[serde(default = "d_true")]
+    sheet: bool,
+    #[serde(default = "d_cols")]
+    cols: u32,
+    #[serde(default = "d_cell_width")]
+    cell_width: u32,
+    prefix: Option<String>,
+    #[serde(default)]
+    cpu: bool,
+    #[serde(default = "d_true")]
+    inline: bool,
+    #[serde(default = "d_inline_max")]
+    inline_max: u32,
+}
+
+/// Reserved key of a tool result: a base64 PNG that the server moves out of
+/// the structured result into an image content block (so agents see it).
+pub const INLINE_PNG_KEY: &str = "_inline_png";
+
+/// Standard base64 (RFC 4648, padded).
+pub fn base64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (c.get(1).copied().unwrap_or(0) as u32) << 8
+            | c.get(2).copied().unwrap_or(0) as u32;
+        s.push(T[(n >> 18) as usize & 63] as char);
+        s.push(T[(n >> 12) as usize & 63] as char);
+        s.push(if c.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        s.push(if c.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    s
+}
+
+fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
+    use ferrocut_engine::preview;
+    let (path, tl) = cx.root.load_timeline(&a.timeline)?;
+    let dir = match a.output_dir {
+        Some(d) => cx.root.check(&d)?,
+        None => project::dir_of(&path).join("stills"),
+    };
+    if !(1..=16).contains(&a.cols) {
+        bail!("cols must be 1..=16");
+    }
+    if !(64..=1920).contains(&a.cell_width) {
+        bail!("cell_width must be 64..=1920");
+    }
+    if !(256..=4096).contains(&a.inline_max) {
+        bail!("inline_max must be 256..=4096");
+    }
+    let frames = preview::select_frames(&tl, &a.at, &a.frames, a.spread)?;
+    let c = compile(&tl)?;
+    let pref = if a.cpu {
+        AdapterPreference::Cpu
+    } else {
+        AdapterPreference::default()
+    };
+    let _one_at_a_time = RENDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let gpu = GpuContext::with_requirements(pref, &c.graph.gpu_requirements())?;
+    let stills = preview::render_stills(&tl, &c, &gpu, &frames, &cx.cancel)?;
+    let prefix = a.prefix.unwrap_or_else(|| {
+        path.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "stills".into())
+    });
+    let sheet = a.sheet.then_some((a.cols, a.cell_width));
+    let r = preview::write_stills(&tl, &stills, &dir, &prefix, a.each || !a.sheet, sheet)?;
+    let mut out = json!({
+        "hash": timeline_hash(&read_timeline(&path)?),
+        "width": tl.output.width,
+        "height": tl.output.height,
+        "fps": tl.output.fps.to_string(),
+        "total_frames": tl.frame_count(),
+        "adapter": gpu.describe(),
+        "frames": r.frames.iter().map(|f| json!({
+            "frame": f.frame,
+            "time": f.time,
+            "timecode": f.timecode,
+            "path": f.path.as_deref().map(|p| rel(cx, p)),
+        })).collect::<Vec<_>>(),
+        "sheet": r.sheet.as_deref().map(|p| rel(cx, p)),
+    });
+    if a.inline {
+        let single = stills.len() == 1;
+        let (w, h, img) = if single {
+            let s = &stills[0];
+            (s.width, s.height, s.rgba.clone())
+        } else {
+            preview::contact_sheet(&tl, &stills, a.cols, a.cell_width)
+        };
+        let (w, h, img) = preview::fit_within(&img, w, h, a.inline_max);
+        let png = preview::png_bytes(w, h, &img)?;
+        out["inline"] = json!({
+            "kind": if single { "frame" } else { "sheet" },
+            "width": w,
+            "height": h,
+            "png_bytes": png.len(),
+        });
+        out[INLINE_PNG_KEY] = Value::String(base64(&png));
+    }
+    Ok(out)
+}
+
 /// Summary of a render report (from its JSON, so it works for reports on disk).
 pub fn summarize(report: &Value) -> Value {
     let chunks = report["chunks"].as_array().cloned().unwrap_or_default();
@@ -1165,16 +1316,20 @@ const CHECK_SCHEMA: &str =
     include_str!("../../ferrocut-perceive/schema/perceive-check.schema.json");
 
 fn timeline_schema(part: SchemaPart) -> Value {
-    let ops = || json!({ "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "array", "items": schema::edit_op() });
+    let ops = || {
+        compact::compact(
+            json!({ "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "docs://timeline/edit-ops.schema.json", "type": "array", "items": schema::edit_op() }),
+        )
+    };
     match part {
         SchemaPart::All => json!({
-            "timeline": schema::timeline(),
+            "timeline": compact::compact(schema::timeline()),
             "edit_ops": ops(),
             "params": ferrocut_engine::params::registry_json(),
             "guide": GUIDE,
             "resources": resources().iter().map(|r| json!({"uri": r.uri, "name": r.name})).collect::<Vec<_>>(),
         }),
-        SchemaPart::Timeline => json!({ "timeline": schema::timeline() }),
+        SchemaPart::Timeline => json!({ "timeline": compact::compact(schema::timeline()) }),
         SchemaPart::EditOps => json!({ "edit_ops": ops() }),
         SchemaPart::Params => json!({ "params": ferrocut_engine::params::registry_json() }),
         SchemaPart::Guide => json!({ "guide": GUIDE }),
@@ -1279,7 +1434,7 @@ pub fn read_doc(uri: &str) -> Option<String> {
         "docs://capabilities.json" => pretty(ferrocut_engine::storytold::capabilities()),
         "docs://agent/onboarding.md" => AGENT_GUIDE.to_string(),
         "docs://timeline/guide.md" => GUIDE.to_string(),
-        "docs://timeline/schema.json" => pretty(schema::timeline()),
+        "docs://timeline/schema.json" => pretty(compact::compact(schema::timeline())),
         "docs://timeline/edit-ops.schema.json" => {
             pretty(timeline_schema(SchemaPart::EditOps)["edit_ops"].clone())
         }
@@ -1312,6 +1467,7 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
         "diff" => args(name, a).and_then(|a| diff_tool(cx, a)),
         "plan" => args(name, a).and_then(|a| plan_tool(cx, a)),
         "render" => args(name, a).and_then(|a| render_tool(cx, a)),
+        "preview_frames" => args(name, a).and_then(|a| preview_frames(cx, a)),
         "report_read" => args(name, a).and_then(|a| report_read(cx, a)),
         "markers_list" => args(name, a).and_then(|a| markers_list(cx, a)),
         "media_status" => args(name, a).and_then(|a| media_status(cx, a)),
@@ -1360,9 +1516,11 @@ impl ServerHandler for FerrocutServer {
                  Build and change timelines only with edit_apply ops (add_track, add_clip, \
                  add_transition, set_param, set_keyframes, split, trim, ripple_delete, ...), never by \
                  editing the JSON file: ops are validated, atomic and journaled. Preview with \
-                 dry_run=true (plan=true shows chunks that would re-render), compare with diff, render \
-                 (incremental: unchanged chunks are reused), verify with quality_check and read results \
-                 with report_read; log/undo/branch work on the per-timeline journal. \
+                 dry_run=true (plan=true shows chunks that would re-render), compare with diff, look at \
+                 the picture with preview_frames (stills + labeled contact sheet, returned inline as an \
+                 image; no video encode), render (incremental: unchanged chunks are reused), verify \
+                 with quality_check and read results with report_read; log/undo/branch work on the \
+                 per-timeline journal. \
                  Times are exact rationals: integers or strings like \"5/2\" or \"0.5\" (seconds). \
                  All paths must be inside the project root; relative paths are relative to it.",
             )
@@ -1495,7 +1653,14 @@ impl ServerHandler for FerrocutServer {
                 format!("unknown tool {name:?}"),
                 None,
             )),
-            Some(Ok(v)) => Ok(CallToolResult::structured(v).into()),
+            Some(Ok(mut v)) => {
+                let png = v.as_object_mut().and_then(|m| m.remove(INLINE_PNG_KEY));
+                let mut r = CallToolResult::structured(v);
+                if let Some(Value::String(b64)) = png {
+                    r.content.push(ContentBlock::image(b64, "image/png"));
+                }
+                Ok(r.into())
+            }
             Some(Err(e)) => {
                 Ok(CallToolResult::structured_error(json!({ "error": format!("{e:#}") })).into())
             }

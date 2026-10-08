@@ -116,6 +116,9 @@ pub fn concat(
         let mut ost = octx.add_stream(encoder::find(codec::Id::None))?;
         ost.set_parameters(ist.parameters());
         ost.set_time_base(ist.time_base());
+        // Declared as the Matroska DefaultDuration (see encode.rs).
+        ost.set_avg_frame_rate(super::to_ff(fps));
+        ost.set_rate(super::to_ff(fps));
         // SAFETY: clearing the codec tag on our own stream parameters before write_header.
         unsafe {
             (*ost.parameters().as_mut_ptr()).codec_tag = 0;

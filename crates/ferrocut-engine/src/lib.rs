@@ -27,6 +27,7 @@ pub mod mixdown;
 pub mod nodes;
 pub mod params;
 pub mod perceive;
+pub mod preview;
 pub mod project;
 pub mod render;
 pub mod retime;

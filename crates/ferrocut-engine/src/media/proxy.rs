@@ -224,6 +224,11 @@ fn encode(source: &Path, out: &Path) -> anyhow::Result<(String, u32, u32, u64)> 
     let mut ost = octx.add_stream(codec)?;
     ost.set_parameters(&enc);
     ost.set_time_base(in_tb);
+    if rate.numerator() > 0 {
+        // Declared as the Matroska DefaultDuration (see encode.rs).
+        ost.set_avg_frame_rate(rate);
+        ost.set_rate(rate);
+    }
     octx.write_header()?;
     let ost_tb = octx.stream(0).expect("stream").time_base();
     let mut pipe = Pipe {
@@ -311,11 +316,14 @@ impl Pipe {
     fn flush(&mut self, octx: &mut format::context::Output) -> anyhow::Result<()> {
         if let Some(mut packet) = self.pending.take() {
             // Matroska often supplies only a container end, without per-frame
-            // durations. Preserve that known source end for the final frame;
-            // do not infer a duration from an average frame rate for VFR input.
-            if packet.duration() <= 0
-                && let (Some(end), Some(start)) = (self.source_end, packet.pts())
+            // durations, or (with a declared default duration) a per-frame
+            // duration truncated to the millisecond time base. The proxy must
+            // end exactly where the source ends, so the final frame extends to
+            // the known source end; nothing is inferred from an average frame
+            // rate (VFR input). A demuxed duration is only ever lengthened.
+            if let (Some(end), Some(start)) = (self.source_end, packet.pts())
                 && let Some(duration) = end.checked_sub(start).filter(|duration| *duration > 0)
+                && packet.duration() < duration
             {
                 packet.set_duration(duration);
             }
