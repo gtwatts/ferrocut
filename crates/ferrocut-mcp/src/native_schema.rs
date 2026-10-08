@@ -1,0 +1,256 @@
+//! Strict schemas for native typography and vector source payloads.
+//!
+//! These describe the serde structures. Animation domains, UTF-8 byte limits,
+//! path command ordering, and font decoding are additionally checked by the
+//! engine. Font path permission is enforced by the MCP project-root guard.
+
+use serde_json::{Value, json};
+
+use crate::schema::animatable;
+
+fn object(properties: Value, required: &[&str]) -> Value {
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false
+    })
+}
+
+fn default(mut schema: Value, value: Value) -> Value {
+    schema["default"] = value;
+    schema
+}
+
+fn nullable(schema: Value) -> Value {
+    json!({"anyOf": [{"type":"null"}, schema]})
+}
+
+fn pair(description: &str) -> Value {
+    json!({
+        "description": description,
+        "type": "array", "minItems": 2, "maxItems": 2,
+        "items": animatable("component; keyframe time is generator source time")
+    })
+}
+
+fn color(description: &str) -> Value {
+    json!({
+        "description": description,
+        "type": "array", "minItems": 3, "maxItems": 4,
+        "items": animatable("straight display-referred Rec.709 component in [0,1]; generator source time")
+    })
+}
+
+fn font_path() -> Value {
+    json!({
+        "type": "string", "minLength": 1,
+        "description": "Explicit font asset path, relative to the timeline or absolute within the MCP project root. No system-font lookup."
+    })
+}
+
+fn selector() -> Value {
+    object(
+        json!({
+            "unit": {"enum":["characters","words","lines"],"default":"characters",
+                "description":"Unicode graphemes, Unicode words, or visual lines"},
+            "start": default(animatable("zero-based half-open selection start; fractional cluster weighting"),json!(0)),
+            "end": animatable("zero-based half-open selection end; must be at least start")
+        }),
+        &["end"],
+    )
+}
+
+fn animator() -> Value {
+    object(
+        json!({
+            "selector": selector(),
+            "position": default(pair("selected-cluster translation in output pixels"),json!([0,0])),
+            "opacity": default(animatable("selected-cluster opacity in [0,1]"),json!(1)),
+            "fill": nullable(color("optional selected-cluster fill override"))
+        }),
+        &["selector"],
+    )
+}
+
+/// Payload of a text generator. Required content and explicit font.
+pub fn text() -> Value {
+    let stroke = object(
+        json!({
+            "color": color("outline color, painted beneath fill"),
+            "width": animatable("outline outside extent in pixels, [0,256]")
+        }),
+        &["color", "width"],
+    );
+    let mut schema = object(
+        json!({
+            "content": {"type":"string","maxLength":262144,
+                "description":"Editable UTF-8 text; engine enforces at most 262144 UTF-8 bytes and rejects control characters except newline, carriage return, and tab. JSON Schema maxLength counts characters."},
+            "font": font_path(),
+            "font_index": {"type":"integer","minimum":0,"maximum":4294967295u64,"default":0,
+                "description":"Face index in the primary font asset"},
+            "fallback_fonts": {"type":"array","maxItems":31,"items":font_path(),"default":[],
+                "description":"Ordered explicit fallback assets; no installed-font fallback"},
+            "font_size": default(animatable("font size in pixels, greater than zero and at most 4096"),json!(48)),
+            "line_height": nullable(animatable("line height in pixels, greater than zero and at most 16384; omitted uses metrics")),
+            "tracking": default(animatable("additional inter-cluster space in pixels, [-4096,4096]"),json!(0)),
+            "position": default(pair("top-left paragraph/point origin in output pixels; each axis [-1000000,1000000]"),json!([0,0])),
+            "box_size": nullable(pair("paragraph box [width,height] in pixels; both greater than zero and at most 1000000")),
+            "align": {"enum":["left","center","right","justified"],"default":"left"},
+            "vertical_align": {"enum":["top","center","bottom"],"default":"top"},
+            "wrap": {"enum":["none","word","glyph","word_or_glyph"],"default":"word_or_glyph"},
+            "fill": default(color("base text fill"),json!([1,1,1,1])),
+            "stroke": nullable(stroke),
+            "opacity": default(animatable("text opacity in [0,1]"),json!(1)),
+            "animators": {"type":"array","maxItems":128,"items":animator(),"default":[],
+                "description":"Ordered range animators; selection is cluster-safe"}
+        }),
+        &["content", "font"],
+    );
+    schema["description"] = json!(
+        "Native asset-pinned shaped text. Numeric animation uses generator source time. Rendered output is premultiplied linear ACEScg."
+    );
+    schema
+}
+
+fn command() -> Value {
+    let mut variants = Vec::new();
+    for kind in ["move_to", "line_to"] {
+        variants.push(object(
+            json!({
+                "type":{"const":kind},
+                "point":pair("endpoint [x,y] in output pixels")
+            }),
+            &["type", "point"],
+        ));
+    }
+    variants.push(object(
+        json!({
+            "type":{"const":"quad_to"},
+            "control":pair("quadratic control point"),
+            "to":pair("quadratic endpoint")
+        }),
+        &["type", "control", "to"],
+    ));
+    variants.push(object(
+        json!({
+            "type":{"const":"cubic_to"},
+            "control1":pair("first cubic control point"),
+            "control2":pair("second cubic control point"),
+            "to":pair("cubic endpoint")
+        }),
+        &["type", "control1", "control2", "to"],
+    ));
+    variants.push(object(json!({"type":{"const":"close"}}), &["type"]));
+    json!({"oneOf":variants})
+}
+
+fn geometry() -> Value {
+    json!({"oneOf":[
+        object(json!({
+            "type":{"const":"rectangle"},
+            "x":default(animatable("left x in output pixels"),json!(0)),
+            "y":default(animatable("top y in output pixels"),json!(0)),
+            "width":animatable("width in output pixels; clamps to nonnegative at evaluation"),
+            "height":animatable("height in output pixels; clamps to nonnegative at evaluation"),
+            "radius":default(animatable("rounded corner radius in pixels; clamps to [0,min(width,height)/2]"),json!(0))
+        }), &["type","width","height"]),
+        object(json!({
+            "type":{"const":"ellipse"},
+            "center":pair("ellipse center [x,y] in output pixels"),
+            "radius":pair("ellipse radii [rx,ry] in pixels; clamp to nonnegative")
+        }), &["type","center","radius"]),
+        object(json!({
+            "type":{"const":"path"},
+            "commands":{"type":"array","minItems":2,"maxItems":100000,"items":command(),
+                "description":"Each contour starts with move_to, followed by drawable segments; close requires a segment and the next contour requires move_to. Engine validates ordering. Open contours close for fill only."}
+        }), &["type","commands"])
+    ]})
+}
+
+fn stops() -> Value {
+    json!({
+        "type":"array","minItems":2,"maxItems":256,
+        "items":object(json!({
+            "offset":animatable("stop position in [0,1]; clamps and stably sorts each sample, coincident stops form hard edges"),
+            "color":color("gradient stop color")
+        }), &["offset","color"])
+    })
+}
+
+fn interpolation() -> Value {
+    json!({
+        "enum":["display","linear"],"default":"display",
+        "description":"Premultiplied interpolation in encoded Rec.709 or linear ACEScg"
+    })
+}
+
+fn paint() -> Value {
+    json!({"oneOf":[
+        object(json!({
+            "type":{"const":"solid"},
+            "color":color("solid fill/stroke color")
+        }), &["type","color"]),
+        object(json!({
+            "type":{"const":"linear_gradient"},
+            "start":pair("gradient start point in output pixels"),
+            "end":pair("gradient end point in output pixels"),
+            "stops":stops(),
+            "interpolation":interpolation()
+        }), &["type","start","end","stops"]),
+        object(json!({
+            "type":{"const":"radial_gradient"},
+            "center":pair("gradient center in output pixels"),
+            "radius":animatable("radial gradient radius in pixels; zero selects final stop"),
+            "stops":stops(),
+            "interpolation":interpolation()
+        }), &["type","center","radius","stops"])
+    ]})
+}
+
+fn dashes() -> Value {
+    // JSON Schema has no modulo predicate for array length. A small bounded
+    // union captures exactly the supported empty or even-sized dash arrays.
+    let lengths: Vec<_> = (0..=256)
+        .step_by(2)
+        .map(|len| json!({"minItems":len,"maxItems":len}))
+        .collect();
+    json!({
+        "type":"array","maxItems":256,"anyOf":lengths,
+        "items":animatable("dash/gap length in pixels; clamps to nonnegative"),
+        "default":[],
+        "description":"Empty for solid; otherwise even pairs of on/off lengths, at least two. An all-zero evaluated pattern is invisible."
+    })
+}
+
+fn stroke() -> Value {
+    object(
+        json!({
+            "paint":paint(),
+            "width":default(animatable("stroke width in pixels; zero is invisible"),json!(1)),
+            "cap":{"enum":["butt","round","square"],"default":"butt"},
+            "join":{"enum":["miter","round","bevel"],"default":"miter"},
+            "miter_limit":default(animatable("miter limit, clamps to at least 1"),json!(4)),
+            "dashes":dashes(),
+            "dash_offset":default(animatable("dash phase offset in pixels"),json!(0))
+        }),
+        &["paint"],
+    )
+}
+
+/// Payload of a shape generator. Required native geometry.
+pub fn shape() -> Value {
+    let mut schema = object(
+        json!({
+            "geometry":geometry(),
+            "fill":default(nullable(paint()),json!({"type":"solid","color":[1,1,1,1]})),
+            "stroke":default(nullable(stroke()),Value::Null),
+            "fill_rule":{"enum":["nonzero","even_odd"],"default":"nonzero"}
+        }),
+        &["geometry"],
+    );
+    schema["description"] = json!(
+        "Native antialiased vector source in output pixels. Every numeric property is animatable in generator source time. Alpha supports existing track mattes. Geometry coverage is 8-bit; color processing and output remain floating point."
+    );
+    schema
+}

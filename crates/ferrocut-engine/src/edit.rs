@@ -1562,12 +1562,12 @@ fn apply_one(
             mode,
             timeline_time,
         } => {
-            let clip_start = match clip {
+            let clip_place = match clip {
                 Some(c) => {
                     let (tr, ci) = locate(tl, c)?;
                     Some(on_track!(tl, tr, |clips| (
                         clips[ci].start(),
-                        clips[ci].source_in()
+                        clips[ci].time_map()
                     )))
                 }
                 None => None,
@@ -1580,13 +1580,32 @@ fn apply_one(
                 param,
                 |spec, cur| {
                     crate::params::ensure_animatable(spec)?;
-                    let shift = match (timeline_time, spec.time, clip_start) {
+                    let mut mapped = keyframes.clone();
+                    if *timeline_time
+                        && spec.time == ferrocut_core::TimeBase::Source
+                        && let Some((start, map)) = &clip_place
+                    {
+                        let mut seen = std::collections::HashSet::new();
+                        for key in &mut mapped {
+                            let time: RationalTime = serde_json::from_value(
+                                key.get("t").cloned().unwrap_or(serde_json::Value::Null),
+                            )
+                            .context("source keyframe timeline time")?;
+                            let source_time = map.source_at(RationalTime(time.0 - start.0));
+                            ensure!(
+                                seen.insert(source_time),
+                                "multiple timeline keyframes map to source time {source_time}; use distinct source times or clip-local controls"
+                            );
+                            key.as_object_mut()
+                                .context("keyframe must be an object")?
+                                .insert("t".into(), serde_json::to_value(source_time)?);
+                        }
+                    }
+                    let shift = match (timeline_time, spec.time, &clip_place) {
                         (true, ferrocut_core::TimeBase::ClipLocal, Some((s, _))) => s.0,
-                        // Source time of an unretimed clip: t - start + source_in.
-                        (true, ferrocut_core::TimeBase::Source, Some((s, si))) => s.0 - si.0,
                         _ => Rational::ZERO,
                     };
-                    crate::params::keyframes_value(cur, keyframes, shift, *mode == KeyMode::Merge)
+                    crate::params::keyframes_value(cur, &mapped, shift, *mode == KeyMode::Merge)
                 },
             )?
         }

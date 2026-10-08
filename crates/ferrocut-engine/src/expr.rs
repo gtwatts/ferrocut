@@ -69,6 +69,11 @@
 //! owner, parameter, time, line and column) when the timeline is loaded or
 //! edited, never at render time. Values outside a parameter's range are
 //! errors naming the time.
+//! Source properties sample the clip's actual speed/remap clock; references
+//! and `comp_time` retain the actual timeline clock. Nonmonotonic source
+//! expression remaps, expression-driven timing plus source expressions, and
+//! frozen sources requiring changing timeline-dependent values are rejected
+//! with guidance rather than represented by ambiguous source keyframes.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -237,7 +242,7 @@ struct Owner {
     pointer: Vec<Seg>,
     start: Rational,
     duration: Rational,
-    source_in: Rational,
+    time_map: crate::retime::TimeMap,
 }
 
 struct Site {
@@ -266,6 +271,7 @@ struct EvalFrame {
     site: usize,
     /// Parameter time.
     t: Rational,
+    ct: Rational,
     seed: u64,
     timeless: bool,
     calls: u64,
@@ -315,16 +321,8 @@ impl State {
 fn param_time(base: TimeBase, o: &Owner, ct: Rational) -> Rational {
     match base {
         TimeBase::ClipLocal => ct - o.start,
-        TimeBase::Source => ct - o.start + o.source_in,
+        TimeBase::Source => o.time_map.source_at(RationalTime(ct - o.start)).0,
         _ => ct,
-    }
-}
-
-fn comp_time(base: TimeBase, o: &Owner, t: Rational) -> Rational {
-    match base {
-        TimeBase::ClipLocal => t + o.start,
-        TimeBase::Source => t - o.source_in + o.start,
-        _ => t,
     }
 }
 
@@ -671,6 +669,7 @@ fn eval_site(engine: &Engine, st: &Shared, idx: usize, ct: Rational) -> EvalResu
         s.stack.push(EvalFrame {
             site: idx,
             t,
+            ct,
             seed,
             timeless: false,
             calls: 0,
@@ -722,11 +721,25 @@ fn param_value(
         let s = lock(st);
         let o = &s.owners[oi];
         let rel = resolve_path(&o.json, path).map_err(|e| format!("{}: {e}", o.label))?;
+        let (spec, comp) = spec_of(o, &rel);
+        let base = base_of(o, &rel, spec.as_ref());
+        // An expression on another clip can read this owner's source-clock
+        // keyframes even when this owner has no source expressions itself.
+        // Its original TimeMap cannot represent expression-driven timing.
+        if base == TimeBase::Source
+            && s.sites.iter().any(|site| {
+                site.owner == oi && matches!(site.name.as_str(), "speed" | "time_remap")
+            })
+        {
+            return Err(format!(
+                "{}: cannot read source parameter {path:?} with expression-driven speed/time_remap; bake the timing curve to keyframes first",
+                o.label
+            )
+            .into());
+        }
         if let Some(&i) = s.by_path.get(&(oi, rel.clone())) {
             Next::Site(i)
         } else {
-            let (spec, comp) = spec_of(o, &rel);
-            let base = base_of(o, &rel, spec.as_ref());
             let t = param_time(base, o, ct);
             match get_path(&o.json, &rel) {
                 Some(Value::Array(_)) => {
@@ -767,8 +780,7 @@ fn current(st: &Shared) -> EvalResult<(usize, Rational, Rational)> {
     let s = lock(st);
     let f = s.stack.last().ok_or("no expression is being evaluated")?;
     let site = &s.sites[f.site];
-    let ct = comp_time(site.base, &s.owners[site.owner], f.t);
-    Ok((site.owner, ct, f.t))
+    Ok((site.owner, f.ct, f.t))
 }
 
 fn build_engine(st: &Shared) -> Engine {
@@ -1143,7 +1155,11 @@ pub fn bake(tl: &Timeline) -> anyhow::Result<Cow<'_, Timeline>> {
         pointer: vec![],
         start: Rational::ZERO,
         duration: tl_dur,
-        source_in: Rational::ZERO,
+        time_map: crate::retime::TimeMap::new(
+            RationalTime::ZERO,
+            &Animatable::constant(Rational::ONE),
+            None,
+        ),
     });
     for (field, tkind, ckind) in [
         ("tracks", OwnerKind::VideoTrack, OwnerKind::VideoClip),
@@ -1166,7 +1182,11 @@ pub fn bake(tl: &Timeline) -> anyhow::Result<Cow<'_, Timeline>> {
                 pointer: vec![Seg::Key(field.into()), Seg::Idx(ti)],
                 start: Rational::ZERO,
                 duration: tl_dur,
-                source_in: Rational::ZERO,
+                time_map: crate::retime::TimeMap::new(
+                    RationalTime::ZERO,
+                    &Animatable::constant(Rational::ONE),
+                    None,
+                ),
             });
             for (ci, c) in t["clips"].as_array().into_iter().flatten().enumerate() {
                 let id = c["id"].as_str().unwrap_or("").to_string();
@@ -1189,7 +1209,11 @@ pub fn bake(tl: &Timeline) -> anyhow::Result<Cow<'_, Timeline>> {
                     ],
                     start: r("start"),
                     duration: r("duration"),
-                    source_in: r("source_in"),
+                    time_map: if ckind == OwnerKind::VideoClip {
+                        serde_json::from_value::<crate::timeline::Clip>(c.clone())?.time_map()
+                    } else {
+                        serde_json::from_value::<crate::timeline::AudioClip>(c.clone())?.time_map()
+                    },
                 });
             }
         }
@@ -1270,6 +1294,23 @@ pub fn bake(tl: &Timeline) -> anyhow::Result<Cow<'_, Timeline>> {
         }
     }
 
+    // A source expression is a function of source time. Its samples must
+    // follow the actual retime map, rather than assume speed = 1. Timing
+    // expressions plus source expressions need a dependency-aware timing
+    // pass; reject that combination until it can be evaluated faithfully.
+    for site in &sites {
+        if site.base == TimeBase::Source {
+            let o = &owners[site.owner];
+            anyhow::ensure!(
+                !sites
+                    .iter()
+                    .any(|s| s.owner == site.owner
+                        && matches!(s.name.as_str(), "speed" | "time_remap")),
+                "{}: source expressions cannot yet be combined with expression-driven speed/time_remap; bake the timing curve to keyframes first",
+                o.label
+            );
+        }
+    }
     let st: Shared = Arc::new(Mutex::new(State {
         owners,
         sites,
@@ -1285,7 +1326,7 @@ pub fn bake(tl: &Timeline) -> anyhow::Result<Cow<'_, Timeline>> {
     let mut out = root;
     let step = Rational::ONE / fps;
     for i in 0..n_sites {
-        let (base, owner_start, owner_dur, src_in, at, pointer) = {
+        let (base, owner_start, owner_dur, time_map, at, pointer) = {
             let s = lock(&st);
             let site = &s.sites[i];
             let o = &s.owners[site.owner];
@@ -1295,27 +1336,55 @@ pub fn bake(tl: &Timeline) -> anyhow::Result<Cow<'_, Timeline>> {
                 site.base,
                 o.start,
                 o.duration,
-                o.source_in,
+                o.time_map.clone(),
                 site_label(&s, i),
                 p,
             )
         };
-        let (t0, span) = match base {
-            TimeBase::ClipLocal => (Rational::ZERO, owner_dur),
-            TimeBase::Source => (src_in, owner_dur),
-            _ => (Rational::ZERO, tl_dur),
+        let span = match base {
+            TimeBase::ClipLocal | TimeBase::Source => owner_dur,
+            _ => tl_dur,
         };
-        let _ = owner_start;
         let n = RationalTime(span).frame_ceil(fps).max(1);
         let mut keys = Vec::with_capacity(n as usize + 3);
+        let mut previous_source = None;
+        let mut source_direction = 0;
         // In-range frames first (so errors name a real frame), then the guards.
         for k in (0..=n).chain([-1, n + 1]) {
-            let t = t0 + step * Rational::from_int(k);
-            let ct = {
-                let s = lock(&st);
-                let site = &s.sites[i];
-                comp_time(base, &s.owners[site.owner], t)
+            let u = step * Rational::from_int(k);
+            let (t, ct) = match base {
+                TimeBase::Source => (time_map.source_at(RationalTime(u)).0, owner_start + u),
+                TimeBase::ClipLocal => (u, owner_start + u),
+                _ => (u, u),
             };
+            // Remap curves hold outside their endpoints. A guard must not
+            // replace a real sample at the same source time with a different
+            // timeline-dependent value from outside the clip.
+            if base == TimeBase::Source
+                && (k < 0 || k > n)
+                && keys.iter().any(|(time, _)| *time == t)
+            {
+                continue;
+            }
+            if base == TimeBase::Source && k >= 0 && k <= n {
+                if let Some(previous) = previous_source {
+                    let direction = if t > previous {
+                        1
+                    } else if t < previous {
+                        -1
+                    } else {
+                        0
+                    };
+                    anyhow::ensure!(
+                        direction == 0 || source_direction == 0 || direction == source_direction,
+                        "{at}: source expressions require monotonic time remapping; keyframe source values for a remap that changes direction"
+                    );
+                    if direction != 0 {
+                        source_direction = direction;
+                    }
+                }
+                previous_source = Some(t);
+            }
             let v = eval_site(&engine, &st, i, ct).map_err(|e| {
                 anyhow!(
                     "{at}: expression error at {}: {}",
@@ -1357,6 +1426,14 @@ pub fn bake(tl: &Timeline) -> anyhow::Result<Cow<'_, Timeline>> {
             keys.push((t, r));
         }
         keys.sort_by_key(|(t, _)| *t);
+        for pair in keys.windows(2) {
+            anyhow::ensure!(
+                pair[0].0 != pair[1].0 || pair[0].1 == pair[1].1,
+                "{at}: source time {} maps to different expression values; a frozen/repeated source cannot represent changing comp_time or referenced timeline values",
+                pair[0].0
+            );
+        }
+        keys.dedup_by_key(|(t, _)| *t);
         let first = keys[0].1;
         let baked = if keys.iter().all(|(_, v)| *v == first) {
             json!(first.to_string())

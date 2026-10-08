@@ -2,9 +2,8 @@
 //! a file. Native generators are a solid color and linear / radial gradients;
 //! every parameter is keyframable.
 //!
-//! Vector shape layers (rectangles, ellipses, paths with fill/stroke) and
-//! shape masks are rendered by the ThorVG/Lottie path (`ferrocut-lottie`),
-//! not here.
+//! Native text and vector variants use explicit-font shaping and path coverage;
+//! they enter the same working-space compositor as the gradient generators.
 //!
 //! Colors are `[r, g, b]` or `[r, g, b, a]` in [0, 1], display-referred
 //! Rec.709 (BT.709 OETF encoded, the same space decoded video arrives in), so
@@ -58,7 +57,7 @@ impl Color {
         let c = |i: usize| self.0.get(i).map_or(1.0, |a| a.eval(t).clamp(0.0, 1.0));
         [c(0), c(1), c(2), c(3)]
     }
-    fn validate(&self, what: &str) -> Result<(), String> {
+    pub(crate) fn validate(&self, what: &str) -> Result<(), String> {
         if !(3..=4).contains(&self.0.len()) {
             return Err(format!(
                 "{what}: a color is [r, g, b] or [r, g, b, a], got {} components",
@@ -102,6 +101,12 @@ impl GradientSpace {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GeneratorSpec {
+    Text {
+        text: Box<crate::text::TextSpec>,
+    },
+    Shape {
+        shape: Box<crate::vector::VectorSpec>,
+    },
     Solid {
         color: Color,
     },
@@ -226,13 +231,23 @@ impl GeneratorSpec {
             GeneratorSpec::Solid { .. } => "solid",
             GeneratorSpec::LinearGradient { .. } => "linear_gradient",
             GeneratorSpec::RadialGradient { .. } => "radial_gradient",
+            GeneratorSpec::Text { .. } => "text",
+            GeneratorSpec::Shape { .. } => "shape",
         }
     }
 
-    /// Parameters at source time `t` for a `w` x `h` output.
+    /// Gradient parameters at source time `t` for a `w` x `h` output.
+    /// Text and shape variants use their native nodes, not this gradient kernel.
+    ///
+    /// # Panics
+    /// Panics for text and shape specifications. Use [`node`] to construct the
+    /// appropriate render node for any generator variant.
     pub fn at(&self, t: RationalTime, w: u32, h: u32) -> GeneratorAt {
         let (wf, hf) = (w as f64, h as f64);
         match self {
+            GeneratorSpec::Text { .. } | GeneratorSpec::Shape { .. } => {
+                panic!("text and shapes must be rendered through generator::node")
+            }
             GeneratorSpec::Solid { color } => GeneratorAt {
                 kind: 0,
                 c0: color.at(t),
@@ -282,6 +297,7 @@ impl GeneratorSpec {
     fn all(&self) -> Vec<(&'static str, &Animatable)> {
         let mut v = Vec::new();
         match self {
+            GeneratorSpec::Text { .. } | GeneratorSpec::Shape { .. } => {}
             GeneratorSpec::Solid { color } => {
                 for (a, n) in color
                     .0
@@ -328,6 +344,8 @@ impl GeneratorSpec {
 
     pub fn validate(&self) -> Result<(), String> {
         match self {
+            GeneratorSpec::Text { text } => text.validate()?,
+            GeneratorSpec::Shape { shape } => shape.validate()?,
             GeneratorSpec::Solid { color } => color.validate("generator color")?,
             GeneratorSpec::LinearGradient {
                 start_color,
@@ -357,7 +375,11 @@ impl GeneratorSpec {
     }
 
     pub fn is_animated(&self) -> bool {
-        self.all().iter().any(|(_, a)| a.is_animated())
+        match self {
+            Self::Text { text } => text.is_animated(),
+            Self::Shape { shape } => shape.is_animated(),
+            _ => self.all().iter().any(|(_, a)| a.is_animated()),
+        }
     }
 
     pub fn hash_into(&self, h: &mut blake3::Hasher) {
@@ -369,6 +391,27 @@ impl GeneratorSpec {
                 .as_bytes(),
         );
     }
+}
+
+/// Construct the native source node, freezing text font bytes for stable keys.
+pub fn node(
+    spec: GeneratorSpec,
+    width: u32,
+    height: u32,
+) -> Result<Arc<dyn RenderNode>, NodeError> {
+    Ok(match spec {
+        GeneratorSpec::Text { text } => Arc::new(crate::text::TextNode::new(*text, width, height)?),
+        GeneratorSpec::Shape { shape } => Arc::new(crate::vector::VectorNode {
+            spec: *shape,
+            width,
+            height,
+        }),
+        spec => Arc::new(GeneratorNode {
+            spec,
+            width,
+            height,
+        }),
+    })
 }
 
 fn colors<'a>(v: &mut Vec<(&'static str, &'a Animatable)>, a: &'a Color, b: &'a Color) {

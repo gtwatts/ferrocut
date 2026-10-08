@@ -347,8 +347,18 @@ pub fn generator() -> Value {
     let space = json!({ "enum": ["display", "linear"], "default": "display",
         "description": "display: mix the encoded colors (After Effects Gradient Ramp); linear: mix linear light" });
     json!({
-        "description": "Synthesized layer. Colors are [r, g, b] or [r, g, b, a] in [0, 1], display-referred Rec.709 (like decoded video), straight alpha. Keyframe times are the clip's source time (clip-local + source_in). Vector shapes (rect/ellipse/paths) are not generators: they come from the Lottie/ThorVG path.",
+        "description": "Native synthesized layer: solids, gradients, explicit-font text, or editable vector shapes. Colors are encoded Rec.709 straight RGBA; output is linear ACEScg premultiplied. Numeric keys use source time (follows speed/remap). Text fonts are explicit project assets and their bytes affect cache keys.",
         "oneOf": [
+            {
+                "type": "object",
+                "properties": { "type": {"const":"text"}, "text": crate::native_schema::text() },
+                "required": ["type","text"], "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": { "type": {"const":"shape"}, "shape": crate::native_schema::shape() },
+                "required": ["type","shape"], "additionalProperties": false
+            },
             {
                 "type": "object",
                 "properties": { "type": { "const": "solid" }, "color": color("fill color") },
@@ -533,7 +543,7 @@ pub fn edit_op() -> Value {
         ),
         op(
             "add_video_effect",
-            "Insert a video effect on a clip (`clip`; keyframes clip-local; incl. adjustment layers) or a video track (`track`; timeline time) at `index` (default: end = applied last). Types: gaussian_blur, directional_blur, unsharp_mask, sharpen, glow, drop_shadow, transform, crop, letterbox (and any registered plug-in types); their params, ranges and defaults are in the `effect` schema and timeline_schema `params` (`video_effects`).",
+            "Insert a registered video effect on a clip (`clip`; keyframes clip-local; incl. adjustment layers) or a video track (`track`; timeline time) at `index` (default: end = applied last). Discover available types, parameters, ranges and defaults in the `effect` schema and timeline_schema `params` (`video_effects`). Includes native blurs, transforms, grading and chroma/luma keying.",
             json!({
                 "clip": video_target().0,
                 "track": video_target().1,
@@ -598,7 +608,7 @@ pub fn edit_op() -> Value {
         ),
         op(
             "add_clip",
-            "Add a clip to a track: from a media file (`source`), a generator layer (`generator`: solid color, linear or radial gradient; video tracks; `duration` required), or an adjustment layer (`adjustment: true`; video tracks; `duration` required; then add_video_effect on it). A media file is probed: it must have a video stream for a video track (its audio, if any, plays as linked audio) or an audio stream for an audio track. Defaults: source_in 0, duration = the rest of the media after source_in, start = the end of the track, id = the file stem or generator type (made unique). The range must be free (use ripple_insert to push clips right).",
+            "Add a clip to a track: media (`source`), native generator (`generator`: solid, linear_gradient, radial_gradient, text or shape; video track; duration required), or adjustment layer (adjustment:true; duration required). Text uses explicit project font assets. Media is probed for the requested stream. Defaults: source_in 0, duration remaining media, start track end, unique id from source/generator. The range must be free; use ripple_insert to push clips right. All numeric generator parameters use source time.",
             json!({
                 "track": { "type": "string", "minLength": 1, "description": "track name" },
                 "source": path("media path or nested timeline (.json), relative to the timeline file's directory (or absolute, inside the project root)"),
@@ -724,13 +734,15 @@ pub fn keyframes() -> Value {
 /// `set_param.value`: a number/keyframes, `[x, y]`, a bool, an object, or null.
 fn param_value() -> Value {
     json!({
-        "description": "constant rational or {keyframes} (numeric), [x, y] (vectors), true/false, an object (fades, duck, loudness) or null (remove)",
+        "description": "rational/keyframes/expression, vector/color, string (text/path/choice), boolean, object, ordered animator/effect/font list, or null; target parameter registry defines the accepted shape",
         "anyOf": [
             animatable("numeric value"),
+            { "type": "string", "description": "editable text, explicit asset path, or enum choice; parameter-specific validation applies" },
             { "type": "array", "minItems": 2, "maxItems": 4, "items": animatable("component"), "description": "[x, y], [x, y, z] or a color [r, g, b(, a)]" },
             { "type": "boolean" },
             { "type": "object" },
             { "type": "array", "items": { "type": "object" }, "description": "audio.effects / bus.effects chain" },
+            { "type": "array", "items": { "type": "string" }, "description": "explicit fallback font assets" },
             { "type": "null" }
         ]
     })

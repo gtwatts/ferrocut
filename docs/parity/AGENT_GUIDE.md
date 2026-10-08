@@ -1,0 +1,188 @@
+# Ferrocut agent onboarding
+
+Verified against the working tree on 2026-10-08. This guide describes implemented interfaces; the [Premiere inventory](PREMIERE_PRO_INVENTORY.md) and [After Effects inventory](AFTER_EFFECTS_INVENTORY.md) describe requirements, not a claim of Adobe parity.
+
+Ferrocut combines editing and composition in one inspectable project. Treat a timeline as a sequence, a video track as a compositing layer, a timeline used as a clip source as a nested composition, and a generator as editable native artwork. Work through typed operations, inspect their reported changes, render, and revise. Familiar concepts should carry over from Premiere, After Effects, and ordinary programming without requiring a browser or HTML layout engine.
+
+## Discover the installed interface
+
+Start with the tools and schemas exposed by the running build. An agent should retrieve the relevant sections when needed instead of assuming that a feature in this backlog already exists.
+
+| Need | Current interface |
+| --- | --- |
+| Inspect a project and its journal state | `timeline_get {"timeline":"project.json"}` |
+| Discover timeline structure | `timeline_schema {"part":"timeline"}` |
+| Discover typed operations | `timeline_schema {"part":"edit_ops"}` |
+| Discover parameter names, units, defaults, ranges and time bases | `timeline_schema {"part":"params"}` |
+| Read the compact authoring reference | `timeline_schema {"part":"guide"}` |
+| Probe source duration, dimensions, rates and streams | `media_probe {"path":"media/interview.mov"}` |
+| Inspect offline media and proxies | `media_status {"timeline":"project.json"}` |
+| Plan render keys without decoding or GPU execution | `plan {"timeline":"project.json"}` |
+| Inspect edit history / restore the last journaled edit | `log` / `undo`, each with `timeline` |
+
+The same documentation is available through MCP resources: `docs://timeline/guide.md`, `docs://timeline/schema.json`, `docs://timeline/edit-ops.schema.json`, `docs://timeline/params.json`, and `docs://perceive/check.schema.json`. The MCP server's `--list-tools` option prints tool definitions without starting a client session.
+
+From a built checkout:
+
+```sh
+./target/debug/ferrocut-mcp --list-tools
+./target/debug/ferrocut-mcp --root /absolute/path/to/project
+```
+
+The second command is a stdio MCP server. Configure the agent's MCP client to launch it with that command and argument; stdout carries protocol messages. Tool paths are relative to `--root`. Font and media paths *inside a timeline* are relative to that timeline's directory. All assets, including fallback fonts, must be inside the configured root; escaping symlinks and paths are rejected.
+
+`index_media` and `transcript_search` can provide source-time word ranges when a whisper.cpp model/runtime is configured. Check their returned status. `shots_list` reports `unavailable` when its optional detector is absent. A listed tool does not establish that an external model, codec or service is installed and working.
+
+## Preserve exact time and choose the right time base
+
+Times and numeric parameters use exact rationals: an integer, or a string such as `"1/2"`, `"0.75"`, or `"1001/30000"`. A JSON floating-point value such as `0.75` is rejected. At 24 fps, frame 12 is `"1/2"`; at `"30000/1001"` fps, frame 30 is `"1001/1000"`. Ranges use an inclusive start and exclusive end.
+
+| Time base | Used by | Meaning |
+| --- | --- | --- |
+| Timeline | Clip placement; track/master parameters; camera | Seconds from the composition start |
+| Clip-local | Clip transform, opacity, effects, audio controls, speed and time-remap key times | Timeline time minus the clip's `start` |
+| Source | Numeric generator properties, including text and shape artwork; clip markers | Time in the source content after retiming |
+
+Read each parameter's registry entry. For a normal clip, source time is `source_in + clip_local_time`. With constant speed `s`, it is `source_in + s * clip_local_time`. Speed ramps integrate speed; `time_remap` directly supplies absolute source seconds and overrides speed.
+
+`set_keyframes` accepts `timeline_time:true` to convert key locations to the property's time base. Source properties use the clip's actual speed/remapping, including its `source_in`. Conversion maps key locations; interpolation still belongs to the resulting source curve. For precise easing under a nonlinear map, design the source curve explicitly. Multiple timeline keys mapping to the same source time are rejected rather than silently overwritten.
+
+Generator animation stays with its source through a split or an in-trim. A title split at timeline time `"3/2"` should show the same frame on either side of the cut. Moving a clip changes placement; slipping changes the source range; trimming changes its exposed range. Use the corresponding operation instead of trying to reproduce these distinctions with hand-edited timestamps.
+
+## Build a native title through normal edit operations
+
+There is currently no MCP `create_project` tool. Bootstrap a new project JSON with the filesystem, then use `edit_apply` for revisions. For this example, place explicitly licensed fonts at `assets/fonts/NotoSans-Regular.ttf` and `assets/fonts/NotoSansArabic-Regular.ttf` inside the project. The repository's text test fixtures contain these fonts and their license; preserve the license when copying them.
+
+Save this initial file as `project.json`:
+
+```json
+{
+  "output": {"width":1280,"height":720,"fps":24,"duration":3,"gop":12},
+  "tracks": [
+    {"name":"Background","clips":[]},
+    {"name":"Titles","clips":[]}
+  ]
+}
+```
+
+Track zero composites at the bottom. Clip IDs and track names must be unique. A generator clip needs an explicit duration and has no generated audio. Clips on one track cannot overlap except where the transition rules permit it; put simultaneous artwork on separate tracks.
+
+Send the following as the arguments to `edit_apply`. This first call is a structural preview and writes nothing:
+
+```json
+{
+  "timeline":"project.json",
+  "dry_run":true,
+  "plan":true,
+  "return_timeline":true,
+  "ops":[
+    {"op":"add_clip","track":"Background","id":"background","start":0,"duration":3,
+     "generator":{"type":"solid","color":["0.04","0.06","0.1",1]}},
+    {"op":"add_clip","track":"Titles","id":"title","start":"1/2","duration":2,
+     "generator":{"type":"text","text":{
+       "content":"Make better videos",
+       "font":"assets/fonts/NotoSans-Regular.ttf",
+       "fallback_fonts":["assets/fonts/NotoSansArabic-Regular.ttf"],
+       "font_size":72,"line_height":90,"tracking":0,
+       "position":[64,200],"box_size":[1152,320],
+       "align":"left","vertical_align":"top","wrap":"word_or_glyph",
+       "fill":[1,1,1,1],"stroke":{"color":[0,0,0,1],"width":1}
+     }}},
+    {"op":"set_keyframes","clip":"title","param":"generator.text.position.y",
+     "timeline_time":true,"keyframes":[{"t":"1/2","v":200},{"t":1,"v":164,"interp":"hold"}]},
+    {"op":"set_param","clip":"title","param":"generator.text.animators","value":[
+      {"selector":{"unit":"words","start":{"keyframes":[{"t":0,"v":0},{"t":"3/4","v":3}]},"end":3},
+       "opacity":0}
+    ]}
+  ]
+}
+```
+
+Inspect the result, affected spans, and render plan. Reuse the same request with `dry_run:false` to apply it atomically and append the edit to the journal. Every operation in the list must validate; if one fails, the project file is unchanged. A preview with `plan:true` opens/hashes assets and compiles the project, but does not render pixels.
+
+The title enters at half a second, rises 36 pixels, and progressively reveals its three words. The word range's numeric keys are source seconds; the position keys were supplied as timeline seconds and converted. Change the wording with `set_param` on `generator.text.content`; use `set_keyframes` on registered numeric properties. `generator.text.animators` and `generator.text.fallback_fonts` are whole-list edits. Do not invent an individual `animators.0.selector.end` edit parameter.
+
+Text is shaped with kerning, ligatures, bidirectional ordering, grapheme-aware ranges and explicit fallback assets. `position` is the paragraph box's top-left; `box_size` controls wrapping and alignment. Text size, tracking, line height and stroke widths are output pixels. `fill` and stroke colors are encoded Rec.709 straight RGBA, converted into the engine's linear ACEScg premultiplied working pixels. Text opacity applies to the combined fill and stroke.
+
+Range selectors use zero-based, half-open `start`/`end` indices. `characters` counts Unicode grapheme clusters, `words` counts Unicode words, and `lines` counts laid-out visual lines. Fractional endpoints weight whole shaping clusters; a ligature or combining sequence is not torn into broken glyph pieces. Range animators can offset position, multiply opacity and apply a fill. They are ordered. Character rotation, scale, text-on-path and rich style runs are not implemented by this interface.
+
+The font file determines the face, weight and style; a family name alone is insufficient. `font_index` selects a face in a collection. There is no automatic system-font discovery. A missing non-whitespace glyph produces a render error identifying its UTF-8 byte range: add an appropriate explicit fallback font or revise the content. Treat that error as a failed preview. Ordinary Latin, Arabic/RTL, combining marks and ligatures have regression coverage; every script and color-font format has not been certified. Bitmap-only color glyphs do not acquire an outline stroke.
+
+Native shape artwork uses `generator:{"type":"shape","shape":...}` with rectangle, ellipse or path geometry, fill/stroke and source-time numeric keys. Discover its exact payload through the schema and parameter registry; do not route simple editable vector artwork through a browser merely to create pixels.
+
+## Expressions and deterministic animation
+
+An animatable number can contain an expression object. For example, a `set_param` value for `generator.text.position.x` can be:
+
+```json
+{"expression":"value + 12 * sin(time * 6.283185)","value":64}
+```
+
+Expressions use Rhai syntax. The final expression must be numeric; `1 / 2` uses integer division, so use `1.0 / 2` for a fraction. `time` follows the parameter's time base; `comp_time` is timeline seconds. `value` is the optional underlying constant/keyframe curve. The reference guide lists deterministic noise, `wiggle`, easing, `value_at_time`, looping and parameter-reference functions.
+
+Expressions are sandboxed and baked on the frame grid for validation and content-addressed rendering. They do not execute arbitrary filesystem/network operations. A bad expression reports the owner, parameter and failing time. References such as `layer("title").param("opacity")` are evaluated at the corresponding composition time; dependency cycles are errors. Sub-frame sampling interpolates the baked values rather than evaluating an unrestricted live expression engine.
+
+Source-time expressions follow the actual clip map, including reverse and monotonic ramps/remaps. Current explicit limits are:
+
+- A source expression cannot be combined with expression-driven `speed` or `time_remap`; bake the timing curve first.
+- A source expression cannot use a remap that changes direction; provide source keyframes instead.
+- If repeated/frozen source time would require different values because `comp_time` or another referenced timeline property changes, compilation rejects the ambiguity. A single source curve cannot encode both values.
+
+These limits concern source expressions. Do not infer that all reverse, freeze or nonmonotonic *keyframed* content is unsupported.
+
+## Preview, verify and revise
+
+Agree on measurable delivery goals from the brief: duration, aspect ratio, frame rate, safe margins, exact wording, edit beats, audio targets and the intended viewer response. Then use this loop:
+
+1. Inspect the current timeline and media. Retrieve relevant schema/parameter entries and probe real assets before cutting beyond their available handles.
+2. Apply a small coherent edit batch with `dry_run:true,plan:true`. Read every result and any asset/validation errors.
+3. Apply the accepted batch normally, keeping its journal and hashes. Use `diff` for a separate candidate file or `branch` for an alternative direction.
+4. Render a draft and inspect its actual picture, sound and text. The current MCP interface has no dedicated `preview_frame` tool; a short draft render is the visual preview. Proxies help media drafts; final renders use original media.
+5. Read the render report, run the quality checker when available, and check the brief. Revise through another typed batch. Use `undo` to restore the newest journaled edit when necessary; there is no advertised redo tool.
+
+For the title example, MCP `render` arguments are:
+
+```json
+{"timeline":"project.json","output":"renders/title-draft.mkv","cpu":true,"check":true,"timeout_s":120}
+```
+
+`cpu:true` selects a software Vulkan adapter, not a browser renderer. It still needs a working software Vulkan implementation. Omit it to use the normal GPU selection. `render` blocks until completion and returns output/report information. Use its returned report path; the default here is `renders/title-draft.report.json`. `report_read` accepts `{"report":"renders/title-draft.report.json","full":true}` for details. `quality_check` accepts `{"render":"renders/title-draft.mkv","timeline":"project.json"}`.
+
+Checker statuses are `pass`, `fail`, `error` and `skipped`. `skipped` means no verdict, commonly because the checker is not installed. Inspect failure ranges and thresholds; an intentional freeze or black beat needs creative review. A checker pass does not establish good pacing, readable typography or narrative quality. Watch the result, listen to the audio and read every displayed line. When automated checks are required, CLI `check --require` turns a missing checker into an error.
+
+Equivalent CLI workflow, with the edit list saved as an array in `ops.json`:
+
+```sh
+./target/debug/ferrocut edit project.json ops.json --dry-run --plan --json
+./target/debug/ferrocut edit project.json ops.json --plan --json
+./target/debug/ferrocut render project.json -o renders/title-draft.mkv --cpu --check
+./target/debug/ferrocut check renders/title-draft.mkv --timeline project.json --require
+./target/debug/ferrocut log project.json --json
+./target/debug/ferrocut undo project.json --json
+```
+
+The native master is lossless FFV1 video/PCM audio in MKV. Optional H.264/AAC MP4 delivery needs the configured OpenH264 provider. Inspect `openh264` status; its enable/download action requires an explicit user request under the tool contract. Rendering a native master and editing typography do not require that codec download.
+
+## Captions are editable text clips
+
+The CLI imports plain-text SRT/WebVTT cues through the same atomic edits and journal. Supply a `TextSpec` style JSON with explicit font assets; its `content` is replaced by each cue. Fonts in that style resolve relative to the **style file**, not the caption or timeline file.
+
+```sh
+./target/debug/ferrocut captions import project.json dialogue.vtt --style caption-style.json --track Captions --dry-run
+./target/debug/ferrocut captions import project.json dialogue.vtt --style caption-style.json --track Captions
+./target/debug/ferrocut captions export project.json --track Captions -o dialogue-edited.srt
+```
+
+Use `--ops-only` to inspect the generated operations without changing a project. The selected export track must contain text clips only. Rendering burns the text into picture; caption export writes a sidecar. Export rounds exact timings to milliseconds and rejects cues that would collapse to zero length. Existing output files are not overwritten.
+
+Multiline Unicode text, BOM/CRLF and supported entities are handled. Rich caption markup, voice tags, WebVTT regions/positioning and STYLE blocks are rejected rather than silently discarded. Overlapping cues require separate tracks for import. Speech transcription and language translation are separate capabilities; caption file import does not perform either.
+
+## Keep assets and evidence with the project
+
+Keep primary/fallback fonts and source media in the project tree with their licenses and provenance. Record source, version, file hash and license/use permission in a sidecar manifest or project notes; the timeline schema does not define an arbitrary `asset_manifest` field. File content participates in render keys. Changing font bytes invalidates frames that use that font; an already compiled text node retains its font snapshot until the project is compiled again.
+
+Relative fonts survive relocation when the whole directory layout is preserved. Editing to a timeline in another directory resolves asset references to absolute paths so that the output still renders; that output is not automatically a portable archive. Check paths when handing a project to another machine. `media_status` is useful for media, but a full compile/plan and actual render also exercise font resolution and shaping.
+
+Keep verification evidence with each completed feature: exact operation or fixture, expected behavior, test/render outcome, and known limits. Passing unit tests establishes the behavior covered by those tests. Mark a parity item complete only when its acceptance criterion has been demonstrated at the intended scope.
+
+Implementation references: [MCP authoring guide](../../crates/ferrocut-mcp/docs/timeline-guide.md), [tool implementation](../../crates/ferrocut-mcp/src/lib.rs), [parameter registry](../../crates/ferrocut-engine/src/params.rs), [native text implementation](../../crates/ferrocut-engine/src/text.rs), [typography tests](../../crates/ferrocut-engine/tests/text.rs), and [full timeline text regressions](../../crates/ferrocut-engine/tests/native_text_timeline.rs). The latter exercises normal edit/compile/render paths, source-time split/trim/retime, timeline-key conversion, font content keys, relocation, atomic failures and undo.

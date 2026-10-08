@@ -1,0 +1,20 @@
+{
+  "content": "",
+  "font": "../crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+  "font_size": "22",
+  "position": [
+    "100",
+    "620"
+  ],
+  "box_size": [
+    "1080",
+    "44"
+  ],
+  "align": "center",
+  "vertical_align": "center",
+  "fill": [
+    "0.84",
+    "0.89",
+    "0.87"
+  ]
+}

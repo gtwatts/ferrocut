@@ -2,6 +2,13 @@
 
 Headless, agent-native video editing and compositing engine (Rust).
 
+Product target: one professional editor combining Premiere-style editing and audio
+with After Effects-style motion graphics and compositing, designed for AI agents.
+Current status is an early implementation, not Adobe feature or production parity.
+The [capability roadmap](docs/parity/README.md) records the researched requirements,
+implementation limits and verification evidence. Start with the
+[agent guide](docs/parity/AGENT_GUIDE.md) and [native graphics example](examples/native-showcase.json).
+
 Brief: Obsidian vault `Pi Memory/Projects/cutline-research-brief-2026-10-07.md` (written before the rename to Ferrocut).
 
 License: Apache-2.0 (see `LICENSE`).

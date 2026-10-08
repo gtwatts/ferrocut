@@ -111,6 +111,11 @@ enum Cmd {
     },
     /// Print the chunk plan (frame/chunk keys) without decoding or touching the GPU.
     Plan { timeline: PathBuf },
+    /// Import/export plain-text SRT/WebVTT captions as editable native text clips.
+    Captions {
+        #[command(subcommand)]
+        command: CaptionCmd,
+    },
     /// Probe a media file: duration, frame rate, size, streams, audio presence (JSON).
     Probe { media: PathBuf },
     /// Make half-resolution proxies (DNxHR LB, or FFV1 when tiny or with alpha) of
@@ -239,9 +244,101 @@ enum Cmd {
     Ffmpeg,
 }
 
+#[derive(Subcommand)]
+enum CaptionCmd {
+    /// Import cues through normal atomic edits and undo journal. Fonts are
+    /// resolved relative to the style JSON file. Overlaps need separate tracks.
+    Import {
+        timeline: PathBuf,
+        subtitles: PathBuf,
+        /// TextSpec JSON, including an explicit font asset (content is replaced per cue).
+        #[arg(long)]
+        style: PathBuf,
+        #[arg(long, default_value = "Captions")]
+        track: String,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        dry_run: bool,
+        /// Print the generated edit list without writing a timeline/journal.
+        #[arg(long)]
+        ops_only: bool,
+    },
+    /// Export text and timing from the explicitly selected text-only track.
+    Export {
+        timeline: PathBuf,
+        #[arg(long)]
+        track: String,
+        /// .srt or .vtt; refuses to overwrite an existing file.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     ferrocut_engine::media::init();
     match Cli::parse().cmd {
+        Cmd::Captions { command } => {
+            use ferrocut_engine::captions::{self, CaptionFormat};
+            match command {
+                CaptionCmd::Import {
+                    timeline,
+                    subtitles,
+                    style,
+                    track,
+                    output,
+                    dry_run,
+                    ops_only,
+                } => {
+                    let tl = Timeline::load(&timeline)?;
+                    let cues = captions::parse(
+                        &std::fs::read_to_string(&subtitles)?,
+                        CaptionFormat::from_path(&subtitles)?,
+                    )?;
+                    let mut spec: ferrocut_engine::text::TextSpec =
+                        serde_json::from_str(&std::fs::read_to_string(&style)?)?;
+                    let base =
+                        std::fs::canonicalize(style.parent().unwrap_or(std::path::Path::new(".")))?;
+                    for font in spec.font_paths_mut() {
+                        if font.is_relative() {
+                            *font = base.join(&*font);
+                        }
+                    }
+                    let ops = captions::import_ops(&tl, &cues, &track, &spec)?;
+                    if ops_only {
+                        println!("{}", serde_json::to_string_pretty(&ops)?);
+                    } else {
+                        let outcome = project::edit_file(
+                            &timeline,
+                            &ops,
+                            &project::EditOptions {
+                                output,
+                                dry_run,
+                                probe: false,
+                                ..Default::default()
+                            },
+                        )?;
+                        println!("{}", serde_json::to_string_pretty(&outcome)?);
+                    }
+                }
+                CaptionCmd::Export {
+                    timeline,
+                    track,
+                    output,
+                } => {
+                    let tl = Timeline::load(&timeline)?;
+                    let cues = captions::from_track(&tl, &track)?;
+                    let text = captions::write(&cues, CaptionFormat::from_path(&output)?)?;
+                    use std::io::Write as _;
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&output)?;
+                    file.write_all(text.as_bytes())?;
+                    println!("{}", serde_json::json!({"output":output,"cues":cues.len()}));
+                }
+            }
+        }
         Cmd::Ffmpeg => {
             let (v, l, c) = ferrocut_engine::media::ffmpeg_info();
             println!("version: {v}\nlicense: {l}\nconfiguration: {c}");

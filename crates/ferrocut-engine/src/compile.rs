@@ -10,7 +10,6 @@ use crate::comp::{CompStack, is_comp};
 use crate::fx::{AdjustClip, AdjustNode, EffectNode, EffectStack};
 use ferrocut_core::RationalTime;
 
-use crate::generator::GeneratorNode;
 use crate::graph::{Graph, NodeId};
 use crate::nodes::{
     BlendNode, ClipNode, ClipRange, MatteNode, OverNode, SequenceNode, SourceNode, StackClip,
@@ -107,12 +106,10 @@ fn build(
             let key = c.source.canonicalize().unwrap_or_else(|_| c.source.clone());
             let (src, source_fps) = match sources.get(&key) {
                 _ if c.is_generator() => {
-                    let node = GeneratorNode {
-                        spec: c.generator.clone().expect("generator clip"),
-                        width: w,
-                        height: h,
-                    };
-                    (g.add(Arc::new(node), vec![]), None)
+                    let node =
+                        crate::generator::node(c.generator.clone().expect("generator clip"), w, h)
+                            .with_context(|| format!("clip {}: native generator", c.id))?;
+                    (g.add(node, vec![]), None)
                 }
                 Some(&s) => s,
                 None if is_comp(&c.source) => {

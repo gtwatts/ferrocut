@@ -30,6 +30,7 @@
 //! downloads one: the `openh264` tool's `enable` action is the one way to
 //! fetch Cisco's binary, and it is never called implicitly.
 
+pub mod native_schema;
 pub mod root;
 pub mod schema;
 
@@ -1156,6 +1157,8 @@ fn diff_tool(cx: &Ctx, a: DiffArgs) -> anyhow::Result<Value> {
 
 /// The authoring guide (markdown), also `docs://timeline/guide.md`.
 pub const GUIDE: &str = include_str!("../docs/timeline-guide.md");
+/// Progressive agent onboarding, with worked native graphics/revision examples.
+pub const AGENT_GUIDE: &str = include_str!("../../../docs/parity/AGENT_GUIDE.md");
 /// SeePlus's published check-report schema (ferrocut-perceive).
 const CHECK_SCHEMA: &str =
     include_str!("../../ferrocut-perceive/schema/perceive-check.schema.json");
@@ -1187,6 +1190,12 @@ pub struct DocResource {
 
 pub fn resources() -> Vec<DocResource> {
     vec![
+        DocResource {
+            uri: "docs://agent/onboarding.md",
+            name: "agent-onboarding",
+            description: "Start here: tool discovery, exact clocks, native text/shapes/finishing, explicit fonts, and a reversible render/review/revision workflow.",
+            mime: "text/markdown",
+        },
         DocResource {
             uri: "docs://timeline/guide.md",
             name: "timeline-guide",
@@ -1224,6 +1233,7 @@ pub fn resources() -> Vec<DocResource> {
 pub fn read_doc(uri: &str) -> Option<String> {
     let pretty = |v: Value| serde_json::to_string_pretty(&v).unwrap_or_default();
     Some(match uri {
+        "docs://agent/onboarding.md" => AGENT_GUIDE.to_string(),
         "docs://timeline/guide.md" => GUIDE.to_string(),
         "docs://timeline/schema.json" => pretty(schema::timeline()),
         "docs://timeline/edit-ops.schema.json" => {

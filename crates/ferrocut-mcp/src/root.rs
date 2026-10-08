@@ -122,6 +122,10 @@ impl Root {
                 self.check(s)
                     .with_context(|| format!("clip source {}", s.display()))?;
             }
+            for s in tl.assets_mut() {
+                self.check(s)
+                    .with_context(|| format!("generator asset {}", s.display()))?;
+            }
             Ok(())
         };
         own(tl)?;

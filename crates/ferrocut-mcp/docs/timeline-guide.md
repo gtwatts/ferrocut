@@ -4,6 +4,7 @@ A timeline is a JSON file. Change it with `edit_apply` ops, not by editing the J
 checked one by one (handles, media length, overlaps, ranges), applied atomically, journaled (`log`,
 `undo`, `branch`) and reported with the span of output they change. `dry_run: true` previews.
 Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeline/schema.json`.
+Start with `docs://agent/onboarding.md` for a complete native graphics workflow and revision example.
 
 ## Values
 
@@ -85,13 +86,31 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
     `linear` (even light).
 - Colors are in [0, 1], display-referred Rec.709 like decoded video (a solid of 0.5 matches a 50 %
   video level), straight alpha. Positions are output pixels. Every number can be keyframed;
-  generator key times are the clip's **source time** (clip-local + `source_in`; a new generator
-  clip has `source_in` 0), so `split` and `trim` keep the animation in place. Components:
+  generator key times are the clip's **source time**, mapped through its speed or time remap
+  (at speed 1, clip-local + `source_in`; a new generator clip has `source_in` 0), so `split`
+  and `trim` keep the animation in place. Components:
   `generator.color.r` ... `.a`, `generator.start.x`, ...
 - Add one with `add_clip` `{"track": "V1", "generator": {...}, "duration": "5"}`; opacity,
   transform, blend modes, mattes, dissolves and speed work as for media.
-- Vector shapes (rectangles, ellipses, paths with fill/stroke) and shape masks are not
-  generators: they come from the Lottie/ThorVG path (`ferrocut-lottie`).
+- Native text: `{"type":"text","text":{"content":"A title","font":"fonts/NotoSans-Regular.ttf",
+  "font_size":"64","position":["80","120"],"fill":[1,1,1,1]}}`.
+  Fonts and `fallback_fonts` are explicit assets relative to the timeline. Their bytes enter
+  the cache keys and must be inside the configured MCP project root. Text supports shaping,
+  wrapping, paragraph alignment, tracking, line height, an outside stroke and range-selector
+  animators for position, scale, rotation, fill and opacity. It currently uses one text style
+  per clip; rich style runs and text on a path are not implemented.
+- Native vectors: `{"type":"shape","shape":{"geometry":{"type":"rectangle","x":"80","y":"80",
+  "width":"320","height":"180","radius":"16"},"fill":{"type":"solid","color":[1,1,1,1]}}}`.
+  Geometry can be `rectangle`, `ellipse` or a `path` with move/line/quad/cubic/close commands.
+  Fills and strokes support solid, linear and radial gradients, plus caps, joins and dashes.
+  Use `timeline_schema` for their exact nested fields. Shape groups/operators and masks
+  attached to arbitrary clips are not implemented; native shapes can supply track mattes.
+- Edit text through `generator.text.content`, `generator.text.font_size`,
+  `generator.text.position`, `generator.text.animators` and other discovered params.
+  Edit shapes through `generator.shape.geometry`, `generator.shape.fill`,
+  `generator.shape.stroke` and discovered numeric fields. Replace complete animator,
+  path-command or gradient-stop arrays when needed. `set_param` on `generator` replaces
+  the full generator; changing its type requires a complete valid payload.
 
 ## 3D layers and camera
 
@@ -160,6 +179,13 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
   - `crop`: `left`, `top`, `right`, `bottom` px from the frame edges, `feather` px (inward)
   - `letterbox`: `aspect` (2.39), `color` ([0, 0, 0, 1]), `opacity` (1); pillarbox when the
     aspect is narrower than the frame
+  - `exposure`: `stops` (0); `contrast`: `amount` (1), `pivot` (0.18);
+    `saturation`: `amount` (1); these operate in linear ACEScg
+  - `lift_gamma_gain`: RGB vectors `lift` ([0,0,0]), `gamma` ([1,1,1]), `gain` ([1,1,1]);
+    operates in encoded Rec.709 before conversion back to linear ACEScg
+  - `chroma_key`: `key_color` ([0,1,0]), `tolerance` (0.1), `softness` (0.1), `spill` (0);
+    a basic chroma-distance keyer, with no matte-cleanup or edge-refinement controls
+  - `luma_key`: `threshold` (0.1), `softness` (0.1), `invert` (false)
   - other types registered by plug-in crates (color grading, OFX) appear in timeline_schema
     `params` -> `video_effects` with their params and work the same way.
 - Ops: `add_video_effect` (`effect`, optional `index`), `set_video_effect_param` (`effect` =
@@ -198,6 +224,11 @@ pre-expression value, a constant or keyframes, available as `value` in the scrip
   only frames whose values change re-render. Errors name the owner, parameter, time, line and
   column, e.g. `clip "a": opacity: the expression gives 1.25 at clip time 1/2 s (frame 12), above
   the maximum 1`.
+- Source-clock expressions follow constant speed, reverse and monotonic keyframed remaps.
+  A repeated source time must produce the same value. Expression-driven speed/remap cannot
+  yet be combined with source expressions or source-parameter reads, even from another clip;
+  bake the timing curve to ordinary keyframes first. Nonmonotonic remaps with source expressions
+  fail with guidance rather than producing an ambiguous baked animation.
 - Example: `{"op": "set_param", "clip": "title", "param": "transform.position.y", "value":
   {"expression": "value + 20 * sin(time * 6.283)", "value": "540"}}`; a looping bounce:
   `set_param` `{"expression": "loop_out(\"pingpong\")", "value": {"keyframes": [...]}}`.
@@ -323,7 +354,7 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
 
 ## Nodes
 
-Video clips, generator layers (solid, gradients), opacity, 2D and 3D transforms with a camera,
+Video clips, generator layers (solid, gradients, native text and vectors), opacity, 2D and 3D transforms with a camera,
 motion blur, dissolves and the audio graph above are what timelines contain today. HTML, Lottie and color nodes (SeePlus's `ferrocut-html`, `ferrocut-lottie`,
 `ferrocut-color`) will appear here with their published parameter schemas once they are wired
 into the timeline format; until then they are not valid timeline content.

@@ -608,6 +608,7 @@ fn convert(@builtin(global_invocation_id) id: vec3<u32>) {{
     if ({straight}) {{ rgb = select(vec3<f32>(0.0), c.rgb / c.a, c.a > 0.0); }}
     rgb = {enc}({mat}({dec}(rgb)));
     if ({straight}) {{ rgb = rgb * c.a; }}
+    rgb = clamp(rgb, vec3<f32>(-65504.0), vec3<f32>(65504.0));
     textureStore(dst, vec2<i32>(id.xy), vec4<f32>(rgb, c.a));
 }}
 "#,

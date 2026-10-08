@@ -82,6 +82,9 @@ fn every_edit_op_has_a_strict_schema_whose_example_parses() {
 }
 
 fn sample(p: &Value) -> Value {
+    if let Some(value) = p.get("default") {
+        return value.clone();
+    }
     if let Some(e) = p.get("enum") {
         return e[0].clone();
     }
@@ -103,16 +106,18 @@ fn sample(p: &Value) -> Value {
     if p.get("anyOf").is_some() {
         return Value::from("1/2");
     }
-    if let Some(b) = p.get("oneOf").and_then(|b| b.get(0))
-        && b.get("type") == Some(&Value::from("object"))
-    {
-        // An object branch (e.g. a generator): its required properties.
+    if p.get("type") == Some(&Value::from("object")) {
+        // Required object fields can themselves be strict nested objects, such
+        // as a native generator's text/shape payload.
         let mut o = serde_json::Map::new();
-        for r in b["required"].as_array().into_iter().flatten() {
+        for r in p["required"].as_array().into_iter().flatten() {
             let k = r.as_str().unwrap();
-            o.insert(k.into(), sample(&b["properties"][k]));
+            o.insert(k.into(), sample(&p["properties"][k]));
         }
         return Value::Object(o);
+    }
+    if let Some(b) = p.get("oneOf").and_then(|b| b.get(0)) {
+        return sample(b);
     }
     panic!("no sample for {p}");
 }

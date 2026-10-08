@@ -4,6 +4,7 @@
 pub mod audio;
 pub mod audio_fx;
 pub mod blend;
+pub mod captions;
 pub mod comp;
 pub mod compile;
 pub mod compositor;
@@ -25,8 +26,10 @@ pub mod perceive;
 pub mod project;
 pub mod render;
 pub mod retime;
+pub mod text;
 pub mod timeline;
 pub mod transform;
+pub mod vector;
 pub mod vram;
 
 pub use compile::{Compiled, compile};

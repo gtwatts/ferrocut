@@ -603,6 +603,11 @@ fn normalized(tl: &Timeline, dir: &Path) -> Timeline {
             *s = c;
         }
     }
+    for s in t.assets_mut() {
+        if let Ok(c) = std::fs::canonicalize(&*s) {
+            *s = c;
+        }
+    }
     t
 }
 

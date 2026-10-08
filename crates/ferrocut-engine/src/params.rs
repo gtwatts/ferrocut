@@ -171,7 +171,7 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
         Object,
         "",
         "null",
-        "generator clips only: {type: solid | linear_gradient | radial_gradient, ...}; add generator clips with add_clip {generator}",
+        "native generator: solid | linear_gradient | radial_gradient | text | shape; add with add_clip {generator}; text fonts are explicit project assets",
     ),
     s(
         "generator.color",
@@ -239,6 +239,46 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
         "\"display\"",
         "gradients: display (mix encoded colors, After Effects Gradient Ramp) | linear (mix linear light)",
     ),
+    ParamSpec::fixed("generator.text", Object, "", "null", "text payload: explicit fonts, paragraph layout, fill/stroke and range animators; numeric keys are in source time"),
+    ParamSpec::fixed("generator.text.content", Choice, "", "\"\"", "editable UTF-8 text (not an enum); shaping uses only explicitly supplied fonts"),
+    ParamSpec::fixed("generator.text.font", Choice, "", "\"\"", "primary project font asset path; bytes are part of render keys"),
+    ParamSpec::fixed("generator.text.font_index", Scalar, "", "0", "font face in a collection, nonnegative integer").min(0.0),
+    s("generator.text.font_size", Src, "px", "48", "native font size").range(0.01, 4096.0),
+    s("generator.text.line_height", Src, "px", "null", "line height; null derives 1.2 times font size").range(0.01, 16384.0),
+    s("generator.text.tracking", Src, "px", "0", "additional glyph spacing"),
+    s("generator.text.position", Src, "px", "[0, 0]", "paragraph box top-left").with_kind(Vec2),
+    s("generator.text.box_size", Src, "px", "null", "paragraph box width/height; omit for canvas bounds").with_kind(Vec2).min(0.01),
+    s("generator.text.fill", Src, "", "[1, 1, 1, 1]", "glyph fill, encoded Rec.709 straight RGBA").with_kind(Color).range(0.0, 1.0),
+    s("generator.text.opacity", Src, "", "1", "text opacity").range(0.0, 1.0),
+    ParamSpec::fixed("generator.text.align", Choice, "", "\"left\"", "left | center | right | justified"),
+    ParamSpec::fixed("generator.text.vertical_align", Choice, "", "\"top\"", "top | center | bottom"),
+    ParamSpec::fixed("generator.text.wrap", Choice, "", "\"word_or_glyph\"", "none | word | glyph | word_or_glyph"),
+    ParamSpec::fixed("generator.text.stroke", Object, "", "null", "outside glyph stroke {color,width}; null removes"),
+    s("generator.text.stroke.width", Src, "px", "0", "outside glyph stroke width").range(0.0, 256.0),
+    s("generator.text.stroke.color", Src, "", "[0, 0, 0, 1]", "glyph stroke color").with_kind(Color).range(0.0, 1.0),
+    ParamSpec::fixed("generator.text.animators", Object, "", "[]", "ordered range animators [{selector:{unit:characters|words|lines,start,end},position?,opacity?,fill?}]; edit the list as a unit"),
+    ParamSpec::fixed("generator.text.fallback_fonts", Object, "", "[]", "ordered explicit project fallback font paths; no system-font discovery"),
+    ParamSpec::fixed("generator.shape", Object, "", "null", "editable vector payload {geometry,fill?,stroke?,fill_rule?}; numeric keys in source time"),
+    ParamSpec::fixed("generator.shape.geometry", Object, "", "null", "rectangle | ellipse | path with move_to,line_to,quad_to,cubic_to,close commands"),
+    s("generator.shape.geometry.x", Src, "px", "0", "rectangle left"),
+    s("generator.shape.geometry.y", Src, "px", "0", "rectangle top"),
+    s("generator.shape.geometry.width", Src, "px", "0", "rectangle width").min(0.0),
+    s("generator.shape.geometry.height", Src, "px", "0", "rectangle height").min(0.0),
+    s("generator.shape.geometry.radius", Src, "px", "0", "rectangle corner radius or ellipse [rx,ry]").with_kind(ScalarOrVec2).min(0.0),
+    s("generator.shape.geometry.center", Src, "px", "[0, 0]", "ellipse center").with_kind(Vec2),
+    ParamSpec::fixed("generator.shape.fill", Object, "", "null", "solid | linear_gradient | radial_gradient paint; null removes fill"),
+    s("generator.shape.fill.color", Src, "", "[1, 1, 1, 1]", "solid vector fill").with_kind(Color).range(0.0, 1.0),
+    s("generator.shape.fill.start", Src, "px", "[0, 0]", "linear fill gradient start").with_kind(Vec2),
+    s("generator.shape.fill.end", Src, "px", "[0, 0]", "linear fill gradient end").with_kind(Vec2),
+    s("generator.shape.fill.center", Src, "px", "[0, 0]", "radial fill gradient center").with_kind(Vec2),
+    s("generator.shape.fill.radius", Src, "px", "0", "radial fill radius").min(0.0),
+    ParamSpec::fixed("generator.shape.fill_rule", Choice, "", "\"nonzero\"", "nonzero | even_odd"),
+    ParamSpec::fixed("generator.shape.stroke", Object, "", "null", "vector stroke {paint,width,cap,join,miter_limit,dashes,dash_offset}; null removes"),
+    s("generator.shape.stroke.width", Src, "px", "1", "vector stroke width").min(0.0),
+    s("generator.shape.stroke.miter_limit", Src, "", "4", "miter length limit").min(1.0),
+    s("generator.shape.stroke.dash_offset", Src, "px", "0", "stroke dash phase"),
+    ParamSpec::fixed("generator.shape.stroke.cap", Choice, "", "\"butt\"", "butt | round | square"),
+    ParamSpec::fixed("generator.shape.stroke.join", Choice, "", "\"miter\"", "miter | round | bevel"),
     ParamSpec::fixed(
         "effects",
         Object,
@@ -514,6 +554,11 @@ pub(crate) fn vec_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
             Value::Array(v.into_iter().map(|x| json!(x.to_string())).collect())
         }
         _ if spec.name.ends_with("scale") => json!(["1", "1"]),
+        _ if spec.name.starts_with("generator.text.")
+            || spec.name.starts_with("generator.shape.") =>
+        {
+            serde_json::from_str(spec.default).unwrap_or_else(|_| json!(["0", "0"]))
+        }
         _ if spec.name == "generator.start" => json!(["0", half(frame.1)]),
         _ if spec.name == "generator.end" => json!([frame.0.to_string(), half(frame.1)]),
         _ => json!([half(frame.0), half(frame.1)]),
@@ -529,7 +574,7 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
     };
     let ok = match (spec.kind, comp) {
         // Optional animatables (default null, e.g. time_remap): null removes.
-        (Scalar, _) if v.is_null() && spec.default == "null" => true,
+        (Scalar | Vec2, _) if v.is_null() && spec.default == "null" => true,
         (Choice, _) => v.is_string(),
         (Scalar, _) | (Vec2 | ScalarOrVec2 | Vec3 | Color, Some(_)) => {
             if spec.animatable {
@@ -554,7 +599,7 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
         }
         (Bool, _) => v.is_boolean(),
         (Time, _) => v.is_null() || v.is_string() || v.is_i64() || v.is_u64(),
-        (Object, _) if spec.name.ends_with("effects") => v.is_null() || v.is_array(),
+        (Object, _) if spec.default.starts_with('[') => v.is_null() || v.is_array(),
         (Object, _) => v.is_null() || v.is_object(),
     };
     ensure!(
@@ -622,6 +667,9 @@ pub fn set(
         .as_object_mut()
         .ok_or_else(|| anyhow!("{}: parent is not an object", spec.name))?;
     match comp {
+        None if value.is_null() && spec.name == "generator.shape.fill" => {
+            m.insert(last.clone(), Value::Null);
+        }
         None if value.is_null() => {
             m.remove(last);
         }

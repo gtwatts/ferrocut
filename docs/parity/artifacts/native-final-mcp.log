@@ -1,0 +1,102 @@
+   Compiling ferrocut-engine v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine)
+   Compiling ferrocut-mcp v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.04s
+     Running unittests src/lib.rs (target/debug/deps/ferrocut_mcp-eaa35f7bfabcd2f7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/ferrocut_mcp-f897dbe8e4d03884)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deliver.rs (target/debug/deps/deliver-aa4a6c8f86281bd0)
+
+running 5 tests
+test deliver_progress_has_one_more_step ... ok
+test openh264_tool_without_network ... ok
+test render_deliver_outside_root_is_refused_before_rendering ... ok
+test render_deliver_without_codec_says_how_to_enable_and_downloads_nothing ... ok
+test render_with_deliver_mp4 ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests/media.rs (target/debug/deps/media-6435d8da07f38557)
+
+running 1 test
+test markers_relink_status_and_draft_render ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/native_graphics.rs (target/debug/deps/native_graphics-4531cb57a57fa3dc)
+
+running 5 tests
+test dry_run_and_committed_edits_check_new_font_assets_before_writing ... ok
+test font_assets_and_fallbacks_obey_root_checks_including_nested_compositions ... ok
+test native_text_and_shape_timelines_validate_before_and_after_serialization ... ok
+test schemas_reject_missing_misspelled_or_mistyped_native_fields ... ok
+test text_content_byte_limit_and_schema_count_limits_are_explicit ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.25s
+
+     Running tests/progress.rs (target/debug/deps/progress-f86ed2f5cbd09401)
+
+running 2 tests
+test render_progress_and_cancellation ... ferrocut-mcp: project root /tmp/.tmpDf5Brs
+ok
+test root_from_env_and_flag ... ferrocut-mcp: project root /tmp/.tmpdbTomp/proj
+ferrocut-mcp: project root /tmp/.tmpdbTomp/proj/sub
+ferrocut-mcp: project root /tmp/.tmpdbTomp/proj
+ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.95s
+
+     Running tests/sandbox.rs (target/debug/deps/sandbox-8f1833dbf4bddfbd)
+
+running 2 tests
+test root_resolves_inside_and_rejects_escapes ... ok
+test tools_refuse_paths_outside_the_root ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/schema.rs (target/debug/deps/schema-989c926cebc61b6e)
+
+running 3 tests
+test every_edit_op_has_a_strict_schema_whose_example_parses ... ok
+test every_tool_schema_is_a_strict_object ... ok
+test rational_pattern_matches_what_the_engine_parses ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/stdio.rs (target/debug/deps/stdio-b2befe389da715cf)
+
+running 3 tests
+test docs_resources_over_stdio ... ferrocut-mcp: project root /tmp/.tmpLv597j
+ok
+test stdio_server_end_to_end ... ferrocut-mcp: project root /tmp/.tmpk3SmH4
+ok
+test transcript_tools_over_stdio ... ferrocut-mcp: project root /tmp/.tmpWSo2CW
+ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.42s
+
+     Running tests/timeline_schema.rs (target/debug/deps/timeline_schema-fa6ae2b573bd69a4)
+
+running 5 tests
+test every_example_and_task_timeline_validates_and_engine_output_too ... ok
+test media_probe_reports_streams_inside_the_root_only ... ok
+test schema_rejects_what_the_engine_rejects ... ok
+test schema_tool_and_resources ... ok
+test timelines_built_with_every_op_validate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+
+   Doc-tests ferrocut_mcp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

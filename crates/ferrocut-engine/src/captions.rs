@@ -1,0 +1,397 @@
+//! Plain-text SRT/WebVTT interchange and editable native caption layers.
+//!
+//! Timing is exact milliseconds on interchange, rational seconds in projects.
+//! Rich subtitle styling, regions and embedded stream captions are deliberately
+//! rejected with diagnostics rather than silently discarded. Overlapping cues
+//! round-trip, but a single video track requires non-overlapping imported cues.
+
+use std::collections::HashSet;
+use std::path::Path;
+
+use anyhow::{Context as _, bail, ensure};
+use ferrocut_core::{Rational, RationalTime};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+
+use crate::edit::{EditOp, TrackKind};
+use crate::generator::GeneratorSpec;
+use crate::timeline::Timeline;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionFormat {
+    Srt,
+    Vtt,
+}
+
+impl CaptionFormat {
+    pub fn from_path(path: &Path) -> anyhow::Result<Self> {
+        match path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("srt") => Ok(Self::Srt),
+            Some("vtt") => Ok(Self::Vtt),
+            _ => bail!("caption format must be .srt or .vtt"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptionCue {
+    pub id: String,
+    pub start: RationalTime,
+    pub end: RationalTime,
+    pub text: String,
+}
+
+pub fn validate(cues: &[CaptionCue]) -> anyhow::Result<()> {
+    ensure!(cues.len() <= 100_000, "caption cue limit is 100000");
+    let mut ids = HashSet::new();
+    let mut previous = RationalTime::ZERO;
+    for (i, c) in cues.iter().enumerate() {
+        ensure!(
+            !c.id.is_empty() && !c.id.contains(['\n', '\r']) && !c.id.contains("-->"),
+            "cue {}: invalid id",
+            i + 1
+        );
+        ensure!(ids.insert(&c.id), "cue {}: duplicate id {:?}", i + 1, c.id);
+        ensure!(
+            c.start >= RationalTime::ZERO && c.end > c.start,
+            "cue {}: end must follow nonnegative start",
+            c.id
+        );
+        ensure!(
+            i == 0 || c.start >= previous,
+            "cue {}: starts before previous cue",
+            c.id
+        );
+        ensure!(
+            !c.text.trim().is_empty() && !c.text.contains('\0') && !c.text.contains('\r'),
+            "cue {}: empty/invalid text",
+            c.id
+        );
+        ensure!(
+            !c.text.lines().any(|s| s.trim().is_empty()),
+            "cue {}: blank text line would split a subtitle block",
+            c.id
+        );
+        previous = c.start;
+    }
+    Ok(())
+}
+
+fn timestamp(s: &str, format: CaptionFormat) -> anyhow::Result<RationalTime> {
+    let separator = match format {
+        CaptionFormat::Srt => ',',
+        CaptionFormat::Vtt => '.',
+    };
+    let (clock, millis) = s
+        .split_once(separator)
+        .context("timestamp requires three millisecond digits")?;
+    ensure!(
+        millis.len() == 3 && millis.bytes().all(|b| b.is_ascii_digit()),
+        "timestamp requires three millisecond digits"
+    );
+    let fields: Vec<_> = clock.split(':').collect();
+    ensure!(
+        fields.len() == 3 || (format == CaptionFormat::Vtt && fields.len() == 2),
+        "expected HH:MM:SS.mmm (VTT also MM:SS.mmm)"
+    );
+    ensure!(
+        fields
+            .iter()
+            .all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())),
+        "invalid timestamp digits"
+    );
+    let values: Vec<i128> = fields
+        .iter()
+        .map(|s| s.parse::<i128>())
+        .collect::<Result<_, _>>()?;
+    let (hours, minutes, seconds) = if values.len() == 3 {
+        (values[0], values[1], values[2])
+    } else {
+        (0, values[0], values[1])
+    };
+    ensure!(
+        minutes < 60 && seconds < 60,
+        "minutes and seconds must be below 60"
+    );
+    ensure!(
+        fields[fields.len() - 1].len() == 2 && fields[fields.len() - 2].len() == 2,
+        "minutes and seconds require two digits"
+    );
+    let ms = hours
+        .checked_mul(3_600_000)
+        .and_then(|n| {
+            n.checked_add(minutes * 60_000 + seconds * 1000 + millis.parse::<i128>().ok()?)
+        })
+        .context("timestamp overflow")?;
+    Ok(RationalTime(Rational::try_new(ms, 1000)?))
+}
+
+fn decode_text(s: &str, format: CaptionFormat) -> anyhow::Result<String> {
+    ensure!(
+        !s.contains('<') && !s.contains('>') && !s.contains("-->"),
+        "rich caption markup is unsupported; import plain text or convert styling explicitly"
+    );
+    if format == CaptionFormat::Srt {
+        return Ok(s.to_owned());
+    }
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let end = rest.find(';').context("invalid WebVTT text entity")?;
+        out.push_str(match &rest[..=end] {
+            "&amp;" => "&",
+            "&lt;" => "<",
+            "&gt;" => ">",
+            "&nbsp;" => "\u{a0}",
+            "&lrm;" => "\u{200e}",
+            "&rlm;" => "\u{200f}",
+            _ => bail!("unsupported WebVTT text entity {:?}", &rest[..=end]),
+        });
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+pub fn parse(input: &str, format: CaptionFormat) -> anyhow::Result<Vec<CaptionCue>> {
+    ensure!(
+        input.len() <= 16 * 1024 * 1024,
+        "caption file exceeds 16 MiB"
+    );
+    let input = input
+        .trim_start_matches('\u{feff}')
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let mut blocks = Vec::<Vec<&str>>::new();
+    for line in input.lines() {
+        if line.trim().is_empty() {
+            if blocks.last().is_some_and(|b| !b.is_empty()) {
+                blocks.push(Vec::new());
+            }
+        } else {
+            if blocks.is_empty() {
+                blocks.push(Vec::new());
+            }
+            blocks.last_mut().unwrap().push(line);
+        }
+    }
+    blocks.retain(|b| !b.is_empty());
+    let skip = if format == CaptionFormat::Vtt {
+        let header = blocks.first().context("missing WEBVTT header")?;
+        ensure!(
+            header.len() == 1
+                && (header[0] == "WEBVTT"
+                    || header[0].starts_with("WEBVTT ")
+                    || header[0].starts_with("WEBVTT\t"))
+                && !header[0].contains("-->"),
+            "expected WEBVTT header followed by a blank line; metadata is unsupported"
+        );
+        1
+    } else {
+        0
+    };
+    let mut cues = Vec::new();
+    for (index, block) in blocks.into_iter().skip(skip).enumerate() {
+        if format == CaptionFormat::Vtt
+            && (block[0] == "NOTE"
+                || block[0].starts_with("NOTE ")
+                || block[0].starts_with("NOTE\t"))
+        {
+            continue;
+        }
+        ensure!(
+            block[0] != "STYLE" && block[0] != "REGION",
+            "WebVTT STYLE/REGION blocks are unsupported; convert their styling explicitly"
+        );
+        let timing = usize::from(!block[0].contains("-->"));
+        ensure!(
+            format == CaptionFormat::Vtt
+                || (timing == 1 && block[0].bytes().all(|b| b.is_ascii_digit())),
+            "SRT cue {} needs a numeric sequence id",
+            index + 1
+        );
+        ensure!(
+            block.len() > timing + 1,
+            "cue {}: missing timing/text",
+            index + 1
+        );
+        let (start, end) = block[timing]
+            .split_once("-->")
+            .context("missing cue arrow")?;
+        ensure!(
+            !end.trim().contains(char::is_whitespace),
+            "cue {}: WebVTT positioning/settings and SRT coordinates are unsupported",
+            index + 1
+        );
+        let start =
+            timestamp(start.trim(), format).with_context(|| format!("cue {} start", index + 1))?;
+        let end =
+            timestamp(end.trim(), format).with_context(|| format!("cue {} end", index + 1))?;
+        let id = if timing == 1 {
+            block[0].to_owned()
+        } else {
+            format!("cue-{}", index + 1)
+        };
+        let text = decode_text(&block[timing + 1..].join("\n"), format)
+            .with_context(|| format!("cue {id}"))?;
+        cues.push(CaptionCue {
+            id,
+            start,
+            end,
+            text,
+        });
+    }
+    validate(&cues)?;
+    Ok(cues)
+}
+
+fn formatted_time(t: RationalTime, format: CaptionFormat) -> anyhow::Result<String> {
+    let ms = t.0.checked_mul(Rational::from_int(1000))?.round();
+    ensure!(ms >= 0, "caption timestamp must be nonnegative");
+    let sep = if format == CaptionFormat::Srt {
+        ','
+    } else {
+        '.'
+    };
+    Ok(format!(
+        "{:02}:{:02}:{:02}{sep}{:03}",
+        ms / 3_600_000,
+        (ms / 60_000) % 60,
+        (ms / 1000) % 60,
+        ms % 1000
+    ))
+}
+
+/// Export uses nearest milliseconds; quantization cannot create zero-length cues.
+pub fn write(cues: &[CaptionCue], format: CaptionFormat) -> anyhow::Result<String> {
+    validate(cues)?;
+    let mut out = if format == CaptionFormat::Vtt {
+        "WEBVTT\n\n".to_owned()
+    } else {
+        String::new()
+    };
+    for (i, c) in cues.iter().enumerate() {
+        if format == CaptionFormat::Vtt {
+            ensure!(
+                c.id != "NOTE"
+                    && !c.id.starts_with("NOTE ")
+                    && !c.id.starts_with("NOTE\t")
+                    && c.id != "STYLE"
+                    && c.id != "REGION",
+                "cue {:?}: reserved WebVTT block identifier; rename the cue before export",
+                c.id
+            );
+        }
+        let start = formatted_time(c.start, format)?;
+        let end = formatted_time(c.end, format)?;
+        ensure!(
+            start != end,
+            "cue {}: duration collapses at millisecond precision",
+            c.id
+        );
+        let text = if format == CaptionFormat::Vtt {
+            c.text
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+        } else {
+            ensure!(
+                !c.text.contains(['<', '>']) && !c.text.contains("-->"),
+                "cue {}: plain SRT cannot preserve markup-like text",
+                c.id
+            );
+            c.text.clone()
+        };
+        let id = if format == CaptionFormat::Srt {
+            (i + 1).to_string()
+        } else {
+            c.id.clone()
+        };
+        out.push_str(&format!("{id}\n{start} --> {end}\n{text}\n\n"));
+    }
+    Ok(out)
+}
+
+/// Produce normal journalable edits; a supplied TextSpec defines the style.
+/// Each cue remains an editable native text clip, addressable by its stable id.
+pub fn import_ops(
+    tl: &Timeline,
+    cues: &[CaptionCue],
+    track: &str,
+    style: &crate::text::TextSpec,
+) -> anyhow::Result<Vec<EditOp>> {
+    validate(cues)?;
+    style.validate().map_err(anyhow::Error::msg)?;
+    ensure!(!track.is_empty(), "caption track name must not be empty");
+    ensure!(
+        !tl.audio_tracks.iter().any(|t| t.name == track),
+        "caption track is an audio track"
+    );
+    for pair in cues.windows(2) {
+        ensure!(
+            pair[0].end <= pair[1].start,
+            "overlapping cues {} and {} need separate tracks",
+            pair[0].id,
+            pair[1].id
+        );
+    }
+    let mut ops = Vec::new();
+    if !tl.tracks.iter().any(|t| t.name == track) {
+        ops.push(EditOp::AddTrack {
+            kind: TrackKind::Video,
+            name: track.into(),
+            index: None,
+        });
+    }
+    for c in cues {
+        let mut text = style.clone();
+        text.content = c.text.clone();
+        ops.push(EditOp::AddClip {
+            track: track.into(),
+            source: Default::default(),
+            generator: Some(json!({"type":"text","text":text})),
+            id: Some(format!("{track}.{}", c.id)),
+            start: Some(c.start),
+            source_in: None,
+            duration: Some(c.end - c.start),
+            adjustment: false,
+        });
+    }
+    Ok(ops)
+}
+
+/// Export the explicitly chosen track; refuse mixed picture/text tracks.
+pub fn from_track(tl: &Timeline, track: &str) -> anyhow::Result<Vec<CaptionCue>> {
+    let t = tl
+        .tracks
+        .iter()
+        .find(|t| t.name == track)
+        .with_context(|| format!("no video track {track:?}"))?;
+    let mut cues = Vec::new();
+    for c in &t.clips {
+        let Some(GeneratorSpec::Text { text }) = &c.generator else {
+            bail!(
+                "clip {} is not text; select a dedicated caption track",
+                c.id
+            );
+        };
+        cues.push(CaptionCue {
+            id: c.id.clone(),
+            start: c.start,
+            end: c.end(),
+            text: text.content.clone(),
+        });
+    }
+    cues.sort_by_key(|c| c.start);
+    validate(&cues)?;
+    Ok(cues)
+}

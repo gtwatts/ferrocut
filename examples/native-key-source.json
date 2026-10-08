@@ -1,0 +1,139 @@
+{
+  "name": "native-key-source",
+  "output": {
+    "width": 1280,
+    "height": 720,
+    "fps": "24",
+    "duration": "4",
+    "gop": 24,
+    "gops_per_chunk": 1
+  },
+  "tracks": [
+    {
+      "name": "Screen",
+      "clips": [
+        {
+          "id": "green",
+          "generator": {
+            "type": "solid",
+            "color": [
+              "0",
+              "1",
+              "0"
+            ]
+          },
+          "start": "0",
+          "duration": "4"
+        }
+      ]
+    },
+    {
+      "name": "Disc",
+      "clips": [
+        {
+          "id": "disc",
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "ellipse",
+                "center": [
+                  "910",
+                  "315"
+                ],
+                "radius": [
+                  "155",
+                  "155"
+                ]
+              },
+              "fill": {
+                "type": "radial_gradient",
+                "center": [
+                  "865",
+                  "260"
+                ],
+                "radius": "230",
+                "interpolation": "linear",
+                "stops": [
+                  {
+                    "offset": "0",
+                    "color": [
+                      "1",
+                      "0.75",
+                      "0.35"
+                    ]
+                  },
+                  {
+                    "offset": "1",
+                    "color": [
+                      "0.8",
+                      "0.18",
+                      "0.08"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "start": "0",
+          "duration": "4"
+        }
+      ]
+    },
+    {
+      "name": "Cut",
+      "clips": [
+        {
+          "id": "cut",
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "path",
+                "commands": [
+                  {
+                    "type": "move_to",
+                    "point": [
+                      "740",
+                      "360"
+                    ]
+                  },
+                  {
+                    "type": "cubic_to",
+                    "control1": [
+                      "820",
+                      "260"
+                    ],
+                    "control2": [
+                      "960",
+                      "405"
+                    ],
+                    "to": [
+                      "1080",
+                      "270"
+                    ]
+                  }
+                ]
+              },
+              "fill": null,
+              "stroke": {
+                "paint": {
+                  "type": "solid",
+                  "color": [
+                    "0.04",
+                    "0.08",
+                    "0.1"
+                  ]
+                },
+                "width": "20",
+                "cap": "round"
+              }
+            }
+          },
+          "start": "0",
+          "duration": "4"
+        }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,7 @@
 //! ([`AdjustNode`]). Evaluation, regions of interest, working-space
 //! conversions, cache keys and error wrapping are in [`EffectStack`].
 
+pub mod finishing;
 pub mod kernels;
 pub mod native;
 
@@ -65,7 +66,7 @@ impl VideoEffectSpec {
         fn shift(v: &Value, dt: ferrocut_core::Rational) -> Value {
             match v {
                 Value::Array(a) => Value::Array(a.iter().map(|x| shift(x, dt)).collect()),
-                Value::Object(o) if o.contains_key("keyframes") => {
+                Value::Object(o) if o.contains_key("keyframes") || o.contains_key("expression") => {
                     match serde_json::from_value::<Animatable>(v.clone()) {
                         Ok(a) => serde_json::to_value(a.shifted(dt)).unwrap_or_else(|_| v.clone()),
                         Err(_) => v.clone(),
@@ -228,7 +229,7 @@ pub fn set_effect_param(e: &mut VideoEffectSpec, param: &str, value: Value) -> R
 pub fn ensure_builtins() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        for e in native::all() {
+        for e in native::all().into_iter().chain(finishing::all()) {
             effect::register(e).expect("native video effect registers");
         }
     });

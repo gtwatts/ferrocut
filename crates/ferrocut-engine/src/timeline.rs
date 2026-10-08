@@ -470,9 +470,27 @@ impl Timeline {
             )
     }
 
+    /// Non-media assets read by native generators. Keep these separate from
+    /// decoder sources so probing/proxy generation never tries to decode fonts.
+    pub fn assets_mut(&mut self) -> impl Iterator<Item = &mut PathBuf> {
+        self.tracks
+            .iter_mut()
+            .flat_map(|t| t.clips.iter_mut())
+            .filter_map(|c| match c.generator.as_mut() {
+                Some(GeneratorSpec::Text { text }) => Some(text),
+                _ => None,
+            })
+            .flat_map(|text| text.font_paths_mut())
+    }
+
     /// Join relative sources onto `base` (the timeline file's directory).
     pub fn resolve_sources(&mut self, base: &Path) {
         for s in self.sources_mut() {
+            if s.is_relative() {
+                *s = base.join(&*s);
+            }
+        }
+        for s in self.assets_mut() {
             if s.is_relative() {
                 *s = base.join(&*s);
             }
@@ -483,6 +501,12 @@ impl Timeline {
     /// the timeline can be written to another directory.
     pub fn absolutize_sources(&mut self, base: &Path) {
         for s in self.sources_mut() {
+            if s.is_relative() {
+                let j = base.join(&*s);
+                *s = std::fs::canonicalize(&j).unwrap_or(j);
+            }
+        }
+        for s in self.assets_mut() {
             if s.is_relative() {
                 let j = base.join(&*s);
                 *s = std::fs::canonicalize(&j).unwrap_or(j);
