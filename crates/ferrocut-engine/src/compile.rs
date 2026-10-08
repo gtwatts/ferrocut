@@ -22,7 +22,7 @@ pub fn compile_with(
 ) -> anyhow::Result<Compiled> {
     let (w, h) = (tl.output.width, tl.output.height);
     let mut g = Graph::new();
-    let mut sources: HashMap<PathBuf, NodeId> = HashMap::new();
+    let mut sources: HashMap<PathBuf, (NodeId, Option<ferrocut_core::FrameRate>)> = HashMap::new();
     let mut track_outputs = Vec::new();
     for track in &tl.tracks {
         let mut clips: Vec<_> = track.clips.iter().collect();
@@ -31,14 +31,15 @@ pub fn compile_with(
         let mut ranges = Vec::new();
         for c in clips {
             let key = c.source.canonicalize().unwrap_or_else(|_| c.source.clone());
-            let src = match sources.get(&key) {
-                Some(&id) => id,
+            let (src, source_fps) = match sources.get(&key) {
+                Some(&s) => s,
                 None => {
                     let node = source_factory(&c.source, w, h)
                         .with_context(|| format!("clip {}", c.id))?;
+                    let fps = node.fps;
                     let id = g.add(Arc::new(node), vec![]);
-                    sources.insert(key, id);
-                    id
+                    sources.insert(key, (id, fps));
+                    (id, fps)
                 }
             };
             let clip = ClipNode {
@@ -46,6 +47,9 @@ pub fn compile_with(
                 source_in: c.source_in,
                 duration: c.duration,
                 opacity: c.opacity.clone(),
+                map: c.time_map(),
+                sampling: c.sampling,
+                source_fps,
             };
             let mut top = g.add(Arc::new(clip), vec![src]);
             if let Some(spec) = &c.transform {

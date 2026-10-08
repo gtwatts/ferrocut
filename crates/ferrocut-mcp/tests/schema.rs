@@ -56,6 +56,8 @@ fn every_edit_op_has_a_strict_schema_whose_example_parses() {
         "add_transition",
         "set_param",
         "set_keyframes",
+        "set_speed",
+        "freeze_frame",
     ]
     .into_iter()
     .map(String::from)

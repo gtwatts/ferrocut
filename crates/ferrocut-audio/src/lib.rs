@@ -32,6 +32,7 @@ pub mod dynamics;
 pub mod loudness;
 pub mod mix;
 pub mod program;
+pub mod retime;
 
 pub use analysis::{AnalysisReport, Control, analyze};
 pub use ferrocut_types::Animatable;

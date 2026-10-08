@@ -266,6 +266,13 @@ fn keyframed_parameters_drive_frame_keys() {
         source_in: RationalTime::ZERO,
         duration: secs(2, 1),
         opacity,
+        map: ferrocut_engine::retime::TimeMap::new(
+            RationalTime::ZERO,
+            &Animatable::constant(Rational::ONE),
+            None,
+        ),
+        sampling: Default::default(),
+        source_fps: None,
     };
     let c = clip(Animatable::constant(Rational::new(1, 2)));
     assert_eq!(

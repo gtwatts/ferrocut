@@ -11,6 +11,7 @@ use ferrocut_core::{
 
 use crate::compositor::{Compositor, compositor};
 use crate::media::decode::Decoder;
+use crate::retime::{Sample, Sampling, TimeMap};
 use crate::transform::{TRANSFORM_VERSION, TransformAt, TransformSpec};
 
 /// Bumped whenever the pixel math of a node changes, so stale cache entries die.
@@ -23,6 +24,9 @@ pub struct SourceNode {
     pub file_hash: [u8; 32],
     pub width: u32,
     pub height: u32,
+    /// Video frame rate (from the container), used by retimed clips to snap
+    /// or blend on the source frame grid. Not part of the content hash.
+    pub fps: Option<FrameRate>,
 }
 
 impl SourceNode {
@@ -31,11 +35,16 @@ impl SourceNode {
         let f =
             std::fs::File::open(&path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
         h.update_reader(f)?;
+        let fps = crate::media::probe::probe(&path)
+            .ok()
+            .and_then(|i| i.fps)
+            .filter(|r| *r > Rational::ZERO);
         Ok(SourceNode {
             path,
             file_hash: *h.finalize().as_bytes(),
             width,
             height,
+            fps,
         })
     }
 }
@@ -85,13 +94,18 @@ impl RenderNode for SourceNode {
     }
 }
 
-/// Places a source on the timeline: maps timeline time to source time and
-/// applies opacity (constant or keyframed in clip-local time).
+/// Places a source on the timeline: maps timeline time to source time
+/// (default `t - start + source_in`, or the clip's [`TimeMap`]: speed, ramps,
+/// remap curves, freeze) and applies opacity (constant or keyframed in
+/// clip-local time). Frame-blend sampling pulls two source frames.
 pub struct ClipNode {
     pub start: RationalTime,
     pub source_in: RationalTime,
     pub duration: RationalTime,
     pub opacity: Animatable,
+    pub map: TimeMap,
+    pub sampling: Sampling,
+    pub source_fps: Option<FrameRate>,
 }
 
 impl ClipNode {
@@ -101,6 +115,15 @@ impl ClipNode {
             Animatable::Constant(v) => v.to_f32_param(),
             k => k.eval(t - self.start).clamp(0.0, 1.0) as f32,
         }
+    }
+
+    /// What to pull from the source at timeline time `t`.
+    pub fn sample_at(&self, t: RationalTime) -> Sample {
+        if self.map.is_identity() && self.sampling == Sampling::Nearest {
+            return Sample::One(t - self.start + self.source_in);
+        }
+        let s = self.map.source_at(t - self.start);
+        crate::retime::sample(s, self.source_fps, self.sampling)
     }
 
     fn opacity_bytes(&self) -> Vec<u8> {
@@ -113,6 +136,20 @@ impl ClipNode {
                 h.finalize().as_bytes().to_vec()
             }
         }
+    }
+}
+
+impl ClipNode {
+    /// Empty for the default map and sampling, so existing keys are unchanged.
+    fn retime_bytes(&self) -> Vec<u8> {
+        let mut v = self.map.hash_bytes();
+        if self.sampling != Sampling::Nearest {
+            v.extend_from_slice(&self.sampling_tag());
+        }
+        v
+    }
+    fn sampling_tag(&self) -> Vec<u8> {
+        Sample::One(RationalTime::ZERO).hash_tag(self.sampling)
     }
 }
 
@@ -134,6 +171,7 @@ impl RenderNode for ClipNode {
                 &self.source_in.hash_bytes(),
                 &self.duration.hash_bytes(),
                 &self.opacity_bytes(),
+                &self.retime_bytes(),
             ],
         )
     }
@@ -143,19 +181,24 @@ impl RenderNode for ClipNode {
     /// (the sequence's job). So trims, rolls and slips leave the keys of
     /// frames whose source frame didn't change untouched.
     fn content_hash_at(&self, t: RationalTime) -> NodeHash {
-        match &self.opacity {
+        let base = match &self.opacity {
             Animatable::Constant(v) => NodeHash::of("clip.at", &[&v.hash_bytes()]),
             _ => NodeHash::of(
                 "clip.at.anim",
                 &[&self.opacity_at(t).to_bits().to_le_bytes()],
             ),
+        };
+        match self.sample_at(t) {
+            // Single pulls are fully described by the source frame's key.
+            Sample::One(_) => base,
+            s => NodeHash::of("clip.at.blend", &[&base.0, &s.hash_tag(self.sampling)]),
         }
     }
     fn pulls(&self, t: RationalTime) -> Vec<Pull> {
-        vec![Pull {
-            input: 0,
-            time: t - self.start + self.source_in,
-        }]
+        match self.sample_at(t) {
+            Sample::One(time) => vec![Pull { input: 0, time }],
+            Sample::Blend(a, b, _) => vec![Pull { input: 0, time: a }, Pull { input: 0, time: b }],
+        }
     }
     fn render(
         &self,
@@ -164,11 +207,16 @@ impl RenderNode for ClipNode {
         inputs: &[Arc<Frame>],
     ) -> Result<Arc<Frame>, NodeError> {
         let opacity = self.opacity_at(t);
+        let mut frame = inputs[0].clone();
+        if let Sample::Blend(_, _, w) = self.sample_at(t) {
+            let comp = compositor(ctx)?;
+            frame = Arc::new(comp.dissolve(ctx, &inputs[0], &inputs[1], w.to_f32_param())?);
+        }
         if opacity == 1.0 {
-            return Ok(inputs[0].clone());
+            return Ok(frame);
         }
         let comp = compositor(ctx)?;
-        Ok(Arc::new(comp.opacity(ctx, &inputs[0], opacity)?))
+        Ok(Arc::new(comp.opacity(ctx, &frame, opacity)?))
     }
 }
 
@@ -424,6 +472,7 @@ mod tests {
                 file_hash: *blake3::hash(p.to_string_lossy().as_bytes()).as_bytes(),
                 width: w,
                 height: h,
+                fps: Some(Rational::from_int(24)),
             })
         })
         .unwrap();

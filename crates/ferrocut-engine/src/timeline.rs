@@ -19,6 +19,7 @@ use anyhow::{Context, bail, ensure};
 use ferrocut_audio::FadeCurve;
 use ferrocut_core::{Animatable, FrameRate, Rational, RationalTime};
 
+use crate::retime::{Sampling, TimeMap};
 use crate::transform::TransformSpec;
 use serde::{Deserialize, Serialize};
 
@@ -190,6 +191,10 @@ pub struct ClipAudio {
     /// exactly then fades out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crossfade_in: Option<FadeSpec>,
+    /// Keep the pitch when the clip's speed is not 1 (WSOLA time-stretch);
+    /// otherwise the audio is resampled (varispeed: pitch follows speed).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub preserve_pitch: bool,
 }
 
 impl ClipAudio {
@@ -219,6 +224,12 @@ pub struct AudioClip {
     #[serde(default)]
     pub source_in: RationalTime,
     pub duration: RationalTime,
+    /// Playback speed (see [`crate::retime`]); keyframes in clip-local time.
+    #[serde(default = "one", skip_serializing_if = "is_one_anim")]
+    pub speed: Animatable,
+    /// AE-style time remap: clip-local time -> source seconds (overrides `speed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_remap: Option<Animatable>,
     #[serde(default, skip_serializing_if = "ClipAudio::is_default")]
     pub audio: ClipAudio,
 }
@@ -280,13 +291,26 @@ pub struct Clip {
     /// must overlap this one by at least the transition duration (handles).
     #[serde(default)]
     pub transition_in: Option<Transition>,
+    /// Playback speed (see [`crate::retime`]): constant (`2`, `-1` reverse,
+    /// `0` freeze) or keyframed in clip-local time (speed ramp).
+    #[serde(default = "one", skip_serializing_if = "is_one_anim")]
+    pub speed: Animatable,
+    /// AE-style time remap: clip-local time -> source seconds (overrides `speed`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_remap: Option<Animatable>,
+    /// Source frame sampling when retimed: `nearest` (default) or `frame_blend`.
+    #[serde(default, skip_serializing_if = "Sampling::is_default")]
+    pub sampling: Sampling,
     /// Linked audio (used if the source has an audio stream).
     #[serde(default, skip_serializing_if = "ClipAudio::is_default")]
     pub audio: ClipAudio,
 }
 
-fn one() -> Animatable {
+pub(crate) fn one() -> Animatable {
     Animatable::constant(Rational::ONE)
+}
+pub(crate) fn is_one_anim(a: &Animatable) -> bool {
+    matches!(a, Animatable::Constant(v) if *v == Rational::ONE)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -308,6 +332,9 @@ impl AudioClip {
     pub fn end(&self) -> RationalTime {
         self.start + self.duration
     }
+    pub fn time_map(&self) -> TimeMap {
+        TimeMap::new(self.source_in, &self.speed, self.time_remap.as_ref())
+    }
     pub fn audio_region(&self) -> (RationalTime, RationalTime) {
         audio_region(self.start, self.duration, &self.audio)
     }
@@ -317,9 +344,14 @@ impl Clip {
     pub fn end(&self) -> RationalTime {
         self.start + self.duration
     }
-    /// Shift clip-local video keyframes (opacity, transform) by `dt`.
+    pub fn time_map(&self) -> TimeMap {
+        TimeMap::new(self.source_in, &self.speed, self.time_remap.as_ref())
+    }
+    /// Shift clip-local video keyframes (opacity, transform, speed, remap) by `dt`.
     pub(crate) fn shift_video_keys(&mut self, dt: Rational) {
         self.opacity = self.opacity.shifted(dt);
+        self.speed = self.speed.shifted(dt);
+        self.time_remap = self.time_remap.as_ref().map(|a| a.shifted(dt));
         if let Some(t) = &self.transform {
             self.transform = Some(t.shifted(dt));
         }
@@ -423,6 +455,20 @@ impl Timeline {
                 if let Some(t) = &c.transform {
                     t.validate()
                         .map_err(|e| anyhow::anyhow!("clip {}: {e}", c.id))?;
+                }
+                validate_retime(&c.id, &c.speed, c.time_remap.as_ref(), c.duration)?;
+                ensure!(
+                    c.sampling != Sampling::OpticalFlow,
+                    "clip {}: sampling optical_flow is a reserved hook (not implemented yet); use frame_blend",
+                    c.id
+                );
+                if !c.time_map().is_identity() {
+                    let (lo, _) = c.time_map().source_range(Rational::ZERO, c.duration.0);
+                    ensure!(
+                        lo >= -1e-9,
+                        "clip {}: speed/time_remap reaches source time {lo:.4} s, before the start of the source",
+                        c.id
+                    );
                 }
             }
             for pair in sorted.windows(2) {
@@ -548,7 +594,15 @@ impl Timeline {
             let clips: Vec<_> = t
                 .clips
                 .iter()
-                .map(|c| (&c.id, c.source_in, c.duration, c.audio_region(), &c.audio))
+                .map(|c| {
+                    (
+                        &c.id,
+                        audio_source_start(c.time_map(), &c.audio, c.duration),
+                        c.duration,
+                        c.audio_region(),
+                        &c.audio,
+                    )
+                })
                 .collect();
             validate_track_audio(&t.name, &clips)?;
         }
@@ -569,11 +623,20 @@ impl Timeline {
                     "clip {}: source_in must be >= 0",
                     c.id
                 );
+                validate_retime(&c.id, &c.speed, c.time_remap.as_ref(), c.duration)?;
             }
             let clips: Vec<_> = t
                 .clips
                 .iter()
-                .map(|c| (&c.id, c.source_in, c.duration, c.audio_region(), &c.audio))
+                .map(|c| {
+                    (
+                        &c.id,
+                        audio_source_start(c.time_map(), &c.audio, c.duration),
+                        c.duration,
+                        c.audio_region(),
+                        &c.audio,
+                    )
+                })
                 .collect();
             validate_track_audio(&t.name, &clips)?;
         }
@@ -633,6 +696,44 @@ fn check_anim(a: &Animatable, what: &str, range: Option<(i64, i64)>) -> anyhow::
         );
     }
     Ok(())
+}
+
+fn validate_retime(
+    id: &str,
+    speed: &Animatable,
+    remap: Option<&Animatable>,
+    duration: RationalTime,
+) -> anyhow::Result<()> {
+    check_anim(speed, &format!("clip {id}: speed"), None)?;
+    let (lo, hi) = speed.key_range();
+    ensure!(
+        lo >= Rational::from_int(-100) && hi <= Rational::from_int(100),
+        "clip {id}: speed must be in [-100, 100]"
+    );
+    if let Some(r) = remap {
+        check_anim(r, &format!("clip {id}: time_remap"), None)?;
+        ensure!(
+            matches!(speed, Animatable::Constant(v) if *v == Rational::ONE),
+            "clip {id}: time_remap and speed are exclusive (remove one)"
+        );
+    }
+    let _ = duration;
+    Ok(())
+}
+
+/// The value the audio validation compares against `-in_offset`: for the
+/// default map exactly `source_in`; for a retimed clip the earliest source
+/// time its audio region reaches, expressed relative to `in_offset`.
+fn audio_source_start(m: TimeMap, a: &ClipAudio, duration: RationalTime) -> RationalTime {
+    if let TimeMap::Linear { source_in, speed } = m
+        && speed == Rational::ONE
+    {
+        return RationalTime(source_in);
+    }
+    let (lo, _) = m.source_range(a.in_offset.0, (duration + a.out_offset).0);
+    // Rounded to 1 µs (towards +inf within 1e-9 so an exact 0 passes).
+    let lo = Rational::new(((lo + 1e-9) * 1e6).floor() as i64, 1_000_000);
+    RationalTime(lo - a.in_offset.0)
 }
 
 type AudioClipView<'a> = (

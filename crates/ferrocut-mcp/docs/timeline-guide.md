@@ -39,6 +39,22 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
   the in point / after the out point). `add_transition` makes that overlap for you.
 - `source_in >= 0` and `source_in + duration <=` the media length (`media_probe` tells you it).
 - J-cuts (`audio.in_offset < 0`) need source before `source_in`; L-cuts need source after.
+- Retimed clips (`speed` != 1 or `time_remap`) must stay inside the media over their whole
+  mapped range (picture and audio regions).
+
+## Time remapping
+
+- `speed`: constant (`"2"`, `"1/2"`, `"-1"` reverse, `"0"` freeze) or keyframes in clip-local
+  time (a speed ramp; source time is the integral of speed from `source_in`). Linear and hold
+  segments integrate exactly; eased ones numerically (deterministic).
+- `time_remap`: AE-style keys from clip-local time to source seconds (overrides `speed`).
+- `sampling`: `nearest` (default; snaps to the source frame grid) or `frame_blend` (mixes the
+  two neighbouring source frames for smooth slow motion).
+- Linked audio follows the same map: resampled (pitch follows speed) or, with
+  `audio.preserve_pitch: true`, time-stretched with pitch kept (WSOLA). Reverse plays backwards.
+- Recipes: slow motion `set_speed` `"1/2"` with `ripple: true`; a ramp 1x -> 3x -> 1x is
+  `set_keyframes` on `speed` (`[{t:0,v:1,interp:ease_in_out},{t:1,v:3,interp:ease_in_out},{t:2,v:1}]`);
+  a 2 s freeze at 5 s is `freeze_frame` `{at: "5", duration: "2"}`.
 - Opacity in [0, 1], pan in [-1, 1], duck ratio >= 1, loudness target in [-70, 0).
 
 ## Ops (edit_apply)
@@ -53,13 +69,16 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 | `split`, `trim`, `roll`, `slip`, `slide`, `move` | NLE trims and moves (see each op's schema) |
 | `ripple_delete`, `ripple_insert` | remove / insert and close / open the gap (`all_tracks` = sync lock) |
 | `jl_cut` | linked-audio offsets: `in_offset < 0` J-cut, `out_offset > 0` L-cut |
+| `set_speed` | constant speed keeping the source range (duration = range / \|speed\|); `-1` reverses; `ripple`, `preserve_pitch` |
+| `freeze_frame` | hold the frame at `at`: to the clip end (split), or insert a `duration` hold and push later clips |
 
 Parameter names (`timeline_schema` part `params` lists unit, range, default and time base):
 
 - video clip: `opacity`, `transform.position` (`.x`/`.y`), `transform.anchor`, `transform.scale`
-  (uniform or `.x`/`.y`), `transform.rotation`, `transition_in`, `audio.gain_db`, `audio.pan`,
-  `audio.mute`, `audio.fade_in`, `audio.fade_out`, `audio.crossfade_in`
-- audio clip: the `audio.*` ones
+  (uniform or `.x`/`.y`), `transform.rotation`, `transition_in`, `sampling`, `speed`, `time_remap`,
+  `audio.gain_db`, `audio.pan`, `audio.mute`, `audio.fade_in`, `audio.fade_out`,
+  `audio.crossfade_in`, `audio.preserve_pitch`
+- audio clip: the `audio.*` ones, `speed`, `time_remap`
 - track: `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
   `bus.duck.ratio`, `bus.duck.attack_ms`, `bus.duck.release_ms`, `bus.duck.range_db`
 - timeline: `audio.master_gain_db`, `audio.loudness`, `audio.loudness.target_lufs`,

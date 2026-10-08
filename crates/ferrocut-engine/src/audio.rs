@@ -22,7 +22,9 @@ use ferrocut_core::{Rational, RationalTime};
 use serde::Serialize;
 
 use crate::media::audio::decode_audio;
+use crate::retime::TimeMap;
 use crate::timeline::{BusSpec, ClipAudio, Timeline};
+use ferrocut_audio::retime::StretchBackend;
 
 /// Output channel count of the master (stereo).
 pub const CHANNELS: usize = 2;
@@ -95,7 +97,10 @@ pub fn resolve(
     let mut sources: Vec<SourceAudio> = Vec::new();
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut index: HashMap<PathBuf, Option<usize>> = HashMap::new();
-    let mut source_of = |path: &Path| -> anyhow::Result<Option<usize>> {
+    let mut source_of = |sources: &mut Vec<SourceAudio>,
+                         paths: &mut Vec<PathBuf>,
+                         path: &Path|
+     -> anyhow::Result<Option<usize>> {
         let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if let Some(i) = index.get(&key) {
             return Ok(*i);
@@ -118,6 +123,7 @@ pub fn resolve(
         source_in: RationalTime,
         duration: RationalTime,
         audio: &'a ClipAudio,
+        map: TimeMap,
         required: bool,
     }
     let mut tracks_in: Vec<(&str, &BusSpec, Vec<Item>)> = Vec::new();
@@ -132,6 +138,7 @@ pub fn resolve(
                 source_in: c.source_in,
                 duration: c.duration,
                 audio: &c.audio,
+                map: c.time_map(),
                 required: false,
             })
             .collect();
@@ -148,6 +155,7 @@ pub fn resolve(
                 source_in: c.source_in,
                 duration: c.duration,
                 audio: &c.audio,
+                map: c.time_map(),
                 required: true,
             })
             .collect();
@@ -164,7 +172,7 @@ pub fn resolve(
             if it.audio.mute {
                 continue;
             }
-            let Some(src) = source_of(it.source)? else {
+            let Some(mut src) = source_of(&mut sources, &mut paths, it.source)? else {
                 if it.required {
                     bail!(
                         "clip {}: {} has no audio stream",
@@ -193,13 +201,30 @@ pub fn resolve(
                 fades.push(mk(a0, a0 + x.duration, x.curve, true));
                 xfades.push((a0 + x.duration, mk(a0, a0 + x.duration, x.curve, false)));
             }
+            let mut src_offset =
+                ((it.source_in - it.start).seconds() * Rational::from_int(rate as i64)).round();
+            if !it.map.is_identity() {
+                // Retimed: render the clip's audio region along its time map
+                // into a derived source that plays 1:1 from the region start.
+                let (p0, p1) = (s(a0), s(a1));
+                let pos = retime_positions(&it.map, it.start, p0, p1, rate);
+                let backend = if it.audio.preserve_pitch {
+                    StretchBackend::Wsola
+                } else {
+                    StretchBackend::Varispeed
+                };
+                let derived = ferrocut_audio::retime::render(&sources[src], &pos, rate, backend);
+                sources.push(derived);
+                paths.push(it.source.to_path_buf());
+                src = sources.len() - 1;
+                src_offset = -p0;
+            }
             clips.push(ClipProg {
                 id: it.id.to_string(),
                 source: src,
                 start: s(a0),
                 end: s(a1),
-                src_offset: ((it.source_in - it.start).seconds() * Rational::from_int(rate as i64))
-                    .round(),
+                src_offset,
                 origin: it.start.seconds(),
                 gain_db: it.audio.gain_db.clone(),
                 pan: it.audio.pan.clone(),
@@ -257,6 +282,42 @@ pub fn resolve(
         }),
     };
     Ok(Some((program, sources, paths)))
+}
+
+/// Source sample positions for program samples `[p0, p1)` of a clip
+/// starting at `start` with time map `map`. The linear map is evaluated per
+/// sample; curves every 64 samples with linear interpolation in between
+/// (the same function the video side samples per frame).
+pub fn retime_positions(
+    map: &TimeMap,
+    start: RationalTime,
+    p0: i64,
+    p1: i64,
+    rate: u32,
+) -> Vec<f64> {
+    let n = (p1 - p0).max(0) as usize;
+    let r = rate as f64;
+    let local = |p: i64| Rational::new(p, rate as i64) - start.0;
+    if let TimeMap::Linear { source_in, speed } = map {
+        let (si, sp) = (source_in.to_f64(), speed.to_f64());
+        let st = start.0.to_f64();
+        return (0..n)
+            .map(|k| {
+                let p = p0 + k as i64;
+                (si + sp * (p as f64 / r - st)) * r
+            })
+            .collect();
+    }
+    const B: usize = 64;
+    let pts: Vec<f64> = (0..=n.div_ceil(B))
+        .map(|j| map.source_seconds(local(p0 + (j * B) as i64)) * r)
+        .collect();
+    (0..n)
+        .map(|k| {
+            let (j, f) = (k / B, (k % B) as f64 / B as f64);
+            pts[j] + (pts[j + 1] - pts[j]) * f
+        })
+        .collect()
 }
 
 /// Decode, resolve and analyze the timeline's audio (`None`: no audio).

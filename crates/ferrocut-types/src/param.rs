@@ -29,6 +29,8 @@ pub enum ParamKind {
     Time,
     /// A structured value (an object, or `null` to remove it).
     Object,
+    /// One of a fixed set of strings (listed in the doc string).
+    Choice,
 }
 
 /// Time base of an animatable parameter's key times.

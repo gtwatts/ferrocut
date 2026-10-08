@@ -15,6 +15,7 @@ pub mod params;
 pub mod perceive;
 pub mod project;
 pub mod render;
+pub mod retime;
 pub mod timeline;
 pub mod transform;
 pub mod vram;

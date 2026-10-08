@@ -98,9 +98,30 @@ fn clip_audio() -> Value {
             "mute": { "type": "boolean" },
             "fade_in": fade(),
             "fade_out": fade(),
-            "crossfade_in": fade()
+            "crossfade_in": fade(),
+            "preserve_pitch": { "type": "boolean", "description": "keep pitch when the clip is retimed (WSOLA time-stretch); default false = varispeed (pitch follows speed)" }
         },
         "additionalProperties": false
+    })
+}
+
+fn speed() -> Value {
+    animatable(
+        "playback speed, default 1: 2 = twice as fast, -1 = reverse, 0 = freeze; keyframes (clip-local) make a speed ramp. Range [-100, 100].",
+    )
+}
+
+fn time_remap() -> Value {
+    json!({
+        "description": "After Effects-style time remap: keyframes from clip-local time to source time (seconds). Overrides speed (which must then stay 1); source_in is ignored.",
+        "anyOf": [ { "type": "null" }, animatable("source seconds") ]
+    })
+}
+
+fn sampling() -> Value {
+    json!({
+        "description": "Source frame sampling for retimed clips: nearest (default) or frame_blend (mix of the two neighbouring source frames). optical_flow is a reserved hook and is rejected for now.",
+        "enum": ["nearest", "frame_blend", "optical_flow"]
     })
 }
 
@@ -137,6 +158,9 @@ pub fn clip() -> Value {
                 },
                 "required": ["kind", "duration"], "additionalProperties": false
             },
+            "speed": speed(),
+            "time_remap": time_remap(),
+            "sampling": sampling(),
             "audio": clip_audio()
         },
         "required": ["id", "source", "duration"],
@@ -229,6 +253,31 @@ pub fn edit_op() -> Value {
             json!({ "clip": clip_id(), "in_offset": rational("seconds relative to the clip start"), "out_offset": rational("seconds relative to the clip end") }),
             &["clip"],
             json!({ "op": "jl_cut", "clip": "cam_b", "in_offset": "-1", "out_offset": "1/2" }),
+        ),
+        op(
+            "set_speed",
+            "Constant speed for a clip (Premiere Speed/Duration): keeps the clip's source range, so its duration becomes range/|speed|. speed 2 = twice as fast (half as long), 1/2 = slow motion, -1 = reverse. ripple moves later clips on the track by the duration change (otherwise a longer clip must fit before the next one). preserve_pitch keeps the audio's pitch (WSOLA). For ramps use set_keyframes on `speed`; for AE time remap set_keyframes on `time_remap`.",
+            json!({
+                "clip": clip_id(),
+                "speed": rational("speed factor, != 0, in [-100, 100]"),
+                "ripple": { "type": "boolean", "default": false },
+                "preserve_pitch": { "type": "boolean" }
+            }),
+            &["clip", "speed"],
+            json!({ "op": "set_speed", "clip": "cam_b", "speed": "1/2", "ripple": true, "preserve_pitch": true }),
+        ),
+        op(
+            "freeze_frame",
+            "Hold the frame `clip` shows at timeline time `at`. Without duration the clip is split at `at` and the rest becomes a freeze (Premiere Add Frame Hold); with duration a hold of that length is inserted at `at` and the rest of the clip and later clips on the track move right (Insert Frame Hold Segment; all_tracks moves every track). The hold's audio is muted. new_id names the hold clip.",
+            json!({
+                "clip": clip_id(),
+                "at": rational("timeline time inside the clip"),
+                "duration": rational("hold length in seconds (insert mode)"),
+                "new_id": { "type": "string", "minLength": 1 },
+                "all_tracks": { "type": "boolean", "default": false }
+            }),
+            &["clip", "at"],
+            json!({ "op": "freeze_frame", "clip": "cam_a", "at": "3", "duration": "2" }),
         ),
         op(
             "add_track",
@@ -560,6 +609,9 @@ fn video_clip() -> Value {
                     }
                 ]
             },
+            "speed": speed(),
+            "time_remap": time_remap(),
+            "sampling": sampling(),
             "audio": clip_audio()
         },
         "required": ["id", "source", "start", "duration"],
@@ -577,6 +629,8 @@ fn audio_clip() -> Value {
             "start": rational("timeline time, >= 0"),
             "source_in": rational("source time, >= 0 (default 0)"),
             "duration": rational("seconds, > 0"),
+            "speed": speed(),
+            "time_remap": time_remap(),
             "audio": clip_audio()
         },
         "required": ["id", "source", "start", "duration"],

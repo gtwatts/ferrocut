@@ -43,11 +43,14 @@ macro_rules! clip_audio_params {
             ParamSpec::fixed("audio.fade_in", Object, "", "null", "{duration, curve: linear|equal_power}: fade in from the audio start"),
             ParamSpec::fixed("audio.fade_out", Object, "", "null", "{duration, curve}: fade out at the audio end"),
             ParamSpec::fixed("audio.crossfade_in", Object, "", "null", "{duration, curve}: crossfade from the clip whose audio ends exactly `duration` after this clip's audio starts"),
+            ParamSpec::fixed("audio.preserve_pitch", Bool, "", "false", "keep pitch when the clip is retimed (WSOLA time-stretch); false = varispeed"),
+            s("speed", ClipLocal, "x", "1", "playback speed: 2 = twice as fast, -1 = reverse, 0 = freeze; keyframes = speed ramp (set_speed keeps the source range and changes the duration; setting this directly does not)").range(-100.0, 100.0),
+            s("time_remap", ClipLocal, "s", "null", "AE time remap: keys map clip-local time to source seconds; overrides speed (must be 1); null removes it"),
         ]
     };
 }
 
-const CA: [ParamSpec; 6] = clip_audio_params!();
+const CA: [ParamSpec; 9] = clip_audio_params!();
 
 /// Parameters of a clip on a video track.
 pub const VIDEO_CLIP: &[ParamSpec] = &[
@@ -97,16 +100,28 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
         "null",
         "{kind: dissolve, duration}: prefer the add_transition op, which also makes the overlap",
     ),
+    ParamSpec::fixed(
+        "sampling",
+        Choice,
+        "",
+        "\"nearest\"",
+        "source frame sampling when retimed: nearest | frame_blend (optical_flow is a reserved hook)",
+    ),
     CA[0],
     CA[1],
     CA[2],
     CA[3],
     CA[4],
     CA[5],
+    CA[6],
+    CA[7],
+    CA[8],
 ];
 
 /// Parameters of a clip on an audio track.
-pub const AUDIO_CLIP: &[ParamSpec] = &[CA[0], CA[1], CA[2], CA[3], CA[4], CA[5]];
+pub const AUDIO_CLIP: &[ParamSpec] = &[
+    CA[0], CA[1], CA[2], CA[3], CA[4], CA[5], CA[6], CA[7], CA[8],
+];
 
 /// Parameters of a track's audio bus (video tracks' linked audio, or audio tracks).
 pub const TRACK: &[ParamSpec] = &[
@@ -259,6 +274,9 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
         v.is_string() || v.is_i64() || v.is_u64() || (v.is_object() && v.get("keyframes").is_some())
     };
     let ok = match (spec.kind, comp) {
+        // Optional animatables (default null, e.g. time_remap): null removes.
+        (Scalar, _) if v.is_null() && spec.default == "null" => true,
+        (Choice, _) => v.is_string(),
         (Scalar, _) | (Vec2 | ScalarOrVec2, Some(_)) => {
             if spec.animatable {
                 scalar_ok(v)
@@ -290,6 +308,7 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
             (ScalarOrVec2, None) => "a rational, {\"keyframes\": [...]} or [x, y]",
             (Bool, _) => "true or false",
             (Time, _) => "a rational time in seconds or null",
+            (Choice, _) => "one of the strings listed in the parameter's doc",
             _ => "an object or null",
         }
     );

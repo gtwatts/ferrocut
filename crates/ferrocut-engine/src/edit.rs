@@ -35,6 +35,22 @@
 //!   kind); it must not overlap.
 //! - `jl_cut`: set the clip's audio `in_offset` / `out_offset` (J-cut:
 //!   negative in-offset; L-cut: positive out-offset).
+//! - `set_speed` (Premiere "Speed/Duration"): constant speed (`2` = twice as
+//!   fast, `-1` = reverse) keeping the clip's source range, so the duration
+//!   becomes `range / |speed|`; `ripple` moves later clips on the track by
+//!   the change (otherwise a longer clip must fit before the next one).
+//!   `preserve_pitch` sets the audio's pitch preservation. Keyframed ramps
+//!   and AE time-remap curves are `set_keyframes` on `speed` / `time_remap`.
+//! - `freeze_frame`: hold the frame shown at timeline time `at`. Without
+//!   `duration` the clip is split at `at` and the rest becomes the hold
+//!   (Premiere "Add Frame Hold"); with `duration` a hold segment of that
+//!   length is inserted at `at` and the rest of the clip and later clips on
+//!   the track move right (Premiere "Insert Frame Hold Segment";
+//!   `all_tracks` moves every track). The hold's audio is muted.
+//!
+//! Retimed clips (non-default `speed` / `time_remap`): split, trim-in, roll
+//! and slide advance `source_in` along the clip's time map, so content stays
+//! in place; slip also shifts a time-remap curve's values.
 //!
 //! Building ops (so agents never hand-edit the JSON):
 //! - `add_track`: a new empty video track (`index` 0 = bottom; default on
@@ -164,6 +180,24 @@ pub enum EditOp {
         param: String,
         value: serde_json::Value,
     },
+    SetSpeed {
+        clip: String,
+        speed: Rational,
+        #[serde(default)]
+        ripple: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preserve_pitch: Option<bool>,
+    },
+    FreezeFrame {
+        clip: String,
+        at: RationalTime,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration: Option<RationalTime>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        new_id: Option<String>,
+        #[serde(default)]
+        all_tracks: bool,
+    },
     SetKeyframes {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clip: Option<String>,
@@ -227,6 +261,8 @@ impl EditOp {
             EditOp::AddTransition { .. } => "add_transition",
             EditOp::SetParam { .. } => "set_param",
             EditOp::SetKeyframes { .. } => "set_keyframes",
+            EditOp::SetSpeed { .. } => "set_speed",
+            EditOp::FreezeFrame { .. } => "freeze_frame",
         }
     }
     fn target(&self) -> String {
@@ -252,6 +288,8 @@ impl EditOp {
             | EditOp::Slide { clip, .. }
             | EditOp::Move { clip, .. }
             | EditOp::JlCut { clip, .. }
+            | EditOp::SetSpeed { clip, .. }
+            | EditOp::FreezeFrame { clip, .. }
             | EditOp::AddTransition { clip, .. } => clip.clone(),
         }
     }
@@ -284,8 +322,16 @@ pub trait Item: Clone {
     fn shift_local_keys(&mut self, dt: Rational);
     /// Remove the incoming transition (video dissolve, audio crossfade).
     fn drop_transition_in(&mut self);
+    fn speed(&self) -> &Animatable;
+    fn speed_mut(&mut self) -> &mut Animatable;
+    fn time_remap_mut(&mut self) -> &mut Option<Animatable>;
+    fn time_map(&self) -> crate::retime::TimeMap;
     fn end(&self) -> RationalTime {
         self.start() + self.duration()
+    }
+    /// Source time at clip-local time `local` (`source_in + local` unless retimed).
+    fn source_at(&self, local: RationalTime) -> RationalTime {
+        self.time_map().source_at(local)
     }
 }
 
@@ -324,6 +370,18 @@ macro_rules! item_common {
         fn audio_mut(&mut self) -> &mut ClipAudio {
             &mut self.audio
         }
+        fn speed(&self) -> &Animatable {
+            &self.speed
+        }
+        fn speed_mut(&mut self) -> &mut Animatable {
+            &mut self.speed
+        }
+        fn time_remap_mut(&mut self) -> &mut Option<Animatable> {
+            &mut self.time_remap
+        }
+        fn time_map(&self) -> crate::retime::TimeMap {
+            self.time_map()
+        }
     };
 }
 
@@ -345,6 +403,8 @@ impl Item for AudioClip {
     fn shift_local_keys(&mut self, dt: Rational) {
         self.audio.gain_db = self.audio.gain_db.shifted(dt);
         self.audio.pan = self.audio.pan.shifted(dt);
+        self.speed = self.speed.shifted(dt);
+        self.time_remap = self.time_remap.as_ref().map(|a| a.shifted(dt));
     }
     fn drop_transition_in(&mut self) {
         self.audio.crossfade_in = None;
@@ -451,7 +511,7 @@ fn split<T: Item>(
     let mut right = c.clone();
     *right.id_mut() = new_id.clone();
     *right.start_mut() = at;
-    *right.source_in_mut() = c.source_in() + off;
+    *right.source_in_mut() = c.source_at(off);
     *right.duration_mut() = c.end() - at;
     right.drop_transition_in();
     right.audio_mut().in_offset = z();
@@ -484,7 +544,7 @@ fn trim<T: Item>(
                 c.duration()
             );
             *c.start_mut() = c.start() + d;
-            *c.source_in_mut() = c.source_in() + d;
+            *c.source_in_mut() = c.source_at(d);
             *c.duration_mut() = c.duration() - d;
             c.shift_local_keys(-d.0);
         }
@@ -518,6 +578,9 @@ fn trim<T: Item>(
 fn slip<T: Item>(clips: &mut [T], ci: usize, d: RationalTime) -> anyhow::Result<Change> {
     let c = &mut clips[ci];
     *c.source_in_mut() = c.source_in() + d;
+    if let Some(r) = c.time_remap_mut() {
+        *r = crate::retime::shift_values(r, d.0);
+    }
     let a = c.audio().clone();
     let span = (
         c.start() + a.in_offset.min(z()),
@@ -561,7 +624,7 @@ fn roll<T: Item>(clips: &mut [T], ci: usize, d: RationalTime) -> anyhow::Result<
     *clips[ci].duration_mut() = a.duration() + d;
     let r = &mut clips[ci + 1];
     *r.start_mut() = b.start() + d;
-    *r.source_in_mut() = b.source_in() + d;
+    *r.source_in_mut() = b.source_at(d);
     *r.duration_mut() = b.duration() - d;
     r.shift_local_keys(-d.0);
     let new = old + d;
@@ -598,7 +661,7 @@ fn slide<T: Item>(clips: &mut [T], ci: usize, d: RationalTime) -> anyhow::Result
             n.id()
         );
         *n.start_mut() = n.start() + d;
-        *n.source_in_mut() = n.source_in() + d;
+        *n.source_in_mut() = n.source_at(d);
         *n.duration_mut() = n.duration() - d;
         n.shift_local_keys(-d.0);
     }
@@ -650,6 +713,43 @@ fn shift_after<T: Item>(clips: &mut [T], at: RationalTime, by: RationalTime, str
 
 /// Clip `id`'s source window must stay inside its media.
 fn check_bounds<T: Item>(c: &T, media_len: Option<RationalTime>) -> anyhow::Result<()> {
+    let m = c.time_map();
+    if !m.is_identity() {
+        let a = c.audio();
+        let (vlo, vhi) = m.source_range(Rational::ZERO, c.duration().0);
+        let (alo, ahi) = m.source_range(a.in_offset.0, (c.duration() + a.out_offset).0);
+        ensure!(
+            vlo >= -1e-9,
+            "clip {}: its speed/time remap reaches source time {vlo:.4} s, before the start of {}",
+            c.id(),
+            c.source().display()
+        );
+        ensure!(
+            alo >= -1e-9,
+            "clip {}: its audio (with in/out offsets) reaches source time {alo:.4} s, before the start of {}",
+            c.id(),
+            c.source().display()
+        );
+        if let Some(len) = media_len {
+            let l = len.0.to_f64() + 1e-9;
+            // The last frame shown starts before `hi` (frames are [t, t + 1/fps)).
+            ensure!(
+                vhi <= l,
+                "clip {}: its speed/time remap needs source up to {vhi:.4} s but {} is {} long",
+                c.id(),
+                c.source().display(),
+                len
+            );
+            ensure!(
+                ahi <= l || a.out_offset <= z(),
+                "clip {}: its audio needs source up to {ahi:.4} s but {} is {} long",
+                c.id(),
+                c.source().display(),
+                len
+            );
+        }
+        return Ok(());
+    }
     ensure!(
         c.source_in() >= z(),
         "clip {}: source_in would be {} (before the start of {})",
@@ -1023,6 +1123,32 @@ fn apply_one(
             };
             (change, targets)
         }
+        EditOp::SetSpeed {
+            clip,
+            speed,
+            ripple,
+            preserve_pitch,
+        } => {
+            let (tr, _) = locate(tl, clip)?;
+            let ci = sorted(tl, tr, clip);
+            let fps = tl.output.fps;
+            let change = on_track!(tl, tr, |clips| set_speed(
+                clips,
+                ci,
+                *speed,
+                fps,
+                *ripple,
+                *preserve_pitch
+            ))?;
+            (change, vec![tr])
+        }
+        EditOp::FreezeFrame {
+            clip,
+            at,
+            duration,
+            new_id,
+            all_tracks: all,
+        } => freeze_frame(tl, clip, *at, *duration, new_id.as_deref(), *all)?,
         EditOp::AddTrack { kind, name, index } => add_track(tl, *kind, name, *index)?,
         EditOp::AddClip {
             track,
@@ -1242,6 +1368,9 @@ fn add_clip(
             opacity: Animatable::constant(Rational::ONE),
             transform: None,
             transition_in: None,
+            speed: crate::timeline::one(),
+            time_remap: None,
+            sampling: Default::default(),
             audio: ClipAudio::default(),
         }),
         TrackRef::Audio(i) => tl.audio_tracks[i].clips.push(AudioClip {
@@ -1250,6 +1379,8 @@ fn add_clip(
             start,
             source_in,
             duration,
+            speed: crate::timeline::one(),
+            time_remap: None,
             audio: ClipAudio::default(),
         }),
     }
@@ -1477,6 +1608,215 @@ fn set_param(
             span,
         },
         tr.map(|(t, _)| vec![t]).unwrap_or_default(),
+    ))
+}
+
+fn set_speed<T: Item>(
+    clips: &mut [T],
+    ci: usize,
+    s: Rational,
+    fps: Rational,
+    ripple: bool,
+    preserve_pitch: Option<bool>,
+) -> anyhow::Result<Change> {
+    let c = clips[ci].clone();
+    ensure!(
+        !matches!(c.time_map(), crate::retime::TimeMap::Remap { .. }),
+        "set_speed: clip {} has a time_remap curve; remove it first (set_param time_remap null)",
+        c.id()
+    );
+    let Some(s0) = c.speed().as_constant() else {
+        bail!(
+            "set_speed: clip {} has a keyframed speed ramp; use set_keyframes / set_param on `speed`",
+            c.id()
+        );
+    };
+    ensure!(
+        !s.is_zero(),
+        "set_speed: speed 0 is a freeze; use the freeze_frame op"
+    );
+    ensure!(
+        !s0.is_zero(),
+        "set_speed: clip {} is a freeze frame (speed 0): it has no source range to retime",
+        c.id()
+    );
+    ensure!(
+        s >= Rational::from_int(-100) && s <= Rational::from_int(100),
+        "set_speed: speed must be within [-100, 100]"
+    );
+    // Source range [lo, hi) the clip shows; reverse clips start one output
+    // frame (at their speed) before `hi`, so they end exactly on `lo`.
+    let step = Rational::ONE / fps;
+    let (si, d0) = (c.source_in().0, c.duration().0);
+    let (lo, hi) = if s0 > Rational::ZERO {
+        (si, si + s0 * d0)
+    } else {
+        let hi = si - s0 * step;
+        (hi + s0 * d0, hi)
+    };
+    let mag = if s < Rational::ZERO { -s } else { s };
+    let d1 = (hi - lo) / mag;
+    let si1 = if s > Rational::ZERO {
+        lo
+    } else {
+        hi - mag * step
+    };
+    let old_end = c.end();
+    {
+        let m = &mut clips[ci];
+        *m.speed_mut() = Animatable::constant(s);
+        *m.source_in_mut() = RationalTime(si1);
+        *m.duration_mut() = RationalTime(d1);
+        if let Some(p) = preserve_pitch {
+            m.audio_mut().preserve_pitch = p;
+        }
+    }
+    let delta = RationalTime(d1 - d0);
+    if ripple && delta != z() {
+        for (i, o) in clips.iter_mut().enumerate() {
+            if i != ci && o.start() >= old_end {
+                *o.start_mut() = o.start() + delta;
+            }
+        }
+    }
+    let new_end = c.start() + RationalTime(d1);
+    Ok(Change {
+        op: 0,
+        kind: "set_speed",
+        summary: format!(
+            "set_speed {} {s0} -> {s}: duration {} -> {}, source {lo}..{hi}{}",
+            c.id(),
+            c.duration(),
+            RationalTime(d1),
+            if ripple { " (rippled)" } else { "" }
+        ),
+        span: (c.start(), old_end.max(new_end)),
+    })
+}
+
+fn freeze_frame(
+    tl: &mut Timeline,
+    clip: &str,
+    at: RationalTime,
+    duration: Option<RationalTime>,
+    new_id: Option<&str>,
+    all: bool,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    let (tr, ci) = locate(tl, clip)?;
+    let TrackRef::Video(ti) = tr else {
+        bail!("freeze_frame: {clip} is an audio clip; frame holds are for video clips");
+    };
+    let c = tl.tracks[ti].clips[ci].clone();
+    ensure!(
+        at >= c.start && at < c.end(),
+        "freeze_frame: {at} is not inside clip {clip} ({}..{})",
+        c.start,
+        c.end()
+    );
+    if let Some(d) = duration {
+        ensure!(d > z(), "freeze_frame: duration must be positive");
+    }
+    let src = c.source_at(at - c.start);
+    let fresh = |tl: &Timeline, want: Option<&str>, base: &str| -> anyhow::Result<String> {
+        match want {
+            Some(n) => {
+                ensure!(
+                    !tl.clip_ids().any(|i| i == n),
+                    "new_id {n:?} is already used"
+                );
+                Ok(n.to_string())
+            }
+            None => Ok(unique_id(tl, base)),
+        }
+    };
+    let make_hold = |c: &Clip, id: String, start: RationalTime, dur: RationalTime| {
+        let mut h = c.clone();
+        h.shift_local_keys(-(start - c.start).0);
+        h.id = id;
+        h.start = start;
+        h.duration = dur;
+        h.source_in = src;
+        h.speed = Animatable::constant(Rational::ZERO);
+        h.time_remap = None;
+        h.sampling = crate::retime::Sampling::Nearest;
+        h.transition_in = None;
+        h.audio = ClipAudio {
+            mute: true,
+            ..ClipAudio::default()
+        };
+        h
+    };
+    let mut touched = vec![tr];
+    let summary;
+    match duration {
+        None => {
+            if at == c.start {
+                let h = make_hold(&c, c.id.clone(), c.start, c.duration);
+                let keep_tx = c.transition_in.clone();
+                tl.tracks[ti].clips[ci] = Clip {
+                    transition_in: keep_tx,
+                    ..h
+                };
+                summary = format!("freeze_frame {clip}: holds source {src} for its whole length");
+            } else {
+                let id = fresh(tl, new_id, &format!("{clip}.hold"))?;
+                let ci = on_track!(tl, tr, |clips| sort_track(clips, clip));
+                on_track!(tl, tr, |clips| split(clips, ci, at, id.clone()))?;
+                let (_, ri) = locate(tl, &id)?;
+                let right = tl.tracks[ti].clips[ri].clone();
+                let mut h = make_hold(&c, id.clone(), at, right.duration);
+                h.audio.mute = true;
+                tl.tracks[ti].clips[ri] = h;
+                summary = format!(
+                    "freeze_frame {clip} at {at}: {id} holds source {src} to {}",
+                    c.end()
+                );
+            }
+        }
+        Some(d) => {
+            let targets = if all { all_tracks(tl) } else { vec![tr] };
+            for t in &targets {
+                if *t == tr {
+                    continue;
+                }
+                on_track!(tl, *t, |clips| {
+                    if let Some(o) = clips.iter().find(|o| o.start() < at && o.end() > at) {
+                        bail!(
+                            "freeze_frame on all tracks: clip {} ({}..{}) spans {at}; split it first",
+                            o.id(),
+                            o.start(),
+                            o.end()
+                        );
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })?;
+            }
+            let hold_id = fresh(tl, new_id, &format!("{clip}.hold"))?;
+            if at > c.start {
+                let right_id = unique_id(tl, clip);
+                let ci = on_track!(tl, tr, |clips| sort_track(clips, clip));
+                on_track!(tl, tr, |clips| split(clips, ci, at, right_id))?;
+            }
+            for t in &targets {
+                on_track!(tl, *t, |clips| shift_after(clips, at, d, false));
+            }
+            let h = make_hold(&c, hold_id.clone(), at, d);
+            tl.tracks[ti].clips.push(h);
+            touched = targets;
+            summary = format!(
+                "freeze_frame {clip} at {at}: inserted {hold_id} holding source {src} for {d}; later clips moved {d} later"
+            );
+        }
+    }
+    let end = tl.duration();
+    Ok((
+        Change {
+            op: 0,
+            kind: "freeze_frame",
+            summary,
+            span: (at, end.max(c.end())),
+        },
+        touched,
     ))
 }
 

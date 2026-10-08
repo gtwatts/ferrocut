@@ -139,7 +139,9 @@ enum Cmd {
         json: bool,
     },
     /// Apply a JSON list of edit operations (split, trim, ripple_delete,
-    /// ripple_insert, roll, slip, slide, move, jl_cut) to a timeline, in place
+    /// ripple_insert, roll, slip, slide, move, jl_cut, set_speed,
+    /// freeze_frame, add_track/add_clip/add_transition, set_param,
+    /// set_keyframes) to a timeline, in place
     /// or to `-o`, and append them to the output's journal
     /// (`<output>.journal.jsonl`).
     Edit {
