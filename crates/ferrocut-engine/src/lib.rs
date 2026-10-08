@@ -16,5 +16,7 @@ pub mod timeline;
 pub mod transform;
 
 pub use compile::{Compiled, compile};
-pub use render::{RenderOptions, RenderReport, plan, render};
+pub use render::{
+    ProgressFn, RenderOptions, RenderProgress, RenderReport, RenderStage, plan, render,
+};
 pub use timeline::Timeline;

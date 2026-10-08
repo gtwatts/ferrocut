@@ -6,33 +6,104 @@
 //! JSON Schema ([`schema`]); every result is structured JSON (also sent as
 //! text). Tool failures (bad op, missing file, render error) come back as
 //! `isError` results with `{"error": "..."}` so agents can read and react.
-//! Paths are absolute or relative to the server's working directory.
+//!
+//! Sandbox: every path (timelines, outputs, reports, caches, media sources)
+//! must resolve inside the project root ([`root`]); relative paths are
+//! relative to it.
+//!
+//! Progress and cancellation: a `render` call whose request carries a
+//! `progressToken` gets `notifications/progress` (progress = frames done,
+//! plus one step each for audio, concat and done; total = frames + 3).
+//! `notifications/cancelled` for an in-flight call fires the engine's
+//! [`CancelToken`]: the render stops between frames, the chunk being encoded
+//! is discarded (it never reaches the cache) and finished chunks stay cached,
+//! so the next render reuses them. Renders run one at a time per server.
 
+pub mod root;
 pub mod schema;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, bail};
-use ferrocut_core::{AdapterPreference, GpuContext, SharedGpu};
+use ferrocut_core::{AdapterPreference, CancelToken, GpuContext, SharedGpu};
 use ferrocut_engine::edit::EditOp;
 use ferrocut_engine::perceive;
 use ferrocut_engine::project::{self, EditOptions, read_timeline, timeline_hash};
 use ferrocut_engine::render::RenderOptions;
-use ferrocut_engine::{Timeline, compile, plan, render};
+use ferrocut_engine::{ProgressFn, RenderProgress, RenderStage, Timeline, compile, plan, render};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ErrorData, Implementation, JsonObject,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
-    ToolAnnotations,
+    ListToolsResult, PaginatedRequestParams, ProgressNotificationParam, ServerCapabilities,
+    ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-/// The server. Stateless: every call reads and writes files.
-#[derive(Clone, Default)]
-pub struct FerrocutServer;
+pub use root::Root;
+
+/// The server. Stateless apart from its root: every call reads and writes files.
+#[derive(Clone)]
+pub struct FerrocutServer {
+    root: Arc<Root>,
+}
+
+impl FerrocutServer {
+    pub fn new(root: Root) -> Self {
+        FerrocutServer {
+            root: Arc::new(root),
+        }
+    }
+}
+
+/// What one tool call runs with.
+pub struct Ctx {
+    pub root: Root,
+    /// Fired by `notifications/cancelled` (renders stop between frames).
+    pub cancel: CancelToken,
+    /// Render progress sink (set when the request carried a progressToken).
+    pub progress: Option<ProgressFn>,
+}
+
+impl Ctx {
+    pub fn new(root: Root) -> Self {
+        Ctx {
+            root,
+            cancel: CancelToken::new(),
+            progress: None,
+        }
+    }
+}
+
+/// One render at a time per server process (GPU memory, shared chunk caches).
+static RENDER_LOCK: Mutex<()> = Mutex::new(());
+
+/// MCP progress value for a render update: frames, then one step per stage.
+pub fn progress_value(p: &RenderProgress) -> (f64, f64) {
+    let total = p.total_frames as f64 + 3.0;
+    let v = p.frames_done as f64
+        + match p.stage {
+            RenderStage::Render => 0.0,
+            RenderStage::Audio => 1.0,
+            RenderStage::Concat => 2.0,
+            RenderStage::Done => 3.0,
+        };
+    (v, total)
+}
+
+fn progress_message(p: &RenderProgress) -> String {
+    match p.stage {
+        RenderStage::Render => format!(
+            "rendering: {}/{} chunks ({} reused), {}/{} frames",
+            p.chunks_done, p.total_chunks, p.reused_chunks, p.frames_done, p.total_frames
+        ),
+        RenderStage::Audio => "mixing audio".into(),
+        RenderStage::Concat => "concatenating chunks".into(),
+        RenderStage::Done => "done".into(),
+    }
+}
 
 fn obj(v: Value) -> Arc<JsonObject> {
     match v {
@@ -263,9 +334,10 @@ fn clip_list(tl: &Timeline) -> Vec<Value> {
     out
 }
 
-fn timeline_get(a: TimelineArgs) -> anyhow::Result<Value> {
-    let tl = read_timeline(&a.timeline)?;
-    let log = project::log(&a.timeline)?;
+fn timeline_get(cx: &Ctx, a: TimelineArgs) -> anyhow::Result<Value> {
+    let path = cx.root.check(&a.timeline)?;
+    let tl = read_timeline(&path)?;
+    let log = project::log(&path)?;
     let frames = tl.frame_count();
     let cf = tl.chunk_frames();
     Ok(json!({
@@ -288,18 +360,44 @@ fn timeline_get(a: TimelineArgs) -> anyhow::Result<Value> {
     }))
 }
 
-fn edit_apply(a: EditArgs) -> anyhow::Result<Value> {
-    let r = project::edit_file(
-        &a.timeline,
-        &a.ops,
-        &EditOptions {
-            output: a.output,
-            dry_run: a.dry_run,
-            probe: a.probe,
-            journal: true,
-            plan: a.plan,
-        },
-    )?;
+/// Before anything probes media: the current timeline's sources and those of
+/// the would-be result (inserted clips) must be inside the root.
+fn precheck_edit(
+    cx: &Ctx,
+    timeline: &std::path::Path,
+    dry: impl FnOnce() -> anyhow::Result<project::EditOutcome>,
+) -> anyhow::Result<()> {
+    cx.root.load_timeline(timeline)?;
+    let Some(mut new) = dry()?.timeline else {
+        bail!("internal: dry run returned no timeline");
+    };
+    new.resolve_sources(&project::dir_of(timeline));
+    cx.root.check_sources(&new)
+}
+
+fn edit_apply(cx: &Ctx, a: EditArgs) -> anyhow::Result<Value> {
+    let timeline = cx.root.check(&a.timeline)?;
+    let output = cx.root.check_opt(a.output)?;
+    let opts = EditOptions {
+        output,
+        dry_run: a.dry_run,
+        probe: a.probe,
+        journal: true,
+        plan: a.plan,
+    };
+    precheck_edit(cx, &timeline, || {
+        project::edit_file(
+            &timeline,
+            &a.ops,
+            &EditOptions {
+                dry_run: true,
+                probe: false,
+                plan: false,
+                ..opts.clone()
+            },
+        )
+    })?;
+    let r = project::edit_file(&timeline, &a.ops, &opts)?;
     let mut v = serde_json::to_value(&r)?;
     if a.return_timeline {
         v["timeline"] = serde_json::to_value(&r.timeline)?;
@@ -307,11 +405,11 @@ fn edit_apply(a: EditArgs) -> anyhow::Result<Value> {
     Ok(v)
 }
 
-fn plan_tool(a: TimelineArgs) -> anyhow::Result<Value> {
-    let tl = Timeline::load(&a.timeline)?;
+fn plan_tool(cx: &Ctx, a: TimelineArgs) -> anyhow::Result<Value> {
+    let (path, tl) = cx.root.load_timeline(&a.timeline)?;
     let p = plan(&tl, &compile(&tl)?);
     Ok(json!({
-        "hash": timeline_hash(&read_timeline(&a.timeline)?),
+        "hash": timeline_hash(&read_timeline(&path)?),
         "total_frames": tl.frame_count(),
         "chunk_frames": tl.chunk_frames(),
         "chunks": p,
@@ -359,12 +457,16 @@ pub fn summarize(report: &Value) -> Value {
     })
 }
 
-fn render_tool(a: RenderArgs) -> anyhow::Result<Value> {
+fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
     if a.jobs == 0 || a.jobs > 32 {
         bail!("jobs must be 1..=32");
     }
     let started = std::time::Instant::now();
-    let tl = Timeline::load(&a.timeline)?;
+    let (timeline, tl) = cx.root.load_timeline(&a.timeline)?;
+    let output = cx.root.check(&a.output)?;
+    let cache_dir = cx.root.check_opt(a.cache_dir)?;
+    let report = cx.root.check_opt(a.report)?;
+    let _one_at_a_time = RENDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let c = compile(&tl)?;
     let pref = if a.cpu {
         AdapterPreference::Cpu
@@ -375,26 +477,24 @@ fn render_tool(a: RenderArgs) -> anyhow::Result<Value> {
         pref,
         &c.graph.gpu_requirements(),
     )?);
-    let cache_dir = a
-        .cache_dir
-        .unwrap_or_else(|| project::dir_of(&a.output).join(".ferrocut-cache"));
+    let cache_dir = cache_dir.unwrap_or_else(|| project::dir_of(&output).join(".ferrocut-cache"));
     let r = render(
         &tl,
         &c,
         &gpu,
-        &a.output,
+        &output,
         &RenderOptions {
             force: a.force,
             jobs: a.jobs,
+            cancel: cx.cancel.clone(),
+            progress: cx.progress.clone(),
             deadline: a
                 .timeout_s
                 .map(|s| started + std::time::Duration::from_secs_f64(s)),
             ..RenderOptions::new(cache_dir)
         },
     )?;
-    let report_path = a
-        .report
-        .unwrap_or_else(|| a.output.with_extension("report.json"));
+    let report_path = report.unwrap_or_else(|| output.with_extension("report.json"));
     let v = serde_json::to_value(&r)?;
     std::fs::write(&report_path, serde_json::to_string_pretty(&v)?)
         .with_context(|| format!("writing {}", report_path.display()))?;
@@ -403,7 +503,7 @@ fn render_tool(a: RenderArgs) -> anyhow::Result<Value> {
     if a.check {
         s["check"] = serde_json::to_value(perceive::check(
             &r.output,
-            &a.timeline,
+            &timeline,
             &perceive::CheckOptions {
                 extra_args: a.check_args,
                 ..Default::default()
@@ -413,7 +513,11 @@ fn render_tool(a: RenderArgs) -> anyhow::Result<Value> {
     Ok(s)
 }
 
-fn report_read(a: ReportArgs) -> anyhow::Result<Value> {
+fn report_read(cx: &Ctx, a: ReportArgs) -> anyhow::Result<Value> {
+    let a = ReportArgs {
+        report: cx.root.check(&a.report)?,
+        ..a
+    };
     let text = std::fs::read_to_string(&a.report)
         .with_context(|| format!("reading {}", a.report.display()))?;
     let v: Value = serde_json::from_str(&text).context("parsing render report")?;
@@ -427,37 +531,64 @@ fn report_read(a: ReportArgs) -> anyhow::Result<Value> {
     Ok(out)
 }
 
-fn branch_tool(a: BranchArgs) -> anyhow::Result<Value> {
+fn branch_tool(cx: &Ctx, a: BranchArgs) -> anyhow::Result<Value> {
+    let timeline = cx.root.check(&a.timeline)?;
     Ok(match a.action {
-        BranchAction::Create => serde_json::to_value(project::branch(&a.timeline, &a.name)?)?,
+        BranchAction::Create => serde_json::to_value(project::branch(&timeline, &a.name)?)?,
         BranchAction::Checkout => {
-            serde_json::to_value(project::checkout(&a.timeline, &a.name, a.force)?)?
+            serde_json::to_value(project::checkout(&timeline, &a.name, a.force)?)?
         }
-        BranchAction::Merge => serde_json::to_value(project::merge(
-            &a.timeline,
-            &a.name,
-            &EditOptions::default(),
-        )?)?,
+        BranchAction::Merge => {
+            precheck_edit(cx, &timeline, || {
+                project::merge(
+                    &timeline,
+                    &a.name,
+                    &EditOptions {
+                        dry_run: true,
+                        probe: false,
+                        ..EditOptions::default()
+                    },
+                )
+            })?;
+            serde_json::to_value(project::merge(&timeline, &a.name, &EditOptions::default())?)?
+        }
     })
 }
 
+fn diff_tool(cx: &Ctx, a: DiffArgs) -> anyhow::Result<Value> {
+    let (pa, pb) = if a.render {
+        (
+            cx.root.load_timeline(&a.a)?.0,
+            cx.root.load_timeline(&a.b)?.0,
+        )
+    } else {
+        (cx.root.check(&a.a)?, cx.root.check(&a.b)?)
+    };
+    Ok(serde_json::to_value(ferrocut_engine::diff::diff_files(
+        &pa, &pb, a.render,
+    )?)?)
+}
+
 /// Run one tool. `None`: no such tool.
-pub fn call(name: &str, a: Value) -> Option<anyhow::Result<Value>> {
+pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
+    let with_timeline = |a: TimelineArgs| -> anyhow::Result<TimelineArgs> {
+        Ok(TimelineArgs {
+            timeline: cx.root.check(&a.timeline)?,
+        })
+    };
     Some(match name {
-        "timeline_get" => args(name, a).and_then(timeline_get),
-        "edit_apply" => args(name, a).and_then(edit_apply),
-        "diff" => args::<DiffArgs>(name, a).and_then(|a| {
-            Ok(serde_json::to_value(ferrocut_engine::diff::diff_files(
-                &a.a, &a.b, a.render,
-            )?)?)
-        }),
-        "plan" => args(name, a).and_then(plan_tool),
-        "render" => args(name, a).and_then(render_tool),
-        "report_read" => args(name, a).and_then(report_read),
+        "timeline_get" => args(name, a).and_then(|a| timeline_get(cx, a)),
+        "edit_apply" => args(name, a).and_then(|a| edit_apply(cx, a)),
+        "diff" => args(name, a).and_then(|a| diff_tool(cx, a)),
+        "plan" => args(name, a).and_then(|a| plan_tool(cx, a)),
+        "render" => args(name, a).and_then(|a| render_tool(cx, a)),
+        "report_read" => args(name, a).and_then(|a| report_read(cx, a)),
         "quality_check" => args::<CheckArgs>(name, a).and_then(|a| {
+            let render = cx.root.check(&a.render)?;
+            let (timeline, _) = cx.root.load_timeline(&a.timeline)?;
             Ok(serde_json::to_value(perceive::check(
-                &a.render,
-                &a.timeline,
+                &render,
+                &timeline,
                 &perceive::CheckOptions {
                     binary: None,
                     extra_args: a.args,
@@ -466,10 +597,13 @@ pub fn call(name: &str, a: Value) -> Option<anyhow::Result<Value>> {
             ))?)
         }),
         "log" => args::<TimelineArgs>(name, a)
+            .and_then(with_timeline)
             .and_then(|a| Ok(serde_json::to_value(project::log(&a.timeline)?)?)),
-        "undo" => args::<UndoArgs>(name, a)
-            .and_then(|a| Ok(serde_json::to_value(project::undo(&a.timeline, a.force)?)?)),
-        "branch" => args(name, a).and_then(branch_tool),
+        "undo" => args::<UndoArgs>(name, a).and_then(|a| {
+            let t = cx.root.check(&a.timeline)?;
+            Ok(serde_json::to_value(project::undo(&t, a.force)?)?)
+        }),
+        "branch" => args(name, a).and_then(|a| branch_tool(cx, a)),
         _ => return None,
     })
 }
@@ -483,7 +617,8 @@ impl ServerHandler for FerrocutServer {
                  edit_apply dry_run=true (plan=true shows chunks that would re-render), apply with \
                  edit_apply, compare with diff, render (incremental: unchanged chunks are reused) \
                  and read results with report_read; log/undo/branch work on the per-timeline journal. \
-                 Times are exact rationals: integers or strings like \"5/2\" or \"0.5\" (seconds).",
+                 Times are exact rationals: integers or strings like \"5/2\" or \"0.5\" (seconds). \
+                 All paths must be inside the project root; relative paths are relative to it.",
             )
     }
 
@@ -505,14 +640,68 @@ impl ServerHandler for FerrocutServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.to_string();
+        let token = context
+            .meta
+            .get_progress_token()
+            .or_else(|| request.meta.as_ref().and_then(|m| m.get_progress_token()));
         let a = Value::Object(request.arguments.unwrap_or_default());
+        let mut cx = Ctx::new((*self.root).clone());
+
+        // notifications/cancelled -> context.ct -> the engine's CancelToken.
+        // The watcher ends when the call does (`done` dropped) or on cancel.
+        let (done, done_rx) = tokio::sync::oneshot::channel::<()>();
+        let (ct, cancel) = (context.ct.clone(), cx.cancel.clone());
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = ct.cancelled() => cancel.cancel(),
+                _ = done_rx => {}
+            }
+        });
+
+        // Render progress -> notifications/progress (strictly increasing).
+        let forwarder = match token {
+            Some(token) if name == "render" => {
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<RenderProgress>();
+                cx.progress = Some(Arc::new(move |p: &RenderProgress| {
+                    let _ = tx.send(*p);
+                }));
+                let peer = context.peer.clone();
+                Some(tokio::spawn(async move {
+                    let mut last = -1.0;
+                    while let Some(p) = rx.recv().await {
+                        let (v, total) = progress_value(&p);
+                        if v <= last {
+                            continue;
+                        }
+                        last = v;
+                        let n = ProgressNotificationParam::new(token.clone(), v)
+                            .with_total(total)
+                            .with_message(progress_message(&p));
+                        if peer.notify_progress(n).await.is_err() {
+                            break;
+                        }
+                    }
+                }))
+            }
+            _ => None,
+        };
+
         let n = name.clone();
-        let r = tokio::task::spawn_blocking(move || call(&n, a))
-            .await
-            .map_err(|e| ErrorData::internal_error(format!("tool {name} panicked: {e}"), None))?;
+        let r = tokio::task::spawn_blocking(move || {
+            let r = call(&cx, &n, a);
+            drop(cx); // closes the progress channel
+            drop(done);
+            r
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(format!("tool {name} panicked: {e}"), None))?;
+        if let Some(f) = forwarder {
+            // Deliver every progress notification before the result.
+            let _ = f.await;
+        }
         match r {
             None => Err(ErrorData::invalid_params(
                 format!("unknown tool {name:?}"),

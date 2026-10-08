@@ -37,6 +37,14 @@
 //! order on one persistent [`WorkerState`]. A sequential node then pre-rolls
 //! once per worker instead of once per chunk, and the graph resets it if a
 //! retry ever asks for an earlier time.
+//!
+//! Progress: [`RenderOptions::progress`] is called once the reusable chunks
+//! are known (cached chunks count as done), after every chunk that finishes
+//! rendering (from worker threads, possibly concurrently), and at the
+//! audio, concat and done stages. Cancellation (token or deadline) is checked
+//! between frames and again before audio and concat; a chunk interrupted
+//! mid-encode is never renamed into the cache (it is written to a temp file),
+//! so a cancelled render leaves only complete, valid chunks behind.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -138,6 +146,66 @@ pub struct RenderReport {
 /// Output frames in flight per chunk worker in the readback ring.
 pub const READBACK_DEPTH: usize = 3;
 
+/// Where a render is when [`RenderOptions::progress`] fires.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderStage {
+    /// Rendering video chunks (cached chunks are counted as done up front).
+    Render,
+    Audio,
+    Concat,
+    Done,
+}
+
+/// A progress update; `frames_done` only grows during one render.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+pub struct RenderProgress {
+    pub stage: RenderStage,
+    pub chunks_done: usize,
+    pub total_chunks: usize,
+    pub frames_done: i64,
+    pub total_frames: i64,
+    /// Of `chunks_done`, how many came from the cache.
+    pub reused_chunks: usize,
+}
+
+/// Progress callback; may be called from several worker threads at once.
+pub type ProgressFn = Arc<dyn Fn(&RenderProgress) + Send + Sync>;
+
+struct ProgressCounter {
+    f: ProgressFn,
+    chunks: AtomicU64,
+    frames: AtomicU64,
+    total_chunks: usize,
+    total_frames: i64,
+    reused_chunks: usize,
+}
+
+impl ProgressCounter {
+    fn emit(&self, stage: RenderStage, chunks: u64, frames: u64) {
+        (self.f)(&RenderProgress {
+            stage,
+            chunks_done: chunks as usize,
+            total_chunks: self.total_chunks,
+            frames_done: frames as i64,
+            total_frames: self.total_frames,
+            reused_chunks: self.reused_chunks,
+        });
+    }
+    fn chunk_done(&self, frames: i64) {
+        let c = self.chunks.fetch_add(1, Ordering::SeqCst) + 1;
+        let f = self.frames.fetch_add(frames as u64, Ordering::SeqCst) + frames as u64;
+        self.emit(RenderStage::Render, c, f);
+    }
+    fn stage(&self, stage: RenderStage) {
+        let (c, f) = (
+            self.chunks.load(Ordering::SeqCst),
+            self.frames.load(Ordering::SeqCst),
+        );
+        self.emit(stage, c, f);
+    }
+}
+
 pub struct RenderOptions {
     pub cache_dir: PathBuf,
     /// Ignore cached chunks and re-render everything (still refreshes the cache).
@@ -151,6 +219,8 @@ pub struct RenderOptions {
     pub max_retries: u32,
     /// Restarts per chunk after a GPU fault (device lost: on a recreated device).
     pub max_chunk_restarts: u32,
+    /// Called as the render advances (see the module docs).
+    pub progress: Option<ProgressFn>,
 }
 
 impl RenderOptions {
@@ -163,6 +233,7 @@ impl RenderOptions {
             deadline: None,
             max_retries: 2,
             max_chunk_restarts: 2,
+            progress: None,
         }
     }
 }
@@ -312,6 +383,7 @@ struct ChunkEnv<'a> {
     submissions: &'a AtomicU64,
     resets: &'a AtomicU64,
     restarts: &'a AtomicU64,
+    progress: Option<&'a ProgressCounter>,
 }
 
 /// One render worker: a device snapshot plus its per-worker node state.
@@ -385,6 +457,9 @@ fn render_run(
             }
         }
         out.push((p.index, s.elapsed().as_millis()));
+        if let Some(pc) = env.progress {
+            pc.chunk_done(p.frames);
+        }
     }
     Ok(out)
 }
@@ -510,6 +585,28 @@ pub fn render(
     let run_cancel = opts.cancel.child();
     let (retries, submissions) = (AtomicU64::new(0), AtomicU64::new(0));
     let (resets, restarts) = (AtomicU64::new(0), AtomicU64::new(0));
+    let path_of = |p: &ChunkPlan| chunk_dir.join(format!("{}.mkv", p.key));
+    let todo: Vec<&ChunkPlan> = plans
+        .iter()
+        .filter(|p| opts.force || !path_of(p).exists())
+        .collect();
+    let progress = opts.progress.clone().map(|f| {
+        let reused: Vec<&ChunkPlan> = plans
+            .iter()
+            .filter(|p| !todo.iter().any(|t| t.index == p.index))
+            .collect();
+        ProgressCounter {
+            f,
+            chunks: AtomicU64::new(reused.len() as u64),
+            frames: AtomicU64::new(reused.iter().map(|p| p.frames as u64).sum()),
+            total_chunks: plans.len(),
+            total_frames: tl.frame_count(),
+            reused_chunks: reused.len(),
+        }
+    });
+    if let Some(pc) = &progress {
+        pc.stage(RenderStage::Render);
+    }
     let env = ChunkEnv {
         tl,
         c,
@@ -523,13 +620,8 @@ pub fn render(
         submissions: &submissions,
         resets: &resets,
         restarts: &restarts,
+        progress: progress.as_ref(),
     };
-    let path_of = |p: &ChunkPlan| chunk_dir.join(format!("{}.mkv", p.key));
-
-    let todo: Vec<&ChunkPlan> = plans
-        .iter()
-        .filter(|p| opts.force || !path_of(p).exists())
-        .collect();
     let sequential = c.graph.access_pattern(c.output) == AccessPattern::Sequential;
     let runs: Vec<Vec<&ChunkPlan>> = if sequential {
         contiguous_runs(&todo, opts.jobs)
@@ -580,6 +672,10 @@ pub fn render(
     };
 
     // Audio: each chunk's exact sample range, mixed statelessly in parallel.
+    check_cancel(&opts.cancel, opts.deadline)?;
+    if let Some(pc) = &progress {
+        pc.stage(RenderStage::Audio);
+    }
     let t_audio = Instant::now();
     let audio_chunks: Option<Vec<ferrocut_audio::Stereo>> = audio_plan.as_ref().map(|a| {
         pool.install(|| {
@@ -591,6 +687,10 @@ pub fn render(
     });
     let audio_render_ms = t_audio.elapsed().as_millis();
 
+    check_cancel(&opts.cancel, opts.deadline)?;
+    if let Some(pc) = &progress {
+        pc.stage(RenderStage::Concat);
+    }
     let t_concat = Instant::now();
     let paths: Vec<PathBuf> = plans.iter().map(path_of).collect();
     let refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
@@ -642,6 +742,9 @@ pub fn render(
                     .to_string()
             }),
         });
+    }
+    if let Some(pc) = &progress {
+        pc.stage(RenderStage::Done);
     }
     let render_fps = if rendered > 0 && render_wall_ms > 0 {
         rendered as f64 * 1000.0 / render_wall_ms as f64

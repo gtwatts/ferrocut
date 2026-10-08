@@ -209,7 +209,31 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 - **Results** are structured JSON (`structuredContent`, also sent as text). Tool failures, such as an op that
   doesn't apply, a missing file or a render error, come back as `isError` results with
   `{"error": "op 0 (trim nope): ..."}`; an unknown tool is a JSON-RPC invalid-params error.
-- **Paths** are absolute, or relative to the server's working directory.
+- **Project root (sandbox).** Every path a tool reads or writes must resolve inside one directory: timelines,
+  outputs, reports, cache dirs, and every clip's media source. The root is `--root DIR`, else
+  `$FERROCUT_MCP_ROOT`, else the server's working directory, canonicalized at startup. Relative paths are relative
+  to the root.
+  - An existing path is canonicalized: symlinks are resolved and `..` is folded. A new output's nearest existing
+    ancestor is canonicalized and the missing tail appended.
+  - Rejected: anything resolving outside the root (`../x`, absolute paths elsewhere, a symlinked file or directory
+    that points out), dangling symlinks (writing through one would create its target), and `..` after a missing
+    directory.
+  - Media sources are checked before anything probes, hashes or decodes them. That includes clips that
+    `edit_apply` `ripple_insert`s or a `branch` merge would bring in; this is pre-checked by a dry run, and on
+    failure nothing is written or journaled.
+  - Limits: this guards against agent mistakes and injected paths. It is not an OS sandbox: a symlink swapped in
+    between check and use, or a hard link, is not caught.
+- **Progress.** A `render` call whose request carries `_meta.progressToken` gets `notifications/progress`:
+  - `progress` is the number of frames done, starting at the frames reused from the cache, then one step each
+    for audio, concat and done; `total` is the frame count + 3;
+  - `message` reads like `rendering: 7/48 chunks (2 reused), 84/576 frames`;
+  - updates come per finished chunk, strictly increasing, and all are sent before the result.
+- **Cancellation.** `notifications/cancelled` for an in-flight call fires the engine's `CancelToken`:
+  - the render stops between frames;
+  - the chunk being encoded is discarded (chunks are written to a temp file and renamed only when complete);
+  - finished chunks stay in the cache, so the next render reuses them.
+
+  Renders run one at a time per server.
 - **Libraries:** the binary embeds the same relocatable FFmpeg rpath as `ferrocut` (via `links` metadata from
   the engine's build script), so it needs no `LD_LIBRARY_PATH`.
 - **Tests:** `tests/stdio.rs` spawns the server over stdio and runs:
@@ -220,6 +244,15 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
   5. render a 64x32 timeline (12 chunks rendered), render again (12 of 12 reused, same hash);
   6. `report_read`;
   7. `undo`, then render again (only chunks 4-7 re-render).
+
+  `tests/sandbox.rs` checks root resolution and escapes: relative, absolute, symlinked file and directory,
+  dangling symlinks, and `..` through missing directories. It also checks that every tool refuses outside
+  timelines, outputs, caches, reports and media sources, with nothing written. `tests/progress.rs` covers:
+  - `--root`, `$FERROCUT_MCP_ROOT` and the cwd default;
+  - a 48-chunk render cancelled after its first progress notifications;
+  - the follow-up render: only the chunks finished before the cancel are reused, its progress runs from the
+    reused frames to the total, and no temp or partial files are left;
+  - a forced render into a fresh cache matching the follow-up render bit for bit.
 
 ```sh
 cargo build --release -p ferrocut-mcp
@@ -232,8 +265,8 @@ Codex's default 60 s tool timeout is too short for real renders, hence `tool_tim
 ```toml
 [mcp_servers.ferrocut]
 command = "/home/gordontwatts/Documents/projects/ferrocut/target/release/ferrocut-mcp"
-args = []
-# Relative timeline paths in tool calls resolve against this directory.
+# Tools may only touch files under --root (default: cwd); relative paths resolve against it.
+args = ["--root", "/home/gordontwatts/Documents/projects/ferrocut"]
 cwd = "/home/gordontwatts/Documents/projects/ferrocut"
 startup_timeout_sec = 20
 # Renders block until done; allow long ones (Codex's default is 60 s).
