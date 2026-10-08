@@ -336,23 +336,41 @@ impl Timeline {
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let mut tl: Timeline = serde_json::from_str(&text)
             .with_context(|| format!("parsing timeline {}", path.display()))?;
-        let base = path.parent().unwrap_or(Path::new("."));
-        for t in &mut tl.tracks {
-            for c in &mut t.clips {
-                if c.source.is_relative() {
-                    c.source = base.join(&c.source);
-                }
-            }
-        }
-        for t in &mut tl.audio_tracks {
-            for c in &mut t.clips {
-                if c.source.is_relative() {
-                    c.source = base.join(&c.source);
-                }
-            }
-        }
+        tl.resolve_sources(path.parent().unwrap_or(Path::new(".")));
         tl.validate()?;
         Ok(tl)
+    }
+
+    /// Every clip source path (video and audio tracks), mutably.
+    pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut PathBuf> {
+        self.tracks
+            .iter_mut()
+            .flat_map(|t| t.clips.iter_mut().map(|c| &mut c.source))
+            .chain(
+                self.audio_tracks
+                    .iter_mut()
+                    .flat_map(|t| t.clips.iter_mut().map(|c| &mut c.source)),
+            )
+    }
+
+    /// Join relative sources onto `base` (the timeline file's directory).
+    pub fn resolve_sources(&mut self, base: &Path) {
+        for s in self.sources_mut() {
+            if s.is_relative() {
+                *s = base.join(&*s);
+            }
+        }
+    }
+
+    /// Make relative sources absolute (canonical when the file exists), so
+    /// the timeline can be written to another directory.
+    pub fn absolutize_sources(&mut self, base: &Path) {
+        for s in self.sources_mut() {
+            if s.is_relative() {
+                let j = base.join(&*s);
+                *s = std::fs::canonicalize(&j).unwrap_or(j);
+            }
+        }
     }
 
     pub fn from_json(text: &str) -> anyhow::Result<Self> {

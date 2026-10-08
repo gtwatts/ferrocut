@@ -37,6 +37,8 @@ cargo test --release
 ./target/release/ferrocut render examples/demo-av.json -o out/av.mkv   # dialogue + ducked music, J/L cuts, animated overlay, -14 LUFS
 echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
 ./target/release/ferrocut edit examples/demo-av.json /tmp/ops.json -o out/av-slip.json --plan   # prints the chunks that will re-render
+./target/release/ferrocut diff examples/demo-av.json out/av-slip.json --summary   # structured diff + chunks to re-render (JSON without --summary)
+./target/release/ferrocut log out/av-slip.json && ./target/release/ferrocut undo out/av-slip.json
 ```
 
 - **Environment variables**: `FERROCUT_ADAPTER=<name substring>` picks the GPU;
@@ -123,6 +125,39 @@ the invariants (ripple keeps downstream order without overlaps, roll preserves t
 preserves position/duration, slide preserves track duration, failed scripts change nothing). Frame keys
 depend only on what is visible at `t` (the clip's placement is captured by the pulled source frame), so
 on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
+
+### Journal, dry runs, undo, diff and branches
+
+- **Journal.** `ferrocut edit` edits in place (or writes `-o`) and appends one JSON line per applied script to
+  `<timeline>.journal.jsonl` beside the written file: the ops with their parameters, each op's change summary and
+  span, the branch, and the timeline's canonical hash before and after. The journal is append-only, and it carries a
+  sequence number and **no timestamps**, so the same edits give a byte-identical journal. The canonical hash is
+  blake3 over the timeline's serde JSON with object keys sorted, so formatting and key order don't change it.
+  Every state the journal mentions is stored in `<dir>/.ferrocut/snapshots/<hash>.json`.
+  `--dry-run` applies and reports without writing anything; `--no-journal` writes without journaling;
+  `--json` prints the outcome as JSON.
+- **`ferrocut log <tl>`** lists the entries, the current branch, and whether the file still matches the journal
+  (`--json` for agents).
+- **`ferrocut undo <tl>`** restores the `before` snapshot of the newest live edit or merge on the current branch,
+  and repeated undos walk back. It refuses if the file changed since that edit; `--force` overrides, and the
+  discarded state stays in snapshots. Undo is itself journaled. There is no redo yet.
+- **`ferrocut diff <a.json> <b.json>`** prints structured JSON:
+  - `settings` and `tracks` changes;
+  - `clips` matched by id: `added`, `removed`, or `changed` with tags (`moved`, `trimmed_in`, `trimmed_out`,
+    `slipped`, `retimed`, `track_changed`, `source_changed`, `opacity_changed`, `transform_changed`,
+    `transition_changed`, `audio_changed`, `keyframes_changed`), field-level `from`/`to` per changed path, and
+    keyframe diffs matched by key time (`added`/`removed`/`changed`);
+  - the `affected` timeline spans (conservative: the union of changed clips' video and audio extents);
+  - `render`: the output chunks that would re-render (`dirty_chunks`, merged frame/second `ranges`, reuse counts).
+    This compares chunk keys exactly as the content-addressed cache does, so the media must exist; otherwise
+    `render_error` says why. Audio is re-mixed on every render. `--summary` prints a human-readable version.
+- **Branches** are named snapshots tracked in the journal:
+  - `ferrocut branch <tl> <name>` names the current state;
+  - `ferrocut checkout <tl> <name>` swaps the file to that branch's tip (refusing to drop unjournaled changes
+    without `--force`);
+  - `ferrocut merge <tl> <name>` replays the branch's live ops since it forked onto the current branch, atomically
+    and rebase-style. An op that no longer applies (e.g. a clip deleted on this branch) fails the merge and nothing
+    is written. A merge undoes as one step.
 
 ### Keyframes and the layer transform
 

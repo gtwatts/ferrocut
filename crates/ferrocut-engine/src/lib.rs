@@ -4,10 +4,12 @@
 pub mod audio;
 pub mod compile;
 pub mod compositor;
+pub mod diff;
 pub mod edit;
 pub mod graph;
 pub mod media;
 pub mod nodes;
+pub mod project;
 pub mod render;
 pub mod timeline;
 pub mod transform;

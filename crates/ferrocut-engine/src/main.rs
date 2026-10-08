@@ -6,7 +6,7 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use ferrocut_core::{AdapterPreference, GpuContext, SharedGpu};
 use ferrocut_engine::render::ChunkStatus;
-use ferrocut_engine::{RenderOptions, Timeline, compile, plan, render};
+use ferrocut_engine::{RenderOptions, Timeline, compile, plan, project, render};
 
 #[derive(Parser)]
 #[command(
@@ -48,18 +48,76 @@ enum Cmd {
     /// Print the chunk plan (frame/chunk keys) without decoding or touching the GPU.
     Plan { timeline: PathBuf },
     /// Apply a JSON list of edit operations (split, trim, ripple_delete,
-    /// ripple_insert, roll, slip, slide, move, jl_cut) to a timeline.
+    /// ripple_insert, roll, slip, slide, move, jl_cut) to a timeline, in place
+    /// or to `-o`, and append them to the output's journal
+    /// (`<output>.journal.jsonl`).
     Edit {
         timeline: PathBuf,
         ops: PathBuf,
+        /// Write here instead of editing the timeline in place.
         #[arg(short, long)]
-        output: PathBuf,
+        output: Option<PathBuf>,
+        /// Apply and report only: write nothing, journal nothing.
+        #[arg(long)]
+        dry_run: bool,
         /// Also report which output chunks the edit invalidates (compiles both timelines; no rendering).
         #[arg(long)]
         plan: bool,
         /// Don't probe source media lengths (skips slip/trim-past-media checks).
         #[arg(long)]
         no_probe: bool,
+        /// Don't append to the journal.
+        #[arg(long)]
+        no_journal: bool,
+        /// Print the outcome as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Structured diff of two timelines (JSON): clips added/removed/moved/
+    /// trimmed, keyframe changes, affected spans and chunks that would re-render.
+    Diff {
+        a: PathBuf,
+        b: PathBuf,
+        /// Skip the render-impact plan (which hashes source media).
+        #[arg(long)]
+        no_render: bool,
+        /// Human-readable summary instead of JSON.
+        #[arg(long)]
+        summary: bool,
+    },
+    /// Show a timeline's journal.
+    Log {
+        timeline: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Undo the newest edit on the current branch (restores its snapshot).
+    Undo {
+        timeline: PathBuf,
+        /// Undo even if the file changed since that edit (discards the change; it stays in snapshots).
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create a branch (a named snapshot) at the timeline's current state.
+    Branch { timeline: PathBuf, name: String },
+    /// Switch the timeline file to a branch's tip.
+    Checkout {
+        timeline: PathBuf,
+        name: String,
+        /// Discard unjournaled changes (they stay in snapshots).
+        #[arg(long)]
+        force: bool,
+    },
+    /// Replay a branch's edits since it forked onto the current branch.
+    Merge {
+        timeline: PathBuf,
+        name: String,
+        #[arg(long)]
+        no_probe: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// List GPU adapters and show which one Ferrocut would pick.
     Adapters,
@@ -88,81 +146,119 @@ fn main() -> anyhow::Result<()> {
             timeline,
             ops,
             output,
+            dry_run,
             plan: show_plan,
             no_probe,
+            no_journal,
+            json,
         } => {
-            use ferrocut_engine::edit::{MediaLengths, apply, parse_ops};
-            let text = std::fs::read_to_string(&timeline)
-                .with_context(|| format!("reading {}", timeline.display()))?;
-            let tl = Timeline::from_json(&text)
-                .with_context(|| format!("parsing timeline {}", timeline.display()))?;
             let ops_text = std::fs::read_to_string(&ops)
                 .with_context(|| format!("reading {}", ops.display()))?;
-            let ops = parse_ops(&ops_text).with_context(|| format!("parsing {}", ops.display()))?;
-            let base = timeline
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_default();
-            let mut media = if no_probe {
-                MediaLengths::unbounded()
+            let ops = ferrocut_engine::edit::parse_ops(&ops_text)
+                .with_context(|| format!("parsing {}", ops.display()))?;
+            let r = project::edit_file(
+                &timeline,
+                &ops,
+                &project::EditOptions {
+                    output,
+                    dry_run,
+                    probe: !no_probe,
+                    journal: !no_journal,
+                    plan: show_plan,
+                },
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
             } else {
-                MediaLengths::new(&base, |p| {
-                    ferrocut_engine::media::media_duration(p).ok().flatten()
-                })
-            };
-            let (mut new, changes) = apply(&tl, &ops, &mut media)?;
-            for c in &changes {
-                println!(
-                    "op {:>2} {:<13} {}  [affects {}..{}]",
-                    c.op, c.kind, c.summary, c.span.0, c.span.1
-                );
+                print_edit(&r);
             }
-            // Keep relative sources valid if the output lands in another directory.
-            let out_dir = output.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-            let canon = |p: &std::path::Path| {
-                std::fs::canonicalize(if p.as_os_str().is_empty() {
-                    std::path::Path::new(".")
-                } else {
-                    p
-                })
-                .ok()
-            };
-            if canon(&out_dir) != canon(&base) {
-                let abs = |s: &mut PathBuf| {
-                    if s.is_relative() {
-                        *s = std::fs::canonicalize(base.join(&*s))
-                            .unwrap_or_else(|_| base.join(&*s));
+        }
+        Cmd::Diff {
+            a,
+            b,
+            no_render,
+            summary,
+        } => {
+            let d = ferrocut_engine::diff::diff_files(&a, &b, !no_render)?;
+            if summary {
+                print_diff(&d);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&d)?);
+            }
+        }
+        Cmd::Log { timeline, json } => {
+            let l = project::log(&timeline)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&l)?);
+            } else {
+                println!(
+                    "journal {} | branch {} | file {} ({})",
+                    l.journal.display(),
+                    l.branch,
+                    &l.current[..12],
+                    if l.clean {
+                        "clean"
+                    } else {
+                        "changed outside the journal"
                     }
-                };
-                new.tracks
-                    .iter_mut()
-                    .flat_map(|t| t.clips.iter_mut())
-                    .for_each(|c| abs(&mut c.source));
-                new.audio_tracks
-                    .iter_mut()
-                    .flat_map(|t| t.clips.iter_mut())
-                    .for_each(|c| abs(&mut c.source));
-                eprintln!(
-                    "note: output is in another directory; relative sources were made absolute"
+                );
+                for e in &l.entries {
+                    println!(
+                        "#{:<4} {}{}",
+                        e.entry.seq(),
+                        e.entry.describe(),
+                        if e.undone { "  (undone)" } else { "" }
+                    );
+                }
+            }
+        }
+        Cmd::Undo {
+            timeline,
+            force,
+            json,
+        } => {
+            let u = project::undo(&timeline, force)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&u)?);
+            } else {
+                println!(
+                    "undid #{} on {}: {} -> {} (journal #{})",
+                    u.undid,
+                    u.branch,
+                    &u.before[..12],
+                    &u.after[..12],
+                    u.seq
                 );
             }
-            std::fs::write(&output, serde_json::to_string_pretty(&new)? + "\n")
-                .with_context(|| format!("writing {}", output.display()))?;
-            println!("wrote {} ({} ops)", output.display(), changes.len());
-            if show_plan {
-                let (a, b) = (Timeline::load(&timeline)?, Timeline::load(&output)?);
-                let (pa, pb) = (plan(&a, &compile(&a)?), plan(&b, &compile(&b)?));
-                let old: std::collections::HashSet<&str> =
-                    pa.iter().map(|p| p.key.as_str()).collect();
-                let dirty: Vec<usize> = pb
-                    .iter()
-                    .filter(|p| !old.contains(p.key.as_str()))
-                    .map(|p| p.index)
-                    .collect();
-                println!(
-                    "video chunks to re-render: {dirty:?} of {} (audio is re-mixed per render)",
-                    pb.len()
-                );
+        }
+        Cmd::Branch { timeline, name } => {
+            println!("{}", project::branch(&timeline, &name)?.describe());
+        }
+        Cmd::Checkout {
+            timeline,
+            name,
+            force,
+        } => {
+            println!("{}", project::checkout(&timeline, &name, force)?.describe());
+        }
+        Cmd::Merge {
+            timeline,
+            name,
+            no_probe,
+            json,
+        } => {
+            let r = project::merge(
+                &timeline,
+                &name,
+                &project::EditOptions {
+                    probe: !no_probe,
+                    ..Default::default()
+                },
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            } else {
+                print_edit(&r);
             }
         }
         Cmd::Plan { timeline } => {
@@ -327,4 +423,96 @@ fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+fn print_edit(r: &project::EditOutcome) {
+    for c in &r.changes {
+        println!(
+            "op {:>2} {:<13} {}  [affects {}..{}]",
+            c.op, c.kind, c.summary, c.span.0, c.span.1
+        );
+    }
+    if r.sources_absolutized {
+        eprintln!("note: output is in another directory; relative sources were made absolute");
+    }
+    println!("timeline {} -> {}", &r.before[..12], &r.after[..12]);
+    if r.written {
+        match r.journal_seq {
+            Some(s) => println!(
+                "wrote {} ({} ops), journal entry #{s}",
+                r.output.display(),
+                r.changes.len()
+            ),
+            None => println!("wrote {} ({} ops)", r.output.display(), r.changes.len()),
+        }
+    } else {
+        println!("dry run: nothing written ({} ops)", r.changes.len());
+    }
+    if let Some(i) = &r.render {
+        println!(
+            "video chunks to re-render: {:?} of {} (audio is re-mixed per render)",
+            i.dirty_chunks, i.total_chunks
+        );
+    }
+    if let Some(e) = &r.render_error {
+        println!("render impact unavailable: {e}");
+    }
+}
+
+fn print_diff(d: &ferrocut_engine::diff::TimelineDiff) {
+    if d.identical {
+        println!("identical ({})", &d.a_hash[..12]);
+        return;
+    }
+    let s = &d.summary;
+    println!(
+        "{} -> {}: clips +{} -{} ~{} (moved {}, trimmed {}, slipped {}), keyframe fields {}, settings {}, tracks {}",
+        &d.a_hash[..12],
+        &d.b_hash[..12],
+        s.clips_added,
+        s.clips_removed,
+        s.clips_changed,
+        s.moved,
+        s.trimmed,
+        s.slipped,
+        s.keyframe_changes,
+        s.settings_changed,
+        s.tracks_changed
+    );
+    for f in &d.settings {
+        println!("setting {}: {} -> {}", f.path, f.from, f.to);
+    }
+    for t in &d.tracks {
+        println!("track {} {:?} {}", t.kind, t.name, t.change);
+    }
+    for c in &d.clips {
+        println!(
+            "clip {:?} ({}, {}) {} [{}]  span {}..{}",
+            c.id,
+            c.kind,
+            c.track,
+            c.change,
+            c.tags.join(", "),
+            c.span.0,
+            c.span.1
+        );
+        for f in &c.fields {
+            println!("    {}: {} -> {}", f.path, f.from, f.to);
+        }
+    }
+    let spans: Vec<String> = d
+        .affected
+        .iter()
+        .map(|(a, b)| format!("{a}..{b}"))
+        .collect();
+    println!("affected: {}", spans.join(", "));
+    if let Some(r) = &d.render {
+        println!(
+            "re-render chunks {:?} of {} ({} of {} frames)",
+            r.dirty_chunks, r.total_chunks, r.dirty_frames, r.total_frames
+        );
+    }
+    if let Some(e) = &d.render_error {
+        println!("render impact unavailable: {e}");
+    }
 }
