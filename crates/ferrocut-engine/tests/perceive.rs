@@ -344,3 +344,32 @@ echo '{pass}'"#,
     assert!(added.is_empty());
     assert_eq!(rest, ["--expect-audio", "no"]);
 }
+
+#[test]
+fn usage_errors_on_extra_args_return_the_checkers_help() {
+    let d = tempfile::tempdir().unwrap();
+    let tl = d.path().join("tl.json");
+    std::fs::write(&tl, "{}").unwrap();
+    let bin = fake(
+        d.path(),
+        "picky",
+        r#"if [ "$2" = "--help" ]; then echo '  --loudness-target <LUFS>  integrated target'; exit 0; fi
+echo "error: unexpected argument '--target-lufs' found" >&2
+echo "Usage: ferrocut-perceive check --timeline <TIMELINE> --json <RENDER>" >&2
+exit 2"#,
+    );
+    let o = check(
+        Path::new("/x/out.mkv"),
+        &tl,
+        &CheckOptions {
+            extra_args: vec!["--target-lufs".into(), "-23".into()],
+            ..opts(bin.clone())
+        },
+    );
+    assert_eq!(o.status, CheckStatus::Error);
+    let m = o.message.unwrap();
+    assert!(
+        m.contains("unexpected argument") && m.contains("--loudness-target <LUFS>"),
+        "{m}"
+    );
+}

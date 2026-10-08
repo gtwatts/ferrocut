@@ -573,6 +573,15 @@ pub fn check(render: &Path, timeline: &Path, opts: &CheckOptions) -> CheckOutcom
         Ok(s) => interpret(s.code(), &out, &err),
         Err(m) => CheckOutcome::new(CheckStatus::Error, m),
     };
+    // A usage error on caller-supplied flags: hand back the checker's own
+    // option list so an agent can fix the call without a shell.
+    if o.exit_code == Some(2) && !opts.extra_args.is_empty() && err.contains("Usage:") {
+        let help = check_help(&bin, HELP_TIMEOUT);
+        if !help.trim().is_empty() {
+            let m = o.message.take().unwrap_or_default();
+            o.message = Some(format!("{m}\n\n`check --help`:\n{}", help.trim()));
+        }
+    }
     o.binary = Some(bin);
     o.added_args = added;
     o.elapsed_ms = t0.elapsed().as_millis();
