@@ -104,6 +104,10 @@ pub enum AdapterPreference {
     DiscreteNvidia,
     /// First adapter whose name contains this (case-insensitive) substring.
     NameContains(String),
+    /// A software (CPU) adapter: Mesa lavapipe on Vulkan preferred, then any
+    /// other `DeviceType::Cpu` adapter (e.g. llvmpipe on GL). Selected by
+    /// `FERROCUT_ADAPTER=cpu`.
+    Cpu,
     /// The adapter matching this one (name, vendor, device, backend), e.g. to
     /// recreate a lost device on the same GPU. Ignores `FERROCUT_ADAPTER`.
     SameAs(Box<wgpu::AdapterInfo>),
@@ -163,7 +167,8 @@ impl GpuContext {
         Self::with_requirements(pref, &GpuRequirements::none())
     }
 
-    /// Pick an adapter per `pref` (overridable with `FERROCUT_ADAPTER=<name substring>`)
+    /// Pick an adapter per `pref` (overridable with `FERROCUT_ADAPTER=<name substring>`,
+    /// or `FERROCUT_ADAPTER=cpu` for [`AdapterPreference::Cpu`])
     /// and create the device with `required ∪ (optional ∩ adapter)` features.
     pub fn with_requirements(
         pref: AdapterPreference,
@@ -171,6 +176,8 @@ impl GpuContext {
     ) -> Result<Self, GpuError> {
         let pref = match (std::env::var("FERROCUT_ADAPTER"), pref) {
             (_, AdapterPreference::SameAs(i)) => AdapterPreference::SameAs(i),
+            (_, AdapterPreference::Cpu) => AdapterPreference::Cpu,
+            (Ok(s), _) if s.eq_ignore_ascii_case("cpu") => AdapterPreference::Cpu,
             (Ok(s), _) if !s.is_empty() => AdapterPreference::NameContains(s),
             (_, p) => p,
         };
@@ -188,6 +195,12 @@ impl GpuContext {
                     .into_iter()
                     .find(|a| a.get_info().name.to_lowercase().contains(&s))
             }
+            AdapterPreference::Cpu => adapters
+                .into_iter()
+                .enumerate()
+                .filter(|(_, a)| a.get_info().device_type == wgpu::DeviceType::Cpu)
+                .max_by_key(|(i, a)| (a.get_info().backend == wgpu::Backend::Vulkan, -(*i as i64)))
+                .map(|(_, a)| a),
             AdapterPreference::SameAs(want) => adapters.into_iter().find(|a| {
                 let i = a.get_info();
                 (&i.name, i.vendor, i.device, i.backend)

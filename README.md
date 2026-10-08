@@ -31,6 +31,7 @@ cargo build --release
 ./target/release/ferrocut ffmpeg             # must say "license: LGPL version 2.1 or later"
 cargo test --release
 ./target/release/ferrocut adapters           # which GPU wgpu picks (discrete NVIDIA preferred; FERROCUT_ADAPTER=<name> overrides)
+./target/release/ferrocut render examples/demo.json -o out/demo-cpu.mkv --cpu   # software Vulkan (lavapipe), no GPU needed
 ./target/release/ferrocut plan examples/demo.json          # chunk keys, no decode/GPU
 ./target/release/ferrocut render examples/demo.json -o out/demo.mkv
 ./target/release/ferrocut render examples/demo-edit-opacity.json -o out/edit.mkv   # only chunks 8,9 re-render
@@ -41,7 +42,7 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
 ./target/release/ferrocut log out/av-slip.json && ./target/release/ferrocut undo out/av-slip.json
 ```
 
-- **Environment variables**: `FERROCUT_ADAPTER=<name substring>` picks the GPU;
+- **Environment variables**: `FERROCUT_ADAPTER=<name substring>` picks the GPU (`cpu`: the software adapter);
   `FERROCUT_LGPL_FFMPEG_PREFIX` (set by `.cargo/config.toml`) is the expected LGPL FFmpeg prefix;
   `FERROCUT_REQUIRE_LGPL_FFMPEG=1` fails the build on a non-LGPL fallback;
   `FERROCUT_FFMPEG_LIBDIR` overrides the embedded rpath (empty disables it).
@@ -50,10 +51,30 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
   FFmpeg's `av_rescale_rnd(.., AV_ROUND_NEAR_INF)` (tested against libavutil and a real mux + seek).
 - **Cache keys**: each frame's key is a Merkle hash of the node's parameters at `t`, `t`, and
   the keys of the inputs it pulls at `t`. A chunk's key hashes its frame keys plus the encoder
-  fingerprint. Chunks live in `<out dir>/.ferrocut-cache/chunks/<key>.mkv`; `--force` re-renders all.
+  fingerprint. Chunks live in `<out dir>/.ferrocut-cache/chunks/<adapter>/<key>.mkv`; `--force` re-renders
+  all. `<adapter>` hashes the adapter's name, ids, backend and driver version, because output is bit-exact
+  per adapter and driver but only perceptually equal across them, so a master never mixes chunks from two
+  adapters. Keys themselves stay adapter-free, so `plan` and `diff` need no GPU.
 - **Chunks** are `gop * gops_per_chunk` frames, GOP-aligned, each an independent closed-GOP encode.
 - **Determinism**: bit-exact on the same machine/driver (any `--jobs`). Across GPUs expect a
   perceptual match (NVIDIA vs Intel Arc on watts: SSIM 0.99989, PSNR 72.7 dB), not identical bytes.
+- **CPU-only rendering** (`ferrocut render --cpu`, `FERROCUT_ADAPTER=cpu`, the MCP `render` tool's `cpu: true`) runs the same
+  wgpu compositor on Mesa's software Vulkan driver, lavapipe (llvmpipe), with no separate code path.
+  `ferrocut adapters --cpu` shows the pick. Lavapipe ships in `mesa-vulkan-drivers` (on watts: Mesa 26.1.6,
+  `/usr/share/vulkan/icd.d/lvp_icd.json`), so nothing is built. Measured on watts (24 threads, 1080p24, load 4-10):
+
+  | | CPU (lavapipe) | NVIDIA RTX 5090 Laptop |
+  |---|---|---|
+  | `demo.json` fps | 37.5 (`-j 4`), 40.8 (`-j 8`), 39.0 (`-j 24`) | 68.8 (`-j 4`) |
+  | `demo-av.json` fps | 28.3 (`-j 4`), 29.6 (`-j 8`), 31.1 (`-j 24`) | 72.8 (`-j 4`) |
+  | `demo.json` blake3 | `f9ae266e…` | `2b5f6c89…` |
+  | `demo-av.json` blake3 | `25938728…` | `42cec359…` |
+
+  - Lavapipe is bit-exact run to run and across `-j`.
+  - Against the NVIDIA output: mean SSIM 0.99976 / 0.99991 (demo / demo-av; minimum 0.99104 on the last dissolve
+    frame / 0.99907) and PSNR 70.3 / 73.1 dB (minimum 60.0 / 63.5). The largest difference is 1 / 2 levels in
+    8 bits, on 0.61% / 0.32% of samples.
+  - Audio is computed on the CPU and identical on both adapters.
 - **FFmpeg (LGPL only)**: Ferrocut is Apache-2.0, so it links a shared, LGPL v2.1+ FFmpeg
   built in user space by `scripts/build-ffmpeg-lgpl.sh` (FFmpeg 9.0.2, signature-checked tarball;
   `--disable-autodetect`, no `--enable-gpl`/`--enable-nonfree`/`--enable-version3`; zlib +

@@ -44,6 +44,9 @@ enum Cmd {
         /// Retries per frame for transient (retryable) node errors.
         #[arg(long, default_value_t = 2)]
         retries: u32,
+        /// Render on a software (CPU) Vulkan adapter (Mesa lavapipe); same as FERROCUT_ADAPTER=cpu.
+        #[arg(long)]
+        cpu: bool,
     },
     /// Print the chunk plan (frame/chunk keys) without decoding or touching the GPU.
     Plan { timeline: PathBuf },
@@ -120,7 +123,11 @@ enum Cmd {
         json: bool,
     },
     /// List GPU adapters and show which one Ferrocut would pick.
-    Adapters,
+    Adapters {
+        /// Show the software (CPU) adapter `--cpu` would pick.
+        #[arg(long)]
+        cpu: bool,
+    },
     /// Show the FFmpeg libraries ferrocut is running against (version, license, configure flags).
     Ffmpeg,
 }
@@ -132,14 +139,14 @@ fn main() -> anyhow::Result<()> {
             let (v, l, c) = ferrocut_engine::media::ffmpeg_info();
             println!("version: {v}\nlicense: {l}\nconfiguration: {c}");
         }
-        Cmd::Adapters => {
+        Cmd::Adapters { cpu } => {
             for (i, a) in GpuContext::list_adapters().iter().enumerate() {
                 println!(
                     "[{i}] {} ({:?}, {:?}, vendor 0x{:04x}, driver {} {})",
                     a.name, a.device_type, a.backend, a.vendor, a.driver, a.driver_info
                 );
             }
-            let gpu = GpuContext::new(AdapterPreference::default())?;
+            let gpu = GpuContext::new(adapter_pref(cpu))?;
             println!("selected: {}", gpu.describe());
         }
         Cmd::Edit {
@@ -283,13 +290,14 @@ fn main() -> anyhow::Result<()> {
             report,
             timeout,
             retries,
+            cpu,
         } => {
             let started = std::time::Instant::now();
             let tl = Timeline::load(&timeline)?;
             let c = compile(&tl)?;
             // One device for the whole render, from what the graph's nodes declared.
             let gpu = SharedGpu::new(GpuContext::with_requirements(
-                AdapterPreference::default(),
+                adapter_pref(cpu),
                 &c.graph.gpu_requirements(),
             )?);
             eprintln!("adapter: {}", gpu.get().describe());
@@ -514,5 +522,13 @@ fn print_diff(d: &ferrocut_engine::diff::TimelineDiff) {
     }
     if let Some(e) = &d.render_error {
         println!("render impact unavailable: {e}");
+    }
+}
+
+fn adapter_pref(cpu: bool) -> AdapterPreference {
+    if cpu {
+        AdapterPreference::Cpu
+    } else {
+        AdapterPreference::default()
     }
 }

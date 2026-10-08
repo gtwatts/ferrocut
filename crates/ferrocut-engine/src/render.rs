@@ -126,6 +126,8 @@ pub struct RenderReport {
     pub chunk_restarts: u64,
     /// GPU contexts recreated after device loss.
     pub gpu_recreations: u64,
+    /// Where this adapter's chunks are cached (see [`adapter_tag`]).
+    pub chunk_dir: PathBuf,
     pub final_blake3: String,
     /// blake3 of the master's video packet payloads in order.
     pub video_blake3: String,
@@ -464,6 +466,25 @@ fn render_chunk_to(
     Ok(())
 }
 
+/// Cache namespace of an adapter: chunk files live in
+/// `<cache>/chunks/<adapter_tag>/<key>.mkv`. Output is bit-exact on one
+/// adapter + driver but only perceptually equal across adapters (e.g. NVIDIA
+/// vs. lavapipe), so a master must never mix chunks rendered on two of them.
+/// Chunk keys stay adapter-free, so plans and diffs need no GPU.
+pub fn adapter_tag(info: &wgpu::AdapterInfo) -> String {
+    let id = format!(
+        "{}|{:#x}|{:#x}|{:?}|{:?}|{}|{}",
+        info.name,
+        info.vendor,
+        info.device,
+        info.device_type,
+        info.backend,
+        info.driver,
+        info.driver_info
+    );
+    blake3::hash(id.as_bytes()).to_hex()[..16].to_string()
+}
+
 /// Render `tl` to `out`. `gpu` is the shared context; after device loss it
 /// holds the recreated one (see the module docs).
 pub fn render(
@@ -474,7 +495,10 @@ pub fn render(
     opts: &RenderOptions,
 ) -> anyhow::Result<RenderReport> {
     let t0 = Instant::now();
-    let chunk_dir = opts.cache_dir.join("chunks");
+    let chunk_dir = opts
+        .cache_dir
+        .join("chunks")
+        .join(adapter_tag(&gpu.get().info));
     std::fs::create_dir_all(&chunk_dir)
         .with_context(|| format!("creating {}", chunk_dir.display()))?;
     let plans = plan(tl, c);
@@ -651,6 +675,7 @@ pub fn render(
         sequential_resets: resets.load(Ordering::Relaxed),
         chunk_restarts: restarts.load(Ordering::Relaxed),
         gpu_recreations: gpu.recreations() - recreations_before,
+        chunk_dir: chunk_dir.clone(),
         final_blake3: file_blake3(out)?,
         video_blake3: stats.video_blake3,
         audio: match (audio_plan, audio_chunks) {
