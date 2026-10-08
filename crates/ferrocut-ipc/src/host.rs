@@ -27,10 +27,13 @@ pub struct HostSpec {
     pub exe: PathBuf,
     pub args: Vec<OsString>,
     pub env: Vec<(OsString, OsString)>,
-    /// If set, each process gets a fresh private directory (under the system
-    /// temp dir) whose path is passed in this environment variable. It is
-    /// removed after the process exits, even if it was SIGKILLed.
+    /// If set, each process gets a fresh private directory (under
+    /// [`HostSpec::temp_root`]) whose path is passed in this environment
+    /// variable. It is removed after the process exits, even if it was SIGKILLed.
     pub private_dir_env: Option<&'static str>,
+    /// Parent directory for private dirs; `None` = the system temp dir.
+    /// Tests set their own root so they can check exactly what they created.
+    pub temp_root: Option<PathBuf>,
     /// Stderr lines containing any of these substrings are known noise and
     /// are kept out of error messages.
     pub stderr_ignore: &'static [&'static str],
@@ -50,6 +53,7 @@ impl HostSpec {
             args: Vec::new(),
             env: Vec::new(),
             private_dir_env: None,
+            temp_root: None,
             stderr_ignore: &[],
             quit_timeout: Duration::from_secs(2),
         }
@@ -85,7 +89,8 @@ impl Host {
         cmd.args(&spec.args).envs(spec.env.iter().map(|(k, v)| (k, v)));
         let private_dir = match spec.private_dir_env {
             Some(var) => {
-                let dir = std::env::temp_dir().join(format!(
+                let root = spec.temp_root.clone().unwrap_or_else(std::env::temp_dir);
+                let dir = root.join(format!(
                     "{}-{}-{}",
                     spec.tag,
                     std::process::id(),

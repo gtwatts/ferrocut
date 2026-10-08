@@ -138,23 +138,49 @@ fn drop_quits_politely() {
 
 #[test]
 fn missing_binary_is_permanent_and_leaves_nothing() {
+    // A private temp root: tests run in parallel and create private dirs in
+    // the shared temp dir, so only an empty root of our own proves no leak.
+    let root = TempRoot::new("missing-binary");
     let mut s = spec();
     s.exe = "/nonexistent/ferrocut-host".into();
-    let before = temp_entries();
+    s.temp_root = Some(root.0.clone());
     let Err(e) = Host::spawn(&s) else { panic!("spawned a missing binary") };
     assert!(matches!(e, IpcError::Spawn { .. }), "{e}");
     assert!(e.to_string().starts_with("failed to start fake host /nonexistent/ferrocut-host"), "{e}");
     assert_eq!(e.kind(), ErrorKind::Permanent);
-    assert!(temp_entries().is_subset(&before), "private dir leaked");
+    let left: Vec<_> = std::fs::read_dir(&root.0).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+    assert!(left.is_empty(), "private dir leaked: {left:?}");
 }
 
-fn temp_entries() -> std::collections::HashSet<String> {
-    let me = format!("ferrocut-ipc-test-{}-", std::process::id());
-    std::fs::read_dir(std::env::temp_dir())
-        .unwrap()
-        .filter_map(|e| e.ok()?.file_name().into_string().ok())
-        .filter(|n| n.starts_with(&me))
-        .collect()
+#[test]
+fn private_dir_lives_under_temp_root() {
+    let root = TempRoot::new("temp-root");
+    let mut s = spec();
+    s.temp_root = Some(root.0.clone());
+    let mut h = Host::spawn(&s).unwrap();
+    h.handshake(&["fake-host", "1"], T).unwrap();
+    let dir = h.private_dir().unwrap().to_path_buf();
+    assert_eq!(dir.parent(), Some(root.0.as_path()));
+    drop(h);
+    assert_eq!(std::fs::read_dir(&root.0).unwrap().count(), 0, "private dir removed");
+}
+
+/// A per-test directory, removed on drop.
+struct TempRoot(std::path::PathBuf);
+
+impl TempRoot {
+    fn new(name: &str) -> Self {
+        let d = std::env::temp_dir().join(format!("ferrocut-ipc-root-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir(&d).unwrap();
+        TempRoot(d)
+    }
+}
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 #[test]
