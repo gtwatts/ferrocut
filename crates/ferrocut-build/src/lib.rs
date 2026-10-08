@@ -24,13 +24,12 @@
 //! disables the rpath); `FERROCUT_REQUIRE_LGPL_FFMPEG=1` turns the fallback
 //! warning into a build error.
 //!
+//! In a `build.rs` `main`:
+//!
 //! ```no_run
-//! // build.rs
-//! fn main() {
-//!     let rpaths = ferrocut_build::emit_ffmpeg_rpaths();
-//!     // Optional: export them via `links` metadata for dependents' binaries.
-//!     println!("cargo:rpaths={}", rpaths.join(";"));
-//! }
+//! let rpaths = ferrocut_build::emit_ffmpeg_rpaths();
+//! // Optional: export them via `links` metadata for dependents' binaries.
+//! println!("cargo:rpaths={}", rpaths.join(";"));
 //! ```
 
 use std::path::{Component, Path, PathBuf};
