@@ -483,6 +483,11 @@ fn edit_impl(
                 "nest: {} appeared meanwhile; not overwriting it",
                 path.display()
             );
+            // `comps/intro.json` in a fresh project: create `comps/`.
+            if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir)
+                    .with_context(|| format!("nest: creating {}", dir.display()))?;
+            }
             write_timeline(path, comp)?;
         }
     }

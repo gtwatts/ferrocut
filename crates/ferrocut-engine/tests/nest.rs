@@ -169,8 +169,8 @@ fn nest_writes_a_comp_and_unnest_restores_the_clips() {
     )
     .unwrap();
     assert_eq!(r.new_comps.len(), 1);
-    assert!(!d.path().join("comps/at.json").exists());
-    std::fs::create_dir_all(d.path().join("comps")).unwrap();
+    assert!(!d.path().join("comps").exists());
+    // comps/ does not exist yet: nest creates it.
     let r = edit(
         &tl,
         r#"[{"op": "nest", "clips": ["a", "t"], "path": "comps/at.json", "id": "at"}]"#,
