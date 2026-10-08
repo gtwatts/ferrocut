@@ -57,9 +57,25 @@ pub struct TransformSpec {
     /// Scale factor. Default 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<Scale>,
-    /// Degrees, clockwise. Default 0.
+    /// Degrees, clockwise. Default 0. On a 3D layer this is the Z rotation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rotation: Option<Animatable>,
+    /// 3D layers only (see [`crate::layer3d`]): depth of the position, pixels
+    /// (positive = away from the viewer). Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_z: Option<Animatable>,
+    /// 3D layers only: depth of the anchor point. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_z: Option<Animatable>,
+    /// 3D layers only: orientation `[x, y, z]` in degrees. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub orientation: Option<[Animatable; 3]>,
+    /// 3D layers only: X rotation, degrees. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation_x: Option<Animatable>,
+    /// 3D layers only: Y rotation, degrees. Default 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation_y: Option<Animatable>,
 }
 
 /// The transform's parameters at one instant.
@@ -314,7 +330,55 @@ impl TransformSpec {
         if let Some(r) = &self.rotation {
             v.push(("rotation", r));
         }
+        // 3D fields only when present, so 2D specs hash as before.
+        v.extend(self.all_3d());
         v
+    }
+
+    fn all_3d(&self) -> Vec<(&'static str, &Animatable)> {
+        let mut v = Vec::new();
+        if let Some(a) = &self.position_z {
+            v.push(("position_z", a));
+        }
+        if let Some(a) = &self.anchor_z {
+            v.push(("anchor_z", a));
+        }
+        if let Some([x, y, z]) = &self.orientation {
+            v.push(("orientation.x", x));
+            v.push(("orientation.y", y));
+            v.push(("orientation.z", z));
+        }
+        if let Some(a) = &self.rotation_x {
+            v.push(("rotation_x", a));
+        }
+        if let Some(a) = &self.rotation_y {
+            v.push(("rotation_y", a));
+        }
+        v
+    }
+
+    /// Does the spec set any 3D-only field (which needs the clip's `three_d`)?
+    pub fn has_3d_fields(&self) -> Option<&'static str> {
+        self.all_3d().first().map(|(n, _)| *n)
+    }
+
+    /// The 3D-only parameters at clip-local `t`:
+    /// `[position_z, anchor_z, orientation x, y, z, rotation_x, rotation_y]`.
+    pub fn at_3d(&self, t: RationalTime) -> [f64; 7] {
+        let e = |a: &Option<Animatable>| a.as_ref().map_or(0.0, |a| a.eval(t));
+        let o = self
+            .orientation
+            .as_ref()
+            .map_or([0.0; 3], |[x, y, z]| [x.eval(t), y.eval(t), z.eval(t)]);
+        [
+            e(&self.position_z),
+            e(&self.anchor_z),
+            o[0],
+            o[1],
+            o[2],
+            e(&self.rotation_x),
+            e(&self.rotation_y),
+        ]
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -340,6 +404,14 @@ impl TransformSpec {
                 Scale::Xy([x, y]) => Scale::Xy([x.shifted(dt), y.shifted(dt)]),
             }),
             rotation: self.rotation.as_ref().map(|r| r.shifted(dt)),
+            position_z: self.position_z.as_ref().map(|a| a.shifted(dt)),
+            anchor_z: self.anchor_z.as_ref().map(|a| a.shifted(dt)),
+            orientation: self
+                .orientation
+                .as_ref()
+                .map(|[x, y, z]| [x.shifted(dt), y.shifted(dt), z.shifted(dt)]),
+            rotation_x: self.rotation_x.as_ref().map(|a| a.shifted(dt)),
+            rotation_y: self.rotation_y.as_ref().map(|a| a.shifted(dt)),
         }
     }
 

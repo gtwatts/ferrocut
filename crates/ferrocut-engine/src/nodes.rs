@@ -11,6 +11,10 @@ use ferrocut_core::{
 
 use crate::blend::{BlendMode, MatteMode};
 use crate::compositor::{Compositor, compositor};
+use crate::layer3d::{
+    CameraSpec, LAYER3D_VERSION, Mat3, MotionBlurSpec, affine_homography, layer_depth,
+    layer_homography, plan_multi,
+};
 use crate::media::decode::Decoder;
 use crate::retime::{Sample, Sampling, TimeMap};
 use crate::transform::{TRANSFORM_VERSION, TransformAt, TransformSpec};
@@ -261,18 +265,121 @@ impl RenderNode for ClipNode {
     }
 }
 
-/// Animated 2D layer transform of one clip (see [`crate::transform`]). Sits
-/// between the clip and its track; keyframe times are clip-local.
+/// Animated layer transform of one clip (see [`crate::transform`]), and its
+/// 3D projection and motion blur (see [`crate::layer3d`]). Sits between the
+/// clip and its track; keyframe times are clip-local, the camera's are
+/// timeline times.
 pub struct TransformNode {
     pub start: RationalTime,
     pub spec: TransformSpec,
     pub width: u32,
     pub height: u32,
+    /// The clip is a 3D layer seen through `camera` (default camera if `None`).
+    pub three_d: bool,
+    pub camera: Option<CameraSpec>,
+    /// Motion blur (the timeline's settings, when the clip opted in).
+    pub blur: Option<MotionBlurSpec>,
+    /// Timeline frame rate (shutter timing).
+    pub fps: FrameRate,
+}
+
+/// What one transformed frame needs.
+enum Pose {
+    /// One affine resample (or none): the plain 2D path.
+    Affine(TransformAt),
+    /// Averaged projective resamples, one per sample time.
+    Multi(Vec<PoseSample>),
+}
+
+struct PoseSample {
+    /// Timeline time of the sample.
+    t: RationalTime,
+    at: TransformAt,
+    d3: Option<[f64; 7]>,
 }
 
 impl TransformNode {
     pub fn at(&self, t: RationalTime) -> TransformAt {
         self.spec.at(t - self.start, self.width, self.height)
+    }
+
+    fn sample(&self, t: RationalTime) -> PoseSample {
+        let local = t - self.start;
+        PoseSample {
+            t,
+            at: self.spec.at(local, self.width, self.height),
+            d3: self.three_d.then(|| self.spec.at_3d(local)),
+        }
+    }
+
+    fn pose(&self, t: RationalTime) -> Pose {
+        let times = match &self.blur {
+            Some(b) => b.sample_times(t, self.fps),
+            None => vec![t],
+        };
+        let samples: Vec<PoseSample> = times.into_iter().map(|s| self.sample(s)).collect();
+        if !self.three_d {
+            // A 2D layer whose samples all share one pose renders (and keys)
+            // exactly like the unblurred layer.
+            let first = samples[0].at;
+            let same = |a: &TransformAt| a.hash_bytes() == first.hash_bytes();
+            if samples.iter().all(|s| same(&s.at)) {
+                return Pose::Affine(first);
+            }
+        }
+        Pose::Multi(samples)
+    }
+
+    /// Frame key bytes of a multi-sample pose: the evaluated parameters (the
+    /// input's key covers the pixels and pixel aspect, the camera spec the
+    /// camera; camera times only matter when it is animated).
+    fn multi_key(&self, samples: &[PoseSample]) -> Vec<u8> {
+        let mut h = blake3::Hasher::new();
+        h.update(LAYER3D_VERSION);
+        h.update(&[u8::from(self.three_d)]);
+        h.update(&self.width.to_le_bytes());
+        h.update(&self.height.to_le_bytes());
+        let cam_anim = self.three_d && self.camera.as_ref().is_some_and(CameraSpec::is_animated);
+        if self.three_d
+            && let Some(c) = &self.camera
+        {
+            c.hash_into(&mut h);
+        }
+        for s in samples {
+            h.update(&s.at.hash_bytes());
+            if let Some(d) = s.d3 {
+                for v in d {
+                    h.update(&v.to_bits().to_le_bytes());
+                }
+            }
+            if cam_anim {
+                h.update(&s.t.hash_bytes());
+            }
+        }
+        h.finalize().as_bytes().to_vec()
+    }
+
+    /// Forward homographies of a multi-sample pose for a frame with pixel
+    /// aspect `par`.
+    fn mats(&self, samples: &[PoseSample], par: f64) -> Vec<Mat3> {
+        samples
+            .iter()
+            .map(|s| match s.d3 {
+                Some(d3) => {
+                    layer_homography(
+                        &s.at,
+                        d3,
+                        self.camera.as_ref(),
+                        s.t,
+                        self.width,
+                        self.height,
+                        par,
+                    )
+                    .0
+                }
+                None => affine_homography(&s.at, par),
+            })
+            .collect()
     }
 }
 
@@ -290,6 +397,18 @@ impl RenderNode for TransformNode {
         let mut h = blake3::Hasher::new();
         h.update(&self.start.hash_bytes());
         self.spec.hash_into(&mut h);
+        // New switches only add bytes when set, so 2D keys are unchanged.
+        if self.three_d {
+            h.update(b"three_d");
+            if let Some(c) = &self.camera {
+                c.hash_into(&mut h);
+            }
+        }
+        if let Some(b) = &self.blur {
+            h.update(b"motion_blur");
+            h.update(&b.hash_bytes());
+            h.update(&self.fps.hash_bytes());
+        }
         NodeHash::of(
             "transform",
             &[
@@ -302,11 +421,11 @@ impl RenderNode for TransformNode {
     /// The evaluated parameters at `t` (the input's key covers the pixels and
     /// pixel aspect), so a held or repeated pose reuses cached frames.
     fn content_hash_at(&self, t: RationalTime) -> NodeHash {
-        let a = self.at(t);
-        if a.is_identity() {
-            return NodeHash::of("transform.identity", &[]);
+        match self.pose(t) {
+            Pose::Affine(a) if a.is_identity() => NodeHash::of("transform.identity", &[]),
+            Pose::Affine(a) => NodeHash::of("transform.at", &[TRANSFORM_VERSION, &a.hash_bytes()]),
+            Pose::Multi(s) => NodeHash::of("transform.ms", &[&self.multi_key(&s)]),
         }
-        NodeHash::of("transform.at", &[TRANSFORM_VERSION, &a.hash_bytes()])
     }
     fn pulls(&self, t: RationalTime) -> Vec<Pull> {
         vec![Pull { input: 0, time: t }]
@@ -317,19 +436,174 @@ impl RenderNode for TransformNode {
         t: RationalTime,
         inputs: &[Arc<Frame>],
     ) -> Result<Arc<Frame>, NodeError> {
-        let a = self.at(t);
-        if a.is_identity() {
-            return Ok(inputs[0].clone());
-        }
         let f = &inputs[0];
+        let empty = ferrocut_core::PixelRect::new(0, 0, 1, 1);
+        match self.pose(t) {
+            Pose::Affine(a) if a.is_identity() => Ok(inputs[0].clone()),
+            Pose::Affine(a) => {
+                let comp = compositor(ctx)?;
+                let fwd = a.affine(f.pixel_aspect.to_f64());
+                Ok(Arc::new(
+                    match crate::transform::plan(&fwd, f.data_window, f.width, f.height) {
+                        Some(k) => comp.transform(ctx, f, &k)?,
+                        None => comp.clear_window(ctx, f, empty),
+                    },
+                ))
+            }
+            Pose::Multi(s) => {
+                let comp = compositor(ctx)?;
+                let mats = self.mats(&s, f.pixel_aspect.to_f64());
+                Ok(Arc::new(
+                    match plan_multi(&mats, f.data_window, f.width, f.height) {
+                        Some(k) => comp.transform_multi(ctx, f, &k)?,
+                        None => comp.clear_window(ctx, f, empty),
+                    },
+                ))
+            }
+        }
+    }
+}
+
+/// Per-clip info the painter's sort needs (see [`StackNode`]).
+#[derive(Clone, Debug)]
+pub struct StackClip {
+    pub range: ClipRange,
+    pub mode: BlendMode,
+    /// `Some` for a 3D layer: its transform (clip-local keys) and start.
+    pub depth: Option<(TransformSpec, RationalTime)>,
+}
+
+/// The timeline's layer stack when it has 3D layers: input `i` is layer `i`
+/// (a track after its matte, bottom to top) and `layers[i]` its clips
+/// (sorted by start, later wins, like [`SequenceNode`]). At each time,
+/// layers in a gap are skipped, runs of consecutive 3D layers are drawn
+/// farthest first (stable, so equal depths keep track order) and 2D layers
+/// stay in track order, splitting runs (After Effects' rule). Each layer
+/// composites onto the ones drawn before it with its clip's blend mode;
+/// the first is taken as is, like the bottom track of the plain stack.
+pub struct StackNode {
+    pub layers: Vec<Vec<StackClip>>,
+    pub camera: Option<CameraSpec>,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl StackNode {
+    fn top_at(clips: &[StackClip], t: RationalTime) -> Option<&StackClip> {
+        clips
+            .iter()
+            .rev()
+            .find(|c| c.range.start <= t && t < c.range.end)
+    }
+
+    /// Draw order at `t`: (layer, blend mode), first drawn first.
+    pub fn order(&self, t: RationalTime) -> Vec<(usize, BlendMode)> {
+        let mut out: Vec<(usize, BlendMode)> = Vec::new();
+        let mut run: Vec<(usize, BlendMode, f64)> = Vec::new();
+        let flush = |run: &mut Vec<(usize, BlendMode, f64)>, out: &mut Vec<(usize, BlendMode)>| {
+            run.sort_by(|a, b| b.2.total_cmp(&a.2));
+            out.extend(run.drain(..).map(|(i, m, _)| (i, m)));
+        };
+        for (i, clips) in self.layers.iter().enumerate() {
+            let Some(c) = Self::top_at(clips, t) else {
+                continue;
+            };
+            match &c.depth {
+                Some((spec, start)) => {
+                    let d = layer_depth(
+                        spec,
+                        *start,
+                        self.camera.as_ref(),
+                        t,
+                        self.width,
+                        self.height,
+                    );
+                    run.push((i, c.mode, d));
+                }
+                None => {
+                    flush(&mut run, &mut out);
+                    out.push((i, c.mode));
+                }
+            }
+        }
+        flush(&mut run, &mut out);
+        out
+    }
+}
+
+impl RenderNode for StackNode {
+    fn kind(&self) -> &'static str {
+        "stack"
+    }
+    fn batches_gpu_work(&self) -> bool {
+        true
+    }
+    fn supports_data_window(&self) -> bool {
+        true
+    }
+    fn content_hash(&self) -> NodeHash {
+        let mut h = blake3::Hasher::new();
+        h.update(LAYER3D_VERSION);
+        h.update(&self.width.to_le_bytes());
+        h.update(&self.height.to_le_bytes());
+        if let Some(c) = &self.camera {
+            c.hash_into(&mut h);
+        }
+        for clips in &self.layers {
+            h.update(b"layer");
+            for c in clips {
+                h.update(&c.range.start.hash_bytes());
+                h.update(&c.range.end.hash_bytes());
+                h.update(c.mode.name().as_bytes());
+                h.update(&[0]);
+                if let Some((spec, start)) = &c.depth {
+                    h.update(b"3d");
+                    h.update(&start.hash_bytes());
+                    spec.hash_into(&mut h);
+                }
+            }
+        }
+        NodeHash::of("stack", &[h.finalize().as_bytes()])
+    }
+    /// The draw order and modes at `t` (the pulled layers' keys cover the
+    /// pixels).
+    fn content_hash_at(&self, t: RationalTime) -> NodeHash {
+        let mut b = Vec::new();
+        b.extend_from_slice(&self.width.to_le_bytes());
+        b.extend_from_slice(&self.height.to_le_bytes());
+        for (i, m) in self.order(t) {
+            b.extend_from_slice(&(i as u32).to_le_bytes());
+            b.extend_from_slice(m.name().as_bytes());
+            b.push(0);
+        }
+        NodeHash::of("stack.at", &[&b])
+    }
+    fn pulls(&self, t: RationalTime) -> Vec<Pull> {
+        self.order(t)
+            .into_iter()
+            .map(|(input, _)| Pull { input, time: t })
+            .collect()
+    }
+    fn render(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        t: RationalTime,
+        inputs: &[Arc<Frame>],
+    ) -> Result<Arc<Frame>, NodeError> {
         let comp = compositor(ctx)?;
-        let fwd = a.affine(f.pixel_aspect.to_f64());
-        Ok(Arc::new(
-            match crate::transform::plan(&fwd, f.data_window, f.width, f.height) {
-                Some(k) => comp.transform(ctx, f, &k)?,
-                None => comp.clear_window(ctx, f, ferrocut_core::PixelRect::new(0, 0, 1, 1)),
-            },
-        ))
+        let order = self.order(t);
+        let Some(first) = inputs.first() else {
+            return Ok(Arc::new(comp.clear(ctx, self.width, self.height)));
+        };
+        let mut out = first.clone();
+        for (f, (_, m)) in inputs.iter().zip(&order).skip(1) {
+            out = Arc::new(if m.is_normal() {
+                comp.over(ctx, f, &out)?
+            } else {
+                comp.blend(ctx, f, &out, *m)?
+            });
+        }
+        Ok(out)
     }
 }
 

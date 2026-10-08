@@ -152,8 +152,6 @@ fn sampling() -> Value {
 /// A clip for `ripple_insert`: a video clip (on a video track) or an audio
 /// clip (on an audio track; only id/source/source_in/duration/audio).
 pub fn clip() -> Value {
-    let pair =
-        |d: &str| json!({ "type": "array", "minItems": 2, "maxItems": 2, "items": animatable(d) });
     json!({
         "description": "Clip object; its start is set to `at`. Audio-track clips accept only id, source, source_in, duration, audio.",
         "type": "object",
@@ -164,16 +162,9 @@ pub fn clip() -> Value {
             "source_in": rational("source time of the clip's first frame (default 0)"),
             "duration": rational("clip length in seconds (> 0)"),
             "opacity": animatable("0..1, default 1"),
-            "transform": {
-                "type": "object",
-                "properties": {
-                    "position": pair("pixels [x, y]"),
-                    "anchor": pair("pixels [x, y] in the source"),
-                    "scale": { "anyOf": [ animatable("uniform scale"), pair("per-axis scale [x, y]") ] },
-                    "rotation": animatable("degrees, clockwise")
-                },
-                "additionalProperties": false
-            },
+            "transform": transform(),
+            "three_d": three_d(),
+            "motion_blur": clip_motion_blur(),
             "transition_in": {
                 "type": "object",
                 "properties": {
@@ -695,13 +686,55 @@ fn transform() -> Value {
     let pair =
         |d: &str| json!({ "type": "array", "minItems": 2, "maxItems": 2, "items": animatable(d) });
     json!({
-        "description": "2D layer transform (After Effects convention); key times clip-local. Defaults are the identity: position and anchor at the frame center, scale 1, rotation 0.",
+        "description": "Layer transform (After Effects convention); key times clip-local. Defaults are the identity: position and anchor at the frame center, scale 1, rotation 0. position_z, anchor_z, rotation_x, rotation_y and orientation need the clip's three_d switch.",
         "type": "object",
         "properties": {
             "position": pair("output pixels [x, y] where the anchor lands"),
             "anchor": pair("source pixels [x, y] of the pivot"),
             "scale": { "anyOf": [ animatable("uniform scale factor (1 = 100 %)"), pair("per-axis scale [x, y]") ] },
-            "rotation": animatable("degrees, clockwise")
+            "rotation": animatable("degrees, clockwise (the Z rotation of a 3D layer)"),
+            "position_z": animatable("3D layers: depth of the position, pixels, positive = away from the viewer (default 0)"),
+            "anchor_z": animatable("3D layers: depth of the anchor point, pixels (default 0)"),
+            "rotation_x": animatable("3D layers: X rotation, degrees; positive tilts the bottom edge away"),
+            "rotation_y": animatable("3D layers: Y rotation, degrees; positive brings the right edge towards the viewer"),
+            "orientation": { "type": "array", "minItems": 3, "maxItems": 3, "items": animatable("degrees"), "description": "3D layers: orientation [x, y, z], applied outside the X/Y/Z rotations" }
+        },
+        "additionalProperties": false
+    })
+}
+
+fn three_d() -> Value {
+    json!({ "type": "boolean", "default": false, "description": "After Effects 3D layer switch: a card in 3D space seen through the timeline camera; consecutive 3D layers are depth-sorted (farthest first), 2D layers split the runs" })
+}
+
+fn clip_motion_blur() -> Value {
+    json!({ "type": "boolean", "default": false, "description": "After Effects layer motion blur switch: blur this layer's transform (and camera) motion; needs the timeline's motion_blur" })
+}
+
+fn camera() -> Value {
+    let triple =
+        |d: &str| json!({ "type": "array", "minItems": 3, "maxItems": 3, "items": animatable(d) });
+    json!({
+        "description": "The camera 3D layers are seen through; keyframes in timeline time. Defaults: After Effects' 50 mm camera (zoom = width*50/36 at [w/2, h/2, -zoom] looking at [w/2, h/2, 0]), which shows an untransformed 3D layer exactly like the 2D layer. No lights, shadows or depth of field.",
+        "type": "object",
+        "properties": {
+            "position": triple("camera position [x, y, z], output pixels"),
+            "point_of_interest": triple("the point the camera looks at [x, y, z]"),
+            "zoom": animatable("distance in pixels at which a layer appears at 100 %, > 0; exclusive with fov_deg"),
+            "fov_deg": animatable("horizontal angle of view, degrees, (0, 180); exclusive with zoom")
+        },
+        "additionalProperties": false
+    })
+}
+
+fn motion_blur() -> Value {
+    json!({
+        "description": "Motion blur for clips with motion_blur: true (After Effects composition switch and shutter). Each frame averages `samples` resampled copies of the layer at sub-frame times t + (phase + angle*(i+1/2)/samples)/360/fps; the layer content is the frame at t. Absent = off.",
+        "type": "object",
+        "properties": {
+            "shutter_angle": rational("degrees, [0, 720], default 180"),
+            "shutter_phase": rational("degrees, [-360, 360], default -90"),
+            "samples": { "type": "integer", "minimum": 2, "maximum": 64, "default": 16, "description": "sub-frame samples per frame, 2..64" }
         },
         "additionalProperties": false
     })
@@ -749,6 +782,8 @@ fn video_clip() -> Value {
             "duration": rational("length in seconds, > 0; source_in + duration must not exceed the media"),
             "opacity": animatable("0..1, default 1; keyframes clip-local"),
             "transform": transform(),
+            "three_d": three_d(),
+            "motion_blur": clip_motion_blur(),
             "transition_in": {
                 "description": "Dissolve from the previous clip on this track. The previous clip must overlap this one by at least `duration` (use the add_transition op, which makes the overlap from handles).",
                 "anyOf": [
@@ -861,7 +896,9 @@ pub fn timeline() -> Value {
                     }
                 },
                 "additionalProperties": false
-            }
+            },
+            "camera": camera(),
+            "motion_blur": motion_blur()
         },
         "required": ["output", "tracks"],
         "additionalProperties": false

@@ -106,7 +106,15 @@ fn timelines_built_with_every_op_validate() {
       {"op":"split","clip":"b","at":"7"},
       {"op":"add_clip","track":"V1","generator":{"type":"radial_gradient","radius":"10","end_color":["0","0","1","1/2"]},"duration":"2"},
       {"op":"set_keyframes","clip":"radial_gradient","param":"generator.center.x","keyframes":[{"t":"0","v":"0"},{"t":"2","v":"64"}]},
-      {"op":"add_clip","track":"V1","generator":{"type":"solid","color":["1","1","1"]},"duration":"1"}
+      {"op":"add_clip","track":"V1","generator":{"type":"solid","color":["1","1","1"]},"duration":"1"},
+      {"op":"set_param","clip":"solid","param":"three_d","value":true},
+      {"op":"set_param","clip":"solid","param":"motion_blur","value":true},
+      {"op":"set_keyframes","clip":"solid","param":"transform.rotation_y","keyframes":[{"t":"0","v":"0"},{"t":"1","v":"90"}]},
+      {"op":"set_param","clip":"solid","param":"transform.orientation","value":["10","0","0"]},
+      {"op":"set_param","clip":"solid","param":"transform.position_z","value":"-20"},
+      {"op":"set_param","param":"camera.point_of_interest.z","value":"50"},
+      {"op":"set_param","param":"camera.fov_deg","value":"60"},
+      {"op":"set_param","param":"motion_blur","value":{"samples":"8","shutter_angle":"270"}}
     ]"#,
     )
     .unwrap();

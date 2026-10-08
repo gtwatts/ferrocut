@@ -306,6 +306,10 @@ fn keyframed_parameters_drive_frame_keys() {
         spec,
         width: W,
         height: H,
+        three_d: false,
+        camera: None,
+        blur: None,
+        fps: ferrocut_core::Rational::from_int(24),
     };
     assert_eq!(
         node.content_hash_at(secs(2, 1)),

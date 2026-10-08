@@ -11,7 +11,8 @@ use crate::comp::{CompStack, is_comp};
 use crate::generator::GeneratorNode;
 use crate::graph::{Graph, NodeId};
 use crate::nodes::{
-    BlendNode, ClipNode, ClipRange, MatteNode, OverNode, SequenceNode, SourceNode, TransformNode,
+    BlendNode, ClipNode, ClipRange, MatteNode, OverNode, SequenceNode, SourceNode, StackClip,
+    StackNode, TransformNode,
 };
 use crate::timeline::Timeline;
 
@@ -54,6 +55,9 @@ fn build(
     stack: &mut CompStack,
 ) -> anyhow::Result<NodeId> {
     let (w, h) = (tl.output.width, tl.output.height);
+    // Painter's sort only when there are 3D layers (otherwise the plain
+    // over/blend chain, so 2D graphs and keys are unchanged).
+    let any_3d = tl.tracks.iter().any(|t| t.clips.iter().any(|c| c.three_d));
     let mut track_outputs = Vec::new();
     for track in &tl.tracks {
         let mut clips: Vec<_> = track.clips.iter().collect();
@@ -61,6 +65,7 @@ fn build(
         let mut clip_ids = Vec::new();
         let mut ranges = Vec::new();
         let mut modes = Vec::new();
+        let mut stack_clips = Vec::new();
         for c in clips {
             let key = c.source.canonicalize().unwrap_or_else(|_| c.source.clone());
             let (src, source_fps) = match sources.get(&key) {
@@ -113,15 +118,31 @@ fn build(
                 source_fps,
             };
             let mut top = g.add(Arc::new(clip), vec![src]);
-            if let Some(spec) = &c.transform {
+            let blur = tl.motion_blur.filter(|_| c.motion_blur);
+            if c.transform.is_some() || c.three_d || blur.is_some() {
                 let node = TransformNode {
                     start: c.start,
-                    spec: spec.clone(),
+                    spec: c.transform.clone().unwrap_or_default(),
                     width: w,
                     height: h,
+                    three_d: c.three_d,
+                    camera: tl.camera.clone().filter(|_| c.three_d),
+                    blur,
+                    fps: tl.output.fps,
                 };
                 top = g.add(Arc::new(node), vec![top]);
             }
+            stack_clips.push(StackClip {
+                range: ClipRange {
+                    start: c.start,
+                    end: c.end(),
+                    dissolve_in: c.dissolve(),
+                },
+                mode: c.blend_mode,
+                depth: c
+                    .three_d
+                    .then(|| (c.transform.clone().unwrap_or_default(), c.start)),
+            });
             clip_ids.push(top);
             ranges.push(ClipRange {
                 start: c.start,
@@ -139,7 +160,7 @@ fn build(
         let blend = BlendNode {
             ranges: seq.ranges.iter().copied().zip(modes).collect(),
         };
-        track_outputs.push((g.add(Arc::new(seq), clip_ids), blend));
+        track_outputs.push((g.add(Arc::new(seq), clip_ids), blend, stack_clips));
     }
     // Stack bottom to top. A matted track takes the track above as its
     // matte source (hook: other matte sources plug in here), and that track
@@ -147,12 +168,20 @@ fn build(
     let mut out: Option<NodeId> = None;
     let mut ti = 0;
     let mut outputs = track_outputs.into_iter();
-    while let Some((mut layer, blend)) = outputs.next() {
+    let mut stack_layers = Vec::new();
+    let mut stack_inputs = Vec::new();
+    while let Some((mut layer, blend, stack_clips)) = outputs.next() {
         if let Some(m) = &tl.tracks[ti].matte {
             let crate::blend::MatteSource::TrackAbove = m.source;
-            let (matte, _) = outputs.next().context("track matte needs a track above")?;
+            let (matte, _, _) = outputs.next().context("track matte needs a track above")?;
             layer = g.add(Arc::new(MatteNode { mode: m.mode }), vec![layer, matte]);
             ti += 1;
+        }
+        if any_3d {
+            stack_layers.push(stack_clips);
+            stack_inputs.push(layer);
+            ti += 1;
+            continue;
         }
         out = Some(match out {
             None => layer,
@@ -162,6 +191,15 @@ fn build(
             Some(bg) => g.add(Arc::new(blend), vec![layer, bg]),
         });
         ti += 1;
+    }
+    if any_3d {
+        let node = StackNode {
+            layers: stack_layers,
+            camera: tl.camera.clone(),
+            width: w,
+            height: h,
+        };
+        return Ok(g.add(Arc::new(node), stack_inputs));
     }
     Ok(out.expect("at least one track"))
 }

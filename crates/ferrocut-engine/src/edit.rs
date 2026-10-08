@@ -1594,6 +1594,8 @@ fn add_clip(
             duration,
             opacity: Animatable::constant(Rational::ONE),
             transform: None,
+            three_d: false,
+            motion_blur: false,
             transition_in: None,
             speed: crate::timeline::one(),
             time_remap: None,
@@ -2169,6 +2171,9 @@ fn nest(
             sample_rate: tl.audio.sample_rate,
             ..Default::default()
         },
+        // 3D layers and motion blur look the same inside the comp.
+        camera: tl.camera.as_ref().map(|c| c.shifted(-s0.0)),
+        motion_blur: tl.motion_blur,
     };
     for &ti in &used {
         let mut clips: Vec<Clip> = sel

@@ -43,6 +43,27 @@ struct TransformParams {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct MsSample {
+    r0: [f32; 4],
+    r1: [f32; 4],
+    r2: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct MsParams {
+    filt: [f32; 4],
+    src_origin: [i32; 2],
+    dst_origin: [i32; 2],
+    count: u32,
+    singular_lo: u32,
+    singular_hi: u32,
+    _pad: u32,
+    s: [MsSample; 64],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct GenParams {
     c0: [f32; 4],
     c1: [f32; 4],
@@ -80,6 +101,7 @@ pub struct Compositor {
     blend: wgpu::ComputePipeline,
     matte: wgpu::ComputePipeline,
     generate: wgpu::ComputePipeline,
+    transform_ms: wgpu::ComputePipeline,
 }
 
 /// Worker-slot key under which the shared compositor is stored.
@@ -232,6 +254,10 @@ impl Compositor {
                 fns.shader(include_str!("shaders/generator.wgsl")).into(),
             ),
         });
+        let xf_ms = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("transform_ms.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/transform_ms.wgsl").into()),
+        });
         let mk = |m: &wgpu::ShaderModule, entry: &str| {
             dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
@@ -254,6 +280,7 @@ impl Compositor {
             blend: mk(&blend, "blend"),
             matte: mk(&blend, "matte"),
             generate: mk(&generator, "generate"),
+            transform_ms: mk(&xf_ms, "transform_ms"),
         }
     }
 
@@ -645,23 +672,103 @@ impl Compositor {
         a: &Frame,
         k: &crate::transform::KernelSetup,
     ) -> Result<Frame, NodeError> {
-        let reduced;
-        let src = if k.mip == [0, 0] {
-            a
-        } else {
-            let mut cur: Option<Frame> = None;
-            let (mut lx, mut ly) = (k.mip[0], k.mip[1]);
-            while lx > 0 || ly > 0 {
-                let f = [if lx > 0 { 2 } else { 1 }, if ly > 0 { 2 } else { 1 }];
-                let next = self.box_reduce(ctx, cur.as_ref().unwrap_or(a), f)?;
-                cur = Some(next);
-                lx = lx.saturating_sub(1);
-                ly = ly.saturating_sub(1);
-            }
-            reduced = cur.expect("at least one level");
-            &reduced
+        let reduced = self.reduce(ctx, a, k.mip)?;
+        self.transform_reduced(ctx, a, reduced.as_ref().unwrap_or(a), k)
+    }
+
+    /// `mip` 2x box levels of `a` (`None` for `[0, 0]`).
+    fn reduce(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        a: &Frame,
+        mip: [u32; 2],
+    ) -> Result<Option<Frame>, NodeError> {
+        let mut cur: Option<Frame> = None;
+        let (mut lx, mut ly) = (mip[0], mip[1]);
+        while lx > 0 || ly > 0 {
+            let f = [if lx > 0 { 2 } else { 1 }, if ly > 0 { 2 } else { 1 }];
+            let next = self.box_reduce(ctx, cur.as_ref().unwrap_or(a), f)?;
+            cur = Some(next);
+            lx = lx.saturating_sub(1);
+            ly = ly.saturating_sub(1);
+        }
+        Ok(cur)
+    }
+
+    /// Resample `a` through one or more projective maps and average them
+    /// (3D layers, motion blur; see [`crate::layer3d`]). The result covers
+    /// `k.window` with `a`'s display window and pixel aspect.
+    pub fn transform_multi(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        a: &Frame,
+        k: &crate::layer3d::MultiSetup,
+    ) -> Result<Frame, NodeError> {
+        let n = k.inverses.len();
+        if n == 0 || n > crate::layer3d::MAX_SAMPLES as usize {
+            return Err(NodeError::new(format!(
+                "transform_multi: {n} samples (1..={})",
+                crate::layer3d::MAX_SAMPLES
+            )));
+        }
+        let reduced = self.reduce(ctx, a, k.mip)?;
+        let src = reduced.as_ref().unwrap_or(a);
+        let win = k.window;
+        let out = Frame::new_gpu_window(
+            ctx.gpu,
+            a.width,
+            a.height,
+            win,
+            a.pixel_aspect,
+            a.color_space.clone(),
+        );
+        let (sx, sy) = (
+            1.0 / f64::from(1u32 << k.mip[0]),
+            1.0 / f64::from(1u32 << k.mip[1]),
+        );
+        let mut p = MsParams {
+            filt: [
+                crate::transform::MAX_FILTER_SCALE as f32,
+                (1.0 / crate::layer3d::NEAR) as f32,
+                crate::transform::FILTER_B,
+                crate::transform::FILTER_C,
+            ],
+            src_origin: origin(&src.data_window),
+            dst_origin: origin(&win),
+            count: n as u32,
+            singular_lo: 0,
+            singular_hi: 0,
+            _pad: 0,
+            s: [MsSample {
+                r0: [0.0; 4],
+                r1: [0.0; 4],
+                r2: [0.0; 4],
+            }; 64],
         };
-        self.transform_reduced(ctx, a, src, k)
+        for (i, g) in k.inverses.iter().enumerate() {
+            match g {
+                Some(g) => {
+                    let row = |r: [f64; 3], s: f64| {
+                        [(r[0] * s) as f32, (r[1] * s) as f32, (r[2] * s) as f32, 0.0]
+                    };
+                    p.s[i] = MsSample {
+                        r0: row(g[0], sx),
+                        r1: row(g[1], sy),
+                        r2: row(g[2], 1.0),
+                    };
+                }
+                None if i < 32 => p.singular_lo |= 1 << i,
+                None => p.singular_hi |= 1 << (i - 32),
+            }
+        }
+        let p = Self::uniform(ctx.gpu, &p);
+        let res = [
+            (0, Res::Params(&p)),
+            (1, Res::Tex(view(src)?)),
+            (3, Res::Tex(view(&out)?)),
+        ];
+        Self::dispatch(ctx, &self.transform_ms, &res, win.width, win.height);
+        Ok(out)
     }
 
     fn transform_reduced(

@@ -93,7 +93,57 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
         ClipLocal,
         "deg",
         "0",
-        "rotation in degrees, clockwise",
+        "rotation in degrees, clockwise (the Z rotation of a 3D layer)",
+    ),
+    ParamSpec::fixed(
+        "three_d",
+        Bool,
+        "",
+        "false",
+        "After Effects 3D layer switch: the clip becomes a card in 3D space seen through the timeline camera, with the transform.position_z / anchor_z / rotation_x / rotation_y / orientation params, depth-sorted against neighbouring 3D layers",
+    ),
+    s(
+        "transform.position_z",
+        ClipLocal,
+        "px",
+        "0",
+        "3D layers: depth of the position, pixels, positive = away from the viewer",
+    ),
+    s(
+        "transform.anchor_z",
+        ClipLocal,
+        "px",
+        "0",
+        "3D layers: depth of the anchor point, pixels",
+    ),
+    s(
+        "transform.rotation_x",
+        ClipLocal,
+        "deg",
+        "0",
+        "3D layers: X rotation in degrees (positive tilts the bottom edge away)",
+    ),
+    s(
+        "transform.rotation_y",
+        ClipLocal,
+        "deg",
+        "0",
+        "3D layers: Y rotation in degrees (positive brings the right edge towards the viewer)",
+    ),
+    s(
+        "transform.orientation",
+        ClipLocal,
+        "deg",
+        "[0, 0, 0]",
+        "3D layers: orientation [x, y, z] in degrees, applied after the X/Y/Z rotations (outermost)",
+    )
+    .with_kind(Vec3),
+    ParamSpec::fixed(
+        "motion_blur",
+        Bool,
+        "",
+        "false",
+        "After Effects layer motion blur switch: blur the layer's transform (and camera) motion with the timeline's motion_blur shutter; needs timeline motion_blur",
     ),
     ParamSpec::fixed(
         "transition_in",
@@ -298,6 +348,76 @@ pub const TIMELINE: &[ParamSpec] = &[
         "null",
         "explicit output duration (default: end of the last clip); null clears it",
     ),
+    ParamSpec::fixed(
+        "camera",
+        Object,
+        "",
+        "null",
+        "{position, point_of_interest, zoom | fov_deg}: the camera 3D layers are seen through; null = After Effects' default 50 mm camera (an untransformed 3D layer looks like the 2D layer)",
+    ),
+    s(
+        "camera.position",
+        Tl,
+        "px",
+        "[w/2, h/2, -w*50/36]",
+        "camera position [x, y, z], output pixels (z negative = in front of the layers); setting one component fills the others from the default camera",
+    )
+    .with_kind(Vec3),
+    s(
+        "camera.point_of_interest",
+        Tl,
+        "px",
+        "[w/2, h/2, 0]",
+        "point the camera looks at [x, y, z]",
+    )
+    .with_kind(Vec3),
+    s(
+        "camera.zoom",
+        Tl,
+        "px",
+        "w*50/36",
+        "distance at which a layer appears at 100 %, > 0 (exclusive with fov_deg; set the position z to -zoom to keep layers at z=0 at 100 %)",
+    )
+    .min(1e-9),
+    s(
+        "camera.fov_deg",
+        Tl,
+        "deg",
+        "39.6 (from zoom)",
+        "horizontal angle of view in degrees, in (0, 180) (exclusive with zoom)",
+    )
+    .range(1e-9, 179.999),
+    ParamSpec::fixed(
+        "motion_blur",
+        Object,
+        "",
+        "null",
+        "{shutter_angle, shutter_phase, samples}: enables motion blur for clips with motion_blur: true (After Effects composition switch); null = off",
+    ),
+    ParamSpec::fixed(
+        "motion_blur.shutter_angle",
+        Scalar,
+        "deg",
+        "180",
+        "shutter angle in degrees, [0, 720]; 360 = the whole frame interval",
+    )
+    .range(0.0, 720.0),
+    ParamSpec::fixed(
+        "motion_blur.shutter_phase",
+        Scalar,
+        "deg",
+        "-90",
+        "where the shutter opens relative to the frame time, degrees, [-360, 360] (-90 with 180 centers it)",
+    )
+    .range(-360.0, 360.0),
+    ParamSpec::fixed(
+        "motion_blur.samples",
+        Scalar,
+        "",
+        "16",
+        "sub-frame samples per frame, 2..64 (integer)",
+    )
+    .range(2.0, 64.0),
 ];
 
 /// What a parameter edit targets.
@@ -357,7 +477,14 @@ fn segments(scope: Scope, spec: &ParamSpec) -> Vec<String> {
 /// Default for a missing vector parameter (frame center for position/anchor).
 fn vec_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
     let half = |v: u32| Rational::new(v as i64, 2).to_string();
+    let zoom = || Rational::new(frame.0 as i64 * 50, 36);
     match spec.kind {
+        Vec3 if spec.name == "camera.position" => {
+            json!([half(frame.0), half(frame.1), (-zoom()).to_string()])
+        }
+        Vec3 if spec.name == "camera.point_of_interest" => {
+            json!([half(frame.0), half(frame.1), "0"])
+        }
         Color | Vec3 => {
             // The spec default is a JSON array of integers.
             let v: Vec<i64> = serde_json::from_str(spec.default).unwrap_or_default();

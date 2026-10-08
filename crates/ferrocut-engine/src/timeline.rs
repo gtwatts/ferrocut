@@ -21,6 +21,7 @@ use ferrocut_core::{Animatable, FrameRate, Rational, RationalTime};
 
 use crate::blend::{BlendMode, MatteSpec};
 use crate::generator::GeneratorSpec;
+use crate::layer3d::{CameraSpec, MotionBlurSpec};
 use crate::retime::{Sampling, TimeMap};
 use crate::transform::TransformSpec;
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,16 @@ pub struct Timeline {
     pub audio_tracks: Vec<AudioTrack>,
     #[serde(default, skip_serializing_if = "AudioSettings::is_default")]
     pub audio: AudioSettings,
+    /// The camera 3D layers are seen through (keyframes in timeline time;
+    /// see [`crate::layer3d`]). Default: After Effects' 50 mm camera, which
+    /// shows an untransformed 3D layer exactly like a 2D one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera: Option<CameraSpec>,
+    /// Motion blur for the timeline (After Effects' composition switch and
+    /// shutter settings); clips opt in with `motion_blur: true`. Off when
+    /// absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_blur: Option<MotionBlurSpec>,
 }
 
 /// Project audio format and master bus.
@@ -307,6 +318,14 @@ pub struct Clip {
     /// Animated 2D layer transform (position/scale/rotation/anchor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<TransformSpec>,
+    /// After Effects' 3D layer switch: the clip is a card in 3D space seen
+    /// through the timeline camera, with z / X / Y rotation / orientation
+    /// transform fields, depth-sorted against neighbouring 3D layers.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub three_d: bool,
+    /// After Effects' layer motion blur switch (needs `timeline.motion_blur`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub motion_blur: bool,
     /// Transition from the previous clip on the same track. The previous clip
     /// must overlap this one by at least the transition duration (handles).
     #[serde(default)]
@@ -461,6 +480,12 @@ impl Timeline {
             "gop and gops_per_chunk must be positive"
         );
         ensure!(!self.tracks.is_empty(), "timeline has no tracks");
+        if let Some(c) = &self.camera {
+            c.validate().map_err(|e| anyhow::anyhow!(e))?;
+        }
+        if let Some(m) = &self.motion_blur {
+            m.validate().map_err(|e| anyhow::anyhow!(e))?;
+        }
         for (ti, track) in self.tracks.iter().enumerate() {
             if track.matte.is_some() {
                 ensure!(
@@ -521,6 +546,13 @@ impl Timeline {
                 if let Some(t) = &c.transform {
                     t.validate()
                         .map_err(|e| anyhow::anyhow!("clip {}: {e}", c.id))?;
+                    if let Some(f) = t.has_3d_fields() {
+                        ensure!(
+                            c.three_d,
+                            "clip {}: transform.{f} is a 3D layer property; set \"three_d\": true on the clip",
+                            c.id
+                        );
+                    }
                 }
                 validate_retime(&c.id, &c.speed, c.time_remap.as_ref(), c.duration)?;
                 ensure!(

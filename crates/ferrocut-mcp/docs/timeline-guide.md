@@ -32,6 +32,7 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
   (`id`, `source`, `start`, `source_in`, `duration`, `audio`).
 - `audio`: `sample_rate` (48000), `master_gain_db`, `loudness` (`target_lufs`: -23 broadcast,
   -14 streaming; `true_peak_dbtp`, default -1).
+- `camera` and `motion_blur`: optional (see 3D layers and camera, Motion blur).
 
 ## Rules the engine enforces
 
@@ -91,6 +92,38 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 - Vector shapes (rectangles, ellipses, paths with fill/stroke) and shape masks are not
   generators: they come from the Lottie/ThorVG path (`ferrocut-lottie`).
 
+## 3D layers and camera
+
+- `three_d: true` on a video clip (After Effects' 3D switch) makes it a flat card in 3D space:
+  x right, y down, z away from the viewer, in output pixels. Extra transform fields (need the
+  switch): `position_z`, `anchor_z`, `rotation_x` (positive tilts the bottom edge away),
+  `rotation_y` (positive brings the right edge towards you), `orientation` `[x, y, z]`;
+  `rotation` is the Z rotation. Order: orientation, then X, Y, Z rotation, then scale.
+- `camera` on the timeline (keys in **timeline time**): `position` `[x, y, z]`,
+  `point_of_interest` `[x, y, z]` (it looks there, y up on screen), and `zoom` (pixels at which a
+  layer at that distance is 100 %) or `fov_deg` (horizontal). Default: After Effects' 50 mm
+  camera, `zoom = width * 50 / 36` at `[w/2, h/2, -zoom]` looking at `[w/2, h/2, 0]`, so an
+  untransformed 3D layer looks exactly like the 2D one. Setting one component (`camera.position.x`)
+  fills the others from that default; set `position.z` to `-zoom` yourself if you change `zoom`.
+- Stacking: consecutive 3D layers (tracks whose clip is 3D at that time; empty tracks are
+  skipped) are drawn farthest first by the camera-space depth of their position (ties keep
+  track order); a 2D layer in between splits the run and stays in track order. No
+  intersections, lights, shadows or depth of field. Parts of a card less than 1 px in front of
+  the camera are not drawn.
+- Recipe: a dolly past generator cards: `set_param` `three_d` true and `transform.position_z`
+  on each card, then `set_keyframes` `camera.position.x` (and keep `camera.point_of_interest`
+  fixed for an orbit-like move).
+
+## Motion blur
+
+- `motion_blur` on the timeline turns it on (After Effects' composition switch):
+  `{"shutter_angle": 180, "shutter_phase": -90, "samples": 16}` (defaults; angle [0, 720],
+  phase [-360, 360], samples 2..64); clips opt in with `motion_blur: true` (the layer switch).
+- Each frame averages the layer resampled at `samples` sub-frame times
+  `t + (phase + angle * (i + 1/2) / samples) / 360 / fps` (exact, deterministic). Transform and
+  camera motion blur; motion inside the clip's content does not. Frames where the layer does
+  not move render exactly like unblurred ones.
+
 ## Blend modes and track mattes
 
 - `blend_mode` on a video clip: how its track composites onto everything below while the clip is
@@ -146,7 +179,9 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 Parameter names (`timeline_schema` part `params` lists unit, range, default and time base):
 
 - video clip: `opacity`, `transform.position` (`.x`/`.y`), `transform.anchor`, `transform.scale`
-  (uniform or `.x`/`.y`), `transform.rotation`, `transition_in`, `sampling`, `blend_mode`, `speed`,
+  (uniform or `.x`/`.y`), `transform.rotation`, `three_d`, `transform.position_z`,
+  `transform.anchor_z`, `transform.rotation_x`, `transform.rotation_y`, `transform.orientation`
+  (`.x`/`.y`/`.z`), `motion_blur`, `transition_in`, `sampling`, `blend_mode`, `speed`,
   `time_remap`, `audio.gain_db`, `audio.pan`, `audio.mute`, `audio.fade_in`, `audio.fade_out`,
   `audio.crossfade_in`, `audio.preserve_pitch`, `audio.effects`; generator clips: `generator`,
   `generator.color` (`.r`/`.g`/`.b`/`.a`), `generator.start_color`, `generator.end_color`,
@@ -156,7 +191,9 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
 - track: `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.effects`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
   `bus.duck.ratio`, `bus.duck.attack_ms`, `bus.duck.release_ms`, `bus.duck.range_db`
 - timeline: `audio.master_gain_db`, `audio.loudness`, `audio.loudness.target_lufs`,
-  `audio.loudness.true_peak_dbtp`, `output.duration`
+  `audio.loudness.true_peak_dbtp`, `output.duration`, `camera`, `camera.position`,
+  `camera.point_of_interest` (`.x`/`.y`/`.z`), `camera.zoom`, `camera.fov_deg`, `motion_blur`,
+  `motion_blur.shutter_angle`, `motion_blur.shutter_phase`, `motion_blur.samples`
 
 ## Recipes
 
@@ -183,8 +220,8 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
 
 ## Nodes
 
-Video clips, generator layers (solid, gradients), opacity, transforms, dissolves and the audio
-graph above are what timelines contain today. HTML, Lottie and color nodes (SeePlus's `ferrocut-html`, `ferrocut-lottie`,
+Video clips, generator layers (solid, gradients), opacity, 2D and 3D transforms with a camera,
+motion blur, dissolves and the audio graph above are what timelines contain today. HTML, Lottie and color nodes (SeePlus's `ferrocut-html`, `ferrocut-lottie`,
 `ferrocut-color`) will appear here with their published parameter schemas once they are wired
 into the timeline format; until then they are not valid timeline content.
 

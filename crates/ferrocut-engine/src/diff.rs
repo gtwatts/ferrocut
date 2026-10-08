@@ -131,7 +131,8 @@ pub struct ClipChange {
     pub from_track: Option<String>,
     /// `moved`, `trimmed_in`, `trimmed_out`, `slipped`, `retimed`,
     /// `track_changed`, `reordered`, `source_changed`, `opacity_changed`,
-    /// `transform_changed`, `transition_changed`, `audio_changed`,
+    /// `transform_changed`, `generator_changed`, `three_d_changed`,
+    /// `motion_blur_changed`, `transition_changed`, `audio_changed`,
     /// `keyframes_changed`.
     pub tags: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -505,6 +506,9 @@ pub fn diff(a: &Timeline, b: &Timeline) -> TimelineDiff {
                     ("source", "source_changed"),
                     ("opacity", "opacity_changed"),
                     ("transform", "transform_changed"),
+                    ("generator", "generator_changed"),
+                    ("three_d", "three_d_changed"),
+                    ("motion_blur", "motion_blur_changed"),
                     ("transition_in", "transition_changed"),
                     ("audio", "audio_changed"),
                 ] {
