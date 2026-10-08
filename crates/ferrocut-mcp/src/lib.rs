@@ -211,7 +211,7 @@ pub fn tools() -> Vec<Tool> {
         tool(
             "edit_apply",
             "Apply edit ops",
-            "Apply edit ops atomically: build (add_track, add_clip, add_transition, set_param, set_keyframes) and edit (split, trim, ripple_delete, ripple_insert, roll, slip, slide, move, jl_cut, set_speed, freeze_frame) and nest (nest, unnest: nested compositions) and audio effects (add_effect, set_effect_param, remove_effect) and annotate/manage (add_marker, update_marker, remove_marker, relink). Writes the timeline (in place, or to `output`) and appends the ops with before/after hashes to the journal, unless dry_run. Returns per-op change summaries and affected spans, before/after hashes, the journal seq, and with plan=true the output chunks that would re-render. A failing op changes nothing and names the op and reason.",
+            "Apply edit ops atomically: build (add_track, add_clip, add_transition, set_param, set_keyframes) and edit (split, trim, ripple_delete, ripple_insert, roll, slip, slide, move, jl_cut, set_speed, freeze_frame) and nest (nest, unnest: nested compositions) and audio effects (add_effect, set_effect_param, remove_effect) and video effects (add_video_effect, set_video_effect_param, remove_video_effect, move_video_effect) and annotate/manage (add_marker, update_marker, remove_marker, relink). Writes the timeline (in place, or to `output`) and appends the ops with before/after hashes to the journal, unless dry_run. Returns per-op change summaries and affected spans, before/after hashes, the journal seq, and with plan=true the output chunks that would re-render. A failing op changes nothing and names the op and reason.",
             schema::edit_apply(),
             rw(false),
         ),

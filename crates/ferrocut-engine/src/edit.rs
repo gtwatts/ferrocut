@@ -171,6 +171,10 @@ pub enum EditOp {
         source_in: Option<RationalTime>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration: Option<RationalTime>,
+        /// An adjustment layer (no source or generator; `duration` required;
+        /// its track must hold only adjustment clips). See [`crate::fx`].
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        adjustment: bool,
     },
     AddTransition {
         clip: String,
@@ -243,6 +247,46 @@ pub enum EditOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         track: Option<String>,
         index: usize,
+    },
+    /// Insert a video effect (`{"type": ..., "id"?, "enabled"?, params}`,
+    /// see [`crate::fx`]) on a clip (incl. adjustment layers) or video track.
+    AddVideoEffect {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<String>,
+        effect: serde_json::Value,
+        /// Position in the stack (default: the end, i.e. applied last).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<usize>,
+    },
+    /// Set one parameter of a video effect (by index or id): a parameter
+    /// name (`sigma`, `color.g`, `position.x`), `enabled` or `id`; `value` is
+    /// a constant, `{"keyframes": [...]}`, an expression, or null for the default.
+    SetVideoEffectParam {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<String>,
+        effect: crate::fx::EffectRef,
+        param: String,
+        value: serde_json::Value,
+    },
+    RemoveVideoEffect {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<String>,
+        effect: crate::fx::EffectRef,
+    },
+    /// Reorder: move a video effect to position `to` in its stack.
+    MoveVideoEffect {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<String>,
+        effect: crate::fx::EffectRef,
+        to: usize,
     },
     SetKeyframes {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -371,6 +415,10 @@ impl EditOp {
             EditOp::AddEffect { .. } => "add_effect",
             EditOp::SetEffectParam { .. } => "set_effect_param",
             EditOp::RemoveEffect { .. } => "remove_effect",
+            EditOp::AddVideoEffect { .. } => "add_video_effect",
+            EditOp::SetVideoEffectParam { .. } => "set_video_effect_param",
+            EditOp::RemoveVideoEffect { .. } => "remove_video_effect",
+            EditOp::MoveVideoEffect { .. } => "move_video_effect",
             EditOp::AddMarker { .. } => "add_marker",
             EditOp::UpdateMarker { .. } => "update_marker",
             EditOp::RemoveMarker { .. } => "remove_marker",
@@ -409,6 +457,14 @@ impl EditOp {
             | EditOp::SetEffectParam { clip, track, .. }
             | EditOp::RemoveEffect { clip, track, .. } => match (clip, track) {
                 (Some(c), _) => format!("{c}.audio.effects"),
+                (None, Some(t)) => format!("track {t:?} effects"),
+                (None, None) => "effects".into(),
+            },
+            EditOp::AddVideoEffect { clip, track, .. }
+            | EditOp::SetVideoEffectParam { clip, track, .. }
+            | EditOp::RemoveVideoEffect { clip, track, .. }
+            | EditOp::MoveVideoEffect { clip, track, .. } => match (clip, track) {
+                (Some(c), _) => format!("{c}.effects"),
                 (None, Some(t)) => format!("track {t:?} effects"),
                 (None, None) => "effects".into(),
             },
@@ -1321,6 +1377,7 @@ fn apply_one(
             start,
             source_in,
             duration,
+            adjustment,
         } => add_clip(
             tl,
             media,
@@ -1331,6 +1388,7 @@ fn apply_one(
             *start,
             *source_in,
             *duration,
+            *adjustment,
         )?,
         EditOp::AddTransition {
             clip,
@@ -1395,6 +1453,91 @@ fn apply_one(
                     fx.len()
                 );
                 fx.remove(*index);
+                Ok(())
+            },
+        )?,
+        EditOp::AddVideoEffect {
+            clip,
+            track,
+            effect,
+            index,
+        } => edit_video_effects(
+            tl,
+            "add_video_effect",
+            clip.as_deref(),
+            track.as_deref(),
+            |fx| {
+                let spec: crate::fx::VideoEffectSpec = serde_json::from_value(effect.clone())
+                .map_err(|e| anyhow!("add_video_effect: bad effect {effect}: {e} (expected {{\"type\": ..., params}}; types: {})", crate::fx::type_names().join(", ")))?;
+                crate::fx::ParsedEffect::parse(&spec)
+                    .map_err(|e| anyhow!("add_video_effect: {e}"))?;
+                let i = index.unwrap_or(fx.len());
+                ensure!(
+                    i <= fx.len(),
+                    "add_video_effect: index {i} is past the end ({} effects)",
+                    fx.len()
+                );
+                fx.insert(i, spec);
+                Ok(())
+            },
+        )?,
+        EditOp::SetVideoEffectParam {
+            clip,
+            track,
+            effect,
+            param,
+            value,
+        } => edit_video_effects(
+            tl,
+            "set_video_effect_param",
+            clip.as_deref(),
+            track.as_deref(),
+            |fx| {
+                let i = effect
+                    .resolve(fx)
+                    .map_err(|e| anyhow!("set_video_effect_param: {e}"))?;
+                crate::fx::set_effect_param(&mut fx[i], param, value.clone())
+                    .map_err(|e| anyhow!("set_video_effect_param: effect {}: {e}", fx[i].label(i)))
+            },
+        )?,
+        EditOp::RemoveVideoEffect {
+            clip,
+            track,
+            effect,
+        } => edit_video_effects(
+            tl,
+            "remove_video_effect",
+            clip.as_deref(),
+            track.as_deref(),
+            |fx| {
+                let i = effect
+                    .resolve(fx)
+                    .map_err(|e| anyhow!("remove_video_effect: {e}"))?;
+                fx.remove(i);
+                Ok(())
+            },
+        )?,
+        EditOp::MoveVideoEffect {
+            clip,
+            track,
+            effect,
+            to,
+        } => edit_video_effects(
+            tl,
+            "move_video_effect",
+            clip.as_deref(),
+            track.as_deref(),
+            |fx| {
+                let i = effect
+                    .resolve(fx)
+                    .map_err(|e| anyhow!("move_video_effect: {e}"))?;
+                ensure!(
+                    *to < fx.len(),
+                    "move_video_effect: to {to} is past the end ({} effects)",
+                    fx.len()
+                );
+                let e = fx.remove(i);
+                fx.insert(*to, e);
                 Ok(())
             },
         )?,
@@ -1755,6 +1898,34 @@ fn relink(
     ))
 }
 
+/// Edit the video effect stack (`effects`) of a clip or video track.
+fn edit_video_effects(
+    tl: &mut Timeline,
+    kind: &'static str,
+    clip: Option<&str>,
+    track: Option<&str>,
+    f: impl FnOnce(&mut Vec<crate::fx::VideoEffectSpec>) -> anyhow::Result<()>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    ensure!(
+        clip.is_some() != track.is_some(),
+        "{kind}: give a clip or a video track"
+    );
+    let (mut change, refs) = set_param(tl, kind, clip, track, "effects", |_, cur| {
+        let mut fx: Vec<crate::fx::VideoEffectSpec> = match cur {
+            Some(v @ serde_json::Value::Array(_)) => serde_json::from_value(v.clone())?,
+            _ => Vec::new(),
+        };
+        f(&mut fx)?;
+        Ok(if fx.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::to_value(fx)?
+        })
+    })?;
+    change.kind = kind;
+    Ok((change, refs))
+}
+
 /// Edit the effect chain of a clip (`audio.effects`) or track bus (`effects`).
 fn edit_effects(
     tl: &mut Timeline,
@@ -1815,6 +1986,7 @@ fn add_track(
                 name: name.into(),
                 audio: Default::default(),
                 matte: None,
+                effects: vec![],
                 clips: vec![],
             },
         ),
@@ -1849,12 +2021,28 @@ fn add_clip(
     start: Option<RationalTime>,
     source_in: Option<RationalTime>,
     duration: Option<RationalTime>,
+    adjustment: bool,
 ) -> anyhow::Result<(Change, Vec<TrackRef>)> {
     let tr = track_by_name(tl, track).map_err(|e| {
         let names: Vec<&str> = tl.track_names().collect();
         anyhow!("{e} (tracks: {names:?}; add one with add_track)")
     })?;
+    if adjustment {
+        ensure!(
+            path_is_empty(source) && generator.is_none(),
+            "add_clip: an adjustment layer takes no source or generator"
+        );
+        ensure!(
+            matches!(tr, TrackRef::Video(_)),
+            "add_clip: adjustment layers go on video tracks"
+        );
+        ensure!(
+            duration.is_some(),
+            "add_clip: an adjustment layer has no media length; pass `duration`"
+        );
+    }
     let generator = match generator {
+        None if adjustment => None,
         None => {
             ensure!(
                 !path_is_empty(source),
@@ -1881,7 +2069,7 @@ fn add_clip(
             Some(g)
         }
     };
-    let facts = if generator.is_some() {
+    let facts = if generator.is_some() || adjustment {
         None
     } else {
         media.facts(source)?
@@ -1900,6 +2088,7 @@ fn add_clip(
     ensure!(source_in >= z(), "add_clip: source_in must be >= 0");
     let len = match &generator {
         Some(_) => None,
+        None if adjustment => None,
         None => facts.and_then(|f| f.duration).or_else(|| media.get(source)),
     };
     let duration = match (duration, len) {
@@ -1952,6 +2141,7 @@ fn add_clip(
         None => {
             let stem = match &generator {
                 Some(g) => g.type_name().to_string(),
+                None if adjustment => "adjustment".to_string(),
                 None => source
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned())
@@ -1984,6 +2174,8 @@ fn add_clip(
             blend_mode: Default::default(),
             audio: ClipAudio::default(),
             markers: Vec::new(),
+            effects: Vec::new(),
+            adjustment,
         }),
         TrackRef::Audio(i) => tl.audio_tracks[i].clips.push(AudioClip {
             id: id.clone(),
@@ -2159,6 +2351,10 @@ fn set_param(
     ensure!(
         !(scope == (Scope::Track { audio_track: true }) && spec.name == "matte"),
         "matte applies to video tracks only"
+    );
+    ensure!(
+        !(scope == (Scope::Track { audio_track: true }) && spec.name == "effects"),
+        "video effects apply to clips and video tracks; audio tracks take audio effects (add_effect)"
     );
     let mut obj = match tr {
         Some((TrackRef::Video(i), Some(ci))) => serde_json::to_value(&tl.tracks[i].clips[ci])?,
@@ -2575,6 +2771,7 @@ fn nest(
             name: tl.tracks[ti].name.clone(),
             audio: Default::default(),
             matte: None,
+            effects: vec![],
             clips,
         });
     }

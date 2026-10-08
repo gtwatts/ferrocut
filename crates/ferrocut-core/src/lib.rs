@@ -5,6 +5,7 @@
 //! Everything that doesn't need wgpu lives in [`ferrocut_types`] and is
 //! re-exported here, so `ferrocut_core::RationalTime` etc. keep working.
 
+pub mod effect;
 pub mod frame;
 pub mod gpu;
 pub mod node;

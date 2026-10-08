@@ -108,7 +108,7 @@ pub struct Compositor {
 /// `wgpu::util::DeviceExt::create_buffer_init` without its panic on a lost
 /// device: on a mapping failure the (invalid) buffer is returned as is, and the
 /// error surfaces through the frame's error scope / device-lost flag.
-fn init_buffer(
+pub(crate) fn init_buffer(
     gpu: &GpuContext,
     label: &str,
     contents: &[u8],
@@ -184,7 +184,7 @@ pub fn compositor(ctx: &mut RenderCtx<'_>) -> Result<Arc<Compositor>, NodeError>
         .map(|c| c.clone())
 }
 
-enum Res<'a> {
+pub(crate) enum Res<'a> {
     Params(&'a wgpu::Buffer),
     Tex(&'a wgpu::TextureView),
 }
@@ -197,7 +197,7 @@ fn padded_row(bytes: u32) -> u32 {
     bytes.div_ceil(ALIGN) * ALIGN
 }
 
-fn view(f: &Frame) -> Result<&wgpu::TextureView, NodeError> {
+pub(crate) fn view(f: &Frame) -> Result<&wgpu::TextureView, NodeError> {
     f.gpu()
         .map(|g| &g.view)
         .ok_or_else(|| NodeError::new("frame is not on the GPU"))
@@ -285,7 +285,7 @@ impl Compositor {
     }
 
     /// Record one compute dispatch into `enc`.
-    fn record(
+    pub(crate) fn record(
         gpu: &GpuContext,
         enc: &mut wgpu::CommandEncoder,
         pl: &wgpu::ComputePipeline,
@@ -314,7 +314,7 @@ impl Compositor {
         pass.dispatch_workgroups(w.div_ceil(WG), h.div_ceil(WG), 1);
     }
 
-    fn dispatch(
+    pub(crate) fn dispatch(
         ctx: &mut RenderCtx<'_>,
         pl: &wgpu::ComputePipeline,
         res: &[(u32, Res<'_>)],
@@ -325,7 +325,7 @@ impl Compositor {
         Self::record(gpu, ctx.encoder(), pl, res, w, h);
     }
 
-    fn uniform<T: bytemuck::Pod>(gpu: &GpuContext, v: &T) -> wgpu::Buffer {
+    pub(crate) fn uniform<T: bytemuck::Pod>(gpu: &GpuContext, v: &T) -> wgpu::Buffer {
         init_buffer(
             gpu,
             "ferrocut.params",

@@ -179,10 +179,12 @@ pub fn clip() -> Value {
             "blend_mode": blend_mode(),
             "audio": clip_audio(),
             "generator": generator(),
-            "markers": markers(CLIP_MARKER_TIME)
+            "markers": markers(CLIP_MARKER_TIME),
+            "effects": video_effects(),
+            "adjustment": { "type": "boolean", "default": false, "description": "adjustment layer: no source; its effects apply to the composite of the tracks below while it is active, mixed by its opacity and its track's matte. Its track holds only adjustment clips; no transform, 3D, blend mode, speed or transition." }
         },
         "required": ["id", "duration"],
-        "oneOf": [ { "required": ["source"] }, { "required": ["generator"] } ],
+        "oneOf": [ { "required": ["source"] }, { "required": ["generator"] }, { "required": ["adjustment"], "properties": { "adjustment": { "const": true } } } ],
         "additionalProperties": false
     })
 }
@@ -201,6 +203,94 @@ fn op(name: &str, desc: &str, props: Value, required: &[&str], example: Value) -
         "additionalProperties": false,
         "examples": [example]
     })
+}
+
+/// Schema of one video effect parameter from its spec.
+fn video_param(s: &ferrocut_core::param::ParamSpec) -> Value {
+    use ferrocut_core::param::ParamKind::*;
+    let mut desc = s.doc.to_string();
+    if !s.unit.is_empty() {
+        desc += &format!(" [{}]", s.unit);
+    }
+    match (s.min, s.max) {
+        (Some(a), Some(b)) => desc += &format!(" (range {a}..{b})"),
+        (Some(a), None) => desc += &format!(" (>= {a})"),
+        (None, Some(b)) => desc += &format!(" (<= {b})"),
+        _ => {}
+    }
+    if s.default != "null" {
+        desc += &format!(" default {}", s.default);
+    }
+    let comp = || animatable("component");
+    match s.kind {
+        Scalar | Time => animatable(&desc),
+        Vec2 => {
+            json!({ "description": desc, "type": "array", "minItems": 2, "maxItems": 2, "items": comp() })
+        }
+        Vec3 => {
+            json!({ "description": desc, "type": "array", "minItems": 3, "maxItems": 3, "items": comp() })
+        }
+        Color => {
+            json!({ "description": desc + " ([r, g, b] or [r, g, b, a])", "type": "array", "minItems": 3, "maxItems": 4, "items": comp() })
+        }
+        ScalarOrVec2 => json!({ "description": desc, "anyOf": [
+            animatable("uniform"),
+            { "type": "array", "minItems": 2, "maxItems": 2, "items": comp() }
+        ] }),
+        Bool => json!({ "description": desc, "type": "boolean" }),
+        Choice if !s.choices.is_empty() => json!({ "description": desc, "enum": s.choices }),
+        Choice | Object => json!({ "description": desc, "type": "string" }),
+    }
+}
+
+/// One video effect: a branch per registered type (see `ferrocut_engine::fx`).
+pub fn video_effect() -> Value {
+    let branches: Vec<Value> = ferrocut_engine::fx::registered()
+        .iter()
+        .map(|e| {
+            let mut props = serde_json::Map::new();
+            props.insert("type".into(), json!({ "const": e.type_name() }));
+            props.insert("id".into(), json!({ "type": "string", "minLength": 1, "description": "name, unique in the stack (ops and errors refer to it)" }));
+            props.insert("enabled".into(), json!({ "type": "boolean", "default": true }));
+            for p in e.params() {
+                props.insert(p.name.into(), video_param(p));
+            }
+            json!({
+                "title": e.type_name(),
+                "description": e.doc(),
+                "type": "object",
+                "properties": props,
+                "required": ["type"],
+                "additionalProperties": false
+            })
+        })
+        .collect();
+    json!({
+        "description": "{type, id?, enabled?, ...params}; numeric params take a constant or {keyframes} (clip-local on clips, timeline time on tracks)",
+        "oneOf": branches
+    })
+}
+
+fn video_effects() -> Value {
+    json!({
+        "description": "Video effects in order (first applied first). On a clip: on its picture before its transform, then the clip opacity; on a track: on the track's picture before its matte; on an adjustment clip: on the composite below. Prefer the add_video_effect / set_video_effect_param / remove_video_effect / move_video_effect ops.",
+        "type": "array",
+        "items": video_effect()
+    })
+}
+
+fn effect_ref() -> Value {
+    json!({
+        "description": "the effect's index in the stack, or its id",
+        "anyOf": [ { "type": "integer", "minimum": 0 }, { "type": "string", "minLength": 1 } ]
+    })
+}
+
+fn video_target() -> (Value, Value) {
+    (
+        json!({ "type": "string", "minLength": 1, "description": "clip id (incl. adjustment layers)" }),
+        json!({ "type": "string", "minLength": 1, "description": "video track name (track effects)" }),
+    )
 }
 
 /// One audio effect (see `ferrocut_engine::audio_fx`).
@@ -421,6 +511,60 @@ pub fn edit_op() -> Value {
             json!({ "op": "remove_effect", "clip": "interview", "index": 0 }),
         ),
         op(
+            "add_video_effect",
+            "Insert a video effect on a clip (`clip`; keyframes clip-local; incl. adjustment layers) or a video track (`track`; timeline time) at `index` (default: end = applied last). Types: gaussian_blur, directional_blur, unsharp_mask, sharpen, glow, drop_shadow, transform, crop, letterbox (and any registered plug-in types); their params, ranges and defaults are in the `effect` schema and timeline_schema `params` (`video_effects`).",
+            json!({
+                "clip": video_target().0,
+                "track": video_target().1,
+                "effect": video_effect(),
+                "index": { "type": "integer", "minimum": 0 }
+            }),
+            &["effect"],
+            json!({ "op": "add_video_effect", "clip": "title", "effect": { "type": "gaussian_blur", "id": "soft", "sigma": "4" } }),
+        ),
+        op(
+            "set_video_effect_param",
+            "Set one parameter of a video effect (by index or id): `param` is a parameter name (sigma, color, color.g, position.x), `enabled` (bypass with false) or `id`; `value` a constant, {keyframes}, array, boolean, string, or null (back to the default).",
+            json!({
+                "clip": video_target().0,
+                "track": video_target().1,
+                "effect": effect_ref(),
+                "param": { "type": "string", "minLength": 1 },
+                "value": { "anyOf": [
+                    animatable("number or keyframes"),
+                    { "type": "array" },
+                    { "type": "boolean" },
+                    { "type": "string" },
+                    { "type": "null" }
+                ] }
+            }),
+            &["effect", "param", "value"],
+            json!({ "op": "set_video_effect_param", "clip": "title", "effect": "soft", "param": "sigma", "value": { "keyframes": [ { "t": "0", "v": "0" }, { "t": "1", "v": "8" } ] } }),
+        ),
+        op(
+            "remove_video_effect",
+            "Remove a video effect (by index or id) from a clip's or video track's stack.",
+            json!({
+                "clip": video_target().0,
+                "track": video_target().1,
+                "effect": effect_ref()
+            }),
+            &["effect"],
+            json!({ "op": "remove_video_effect", "clip": "title", "effect": "soft" }),
+        ),
+        op(
+            "move_video_effect",
+            "Reorder: move a video effect (by index or id) to position `to` of its stack (0 = applied first).",
+            json!({
+                "clip": video_target().0,
+                "track": video_target().1,
+                "effect": effect_ref(),
+                "to": { "type": "integer", "minimum": 0 }
+            }),
+            &["effect", "to"],
+            json!({ "op": "move_video_effect", "clip": "title", "effect": 1, "to": 0 }),
+        ),
+        op(
             "add_track",
             "Add an empty track: kind video (index 0 = bottom layer; default: on top) or audio (default: last). Names must be unique across all tracks.",
             json!({
@@ -433,7 +577,7 @@ pub fn edit_op() -> Value {
         ),
         op(
             "add_clip",
-            "Add a clip to a track: from a media file (`source`), or a generator layer (`generator`: solid color, linear or radial gradient; video tracks; `duration` required). A media file is probed: it must have a video stream for a video track (its audio, if any, plays as linked audio) or an audio stream for an audio track. Defaults: source_in 0, duration = the rest of the media after source_in, start = the end of the track, id = the file stem or generator type (made unique). The range must be free (use ripple_insert to push clips right).",
+            "Add a clip to a track: from a media file (`source`), a generator layer (`generator`: solid color, linear or radial gradient; video tracks; `duration` required), or an adjustment layer (`adjustment: true`; video tracks; `duration` required; then add_video_effect on it). A media file is probed: it must have a video stream for a video track (its audio, if any, plays as linked audio) or an audio stream for an audio track. Defaults: source_in 0, duration = the rest of the media after source_in, start = the end of the track, id = the file stem or generator type (made unique). The range must be free (use ripple_insert to push clips right).",
             json!({
                 "track": { "type": "string", "minLength": 1, "description": "track name" },
                 "source": path("media path or nested timeline (.json), relative to the timeline file's directory (or absolute, inside the project root)"),
@@ -441,7 +585,8 @@ pub fn edit_op() -> Value {
                 "id": { "type": "string", "minLength": 1, "description": "clip id (unique)" },
                 "start": rational("timeline time of the clip's first frame"),
                 "source_in": rational("source time of the clip's first frame"),
-                "duration": rational("clip length in seconds")
+                "duration": rational("clip length in seconds"),
+                "adjustment": { "type": "boolean", "default": false, "description": "an adjustment layer (no source/generator, `duration` required): its video effects apply to the composite below; its track holds only adjustment clips" }
             }),
             &["track"],
             json!({ "op": "add_clip", "track": "V1", "source": "media/s1.mkv", "source_in": "1", "duration": "4" }),
@@ -881,10 +1026,12 @@ fn video_clip() -> Value {
             "blend_mode": blend_mode(),
             "audio": clip_audio(),
             "generator": generator(),
-            "markers": markers(CLIP_MARKER_TIME)
+            "markers": markers(CLIP_MARKER_TIME),
+            "effects": video_effects(),
+            "adjustment": { "type": "boolean", "default": false, "description": "adjustment layer: no source; its effects apply to the composite of the tracks below while it is active, mixed by its opacity and its track's matte. Its track holds only adjustment clips; no transform, 3D, blend mode, speed or transition." }
         },
         "required": ["id", "start", "duration"],
-        "oneOf": [ { "required": ["source"] }, { "required": ["generator"] } ],
+        "oneOf": [ { "required": ["source"] }, { "required": ["generator"] }, { "required": ["adjustment"], "properties": { "adjustment": { "const": true } } } ],
         "additionalProperties": false
     })
 }
@@ -940,6 +1087,7 @@ pub fn timeline() -> Value {
                         "name": { "type": "string", "description": "unique (edit ops and duck keys refer to it)" },
                         "audio": bus(),
                         "matte": matte(),
+                        "effects": video_effects(),
                         "clips": { "type": "array", "items": video_clip() }
                     },
                     "required": ["clips"], "additionalProperties": false

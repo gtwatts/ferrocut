@@ -239,6 +239,20 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
         "\"display\"",
         "gradients: display (mix encoded colors, After Effects Gradient Ramp) | linear (mix linear light)",
     ),
+    ParamSpec::fixed(
+        "effects",
+        Object,
+        "",
+        "[]",
+        "video effects in order on the clip's picture, before its transform (opacity applies after): [{type, id?, enabled?, ...params}] (types and params: video_effects), keyframes in clip-local time; prefer add_video_effect / set_video_effect_param / remove_video_effect / move_video_effect",
+    ),
+    ParamSpec::fixed(
+        "adjustment",
+        Bool,
+        "",
+        "false",
+        "adjustment layer: no source; its effects apply to the composite of the tracks below while it is active, mixed by its opacity and its track's matte (its track holds only adjustment clips)",
+    ),
     CA[0],
     CA[1],
     CA[2],
@@ -264,6 +278,13 @@ pub const TRACK: &[ParamSpec] = &[
         "",
         "null",
         "video tracks only: {mode: alpha | alpha_inverted | luma | luma_inverted}; the track above becomes this track's matte and is not composited itself",
+    ),
+    ParamSpec::fixed(
+        "effects",
+        Object,
+        "",
+        "[]",
+        "video tracks only: video effects in order on the track's picture, before its matte: [{type, id?, enabled?, ...params}], keyframes in timeline time; prefer add_video_effect / set_video_effect_param / remove_video_effect / move_video_effect",
     ),
     s("bus.gain_db", Tl, "dB", "0", "track bus gain"),
     s("bus.pan", Tl, "", "0", "track balance -1 .. 1").range(-1.0, 1.0),
@@ -450,6 +471,7 @@ pub fn registry_json() -> Value {
         "audio_clip": AUDIO_CLIP,
         "track": TRACK,
         "timeline": TIMELINE,
+        "video_effects": crate::fx::registry_json(),
     })
 }
 

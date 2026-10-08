@@ -298,6 +298,10 @@ pub struct Track {
     /// (alpha / luma, or inverted), and that track is not composited itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matte: Option<MatteSpec>,
+    /// Track video effects (see [`crate::fx`]), keyframes in timeline time,
+    /// applied to the track's picture before its matte.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<crate::fx::VideoEffectSpec>,
     pub clips: Vec<Clip>,
 }
 
@@ -357,6 +361,16 @@ pub struct Clip {
     /// Clip markers (source seconds; see [`crate::markers`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<Marker>,
+    /// Video effects in order (see [`crate::fx`]), keyframes in clip-local
+    /// time. They run on the clip's picture before its transform; the clip
+    /// opacity applies after them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<crate::fx::VideoEffectSpec>,
+    /// An adjustment layer (After Effects / Premiere): no picture of its own;
+    /// its `effects` apply to the composite of the tracks below while it is
+    /// active, mixed by its opacity and its track's matte. Needs no source.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub adjustment: bool,
 }
 
 fn path_is_empty(p: &Path) -> bool {
@@ -401,9 +415,9 @@ impl Clip {
     pub fn end(&self) -> RationalTime {
         self.start + self.duration
     }
-    /// A generator layer (no media, no audio).
+    /// A layer without media or audio: a generator or an adjustment layer.
     pub fn is_generator(&self) -> bool {
-        self.generator.is_some()
+        self.generator.is_some() || self.adjustment
     }
     pub fn time_map(&self) -> TimeMap {
         TimeMap::new(self.source_in, &self.speed, self.time_remap.as_ref())
@@ -416,6 +430,7 @@ impl Clip {
         if let Some(t) = &self.transform {
             self.transform = Some(t.shifted(dt));
         }
+        self.effects = self.effects.iter().map(|e| e.shifted(dt)).collect();
     }
     pub fn audio_region(&self) -> (RationalTime, RationalTime) {
         audio_region(self.start, self.duration, &self.audio)
@@ -504,6 +519,29 @@ impl Timeline {
             crate::markers::validate(&c.markers, &format!("clip {}", c.id))?;
         }
         for (ti, track) in self.tracks.iter().enumerate() {
+            crate::fx::validate_list(&track.effects, &format!("track {ti} ({:?})", track.name))
+                .map_err(|e| anyhow::anyhow!(e))?;
+            if track.clips.iter().any(|c| c.adjustment) {
+                ensure!(
+                    track.effects.is_empty(),
+                    "track {ti} ({:?}): an adjustment track takes its effects on its clips, not the track",
+                    track.name
+                );
+                ensure!(
+                    ti + 1 >= self.tracks.len() || self.tracks[ti + 1].matte.is_none(),
+                    "track {} ({:?}): an adjustment track cannot be the matte of the track below",
+                    ti,
+                    track.name
+                );
+                ensure!(
+                    !self
+                        .tracks
+                        .iter()
+                        .any(|t| t.clips.iter().any(|c| c.three_d)),
+                    "track {ti} ({:?}): adjustment layers are not supported in timelines with 3D layers yet",
+                    track.name
+                );
+            }
             if track.matte.is_some() {
                 ensure!(
                     ti + 1 < self.tracks.len(),
@@ -536,6 +574,36 @@ impl Timeline {
                     c.id
                 );
                 match &c.generator {
+                    _ if c.adjustment => {
+                        ensure!(
+                            path_is_empty(&c.source) && c.generator.is_none(),
+                            "clip {}: an adjustment layer has no source or generator",
+                            c.id
+                        );
+                        ensure!(
+                            track.clips.iter().all(|o| o.adjustment),
+                            "clip {}: adjustment layers need a track of their own (track {ti} ({:?}) also has picture clips)",
+                            c.id,
+                            track.name
+                        );
+                        for (bad, what) in [
+                            (c.transform.is_some(), "transform"),
+                            (c.three_d, "three_d"),
+                            (c.motion_blur, "motion_blur"),
+                            (c.transition_in.is_some(), "transition_in"),
+                            (!c.blend_mode.is_normal(), "blend_mode"),
+                            (
+                                !is_one_anim(&c.speed) || c.time_remap.is_some(),
+                                "speed / time_remap",
+                            ),
+                        ] {
+                            ensure!(
+                                !bad,
+                                "clip {}: {what} is not supported on an adjustment layer (put a transform effect in its effects, or a matte on its track)",
+                                c.id
+                            );
+                        }
+                    }
                     Some(g) => {
                         ensure!(
                             path_is_empty(&c.source),
@@ -547,10 +615,12 @@ impl Timeline {
                     }
                     None => ensure!(
                         !path_is_empty(&c.source),
-                        "clip {}: needs a source (media file or comp) or a generator",
+                        "clip {}: needs a source (media file or comp), a generator, or \"adjustment\": true",
                         c.id
                     ),
                 }
+                crate::fx::validate_list(&c.effects, &format!("clip {}", c.id))
+                    .map_err(|e| anyhow::anyhow!(e))?;
                 c.opacity
                     .validate()
                     .map_err(|e| anyhow::anyhow!("clip {}: opacity: {e}", c.id))?;

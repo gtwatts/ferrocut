@@ -139,6 +139,46 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 - Recipe: text through a picture: put the picture on V1, the title on V2 and
   `set_param` `matte` `{"mode": "alpha"}` on V1 (`track: "V1"`).
 
+## Video effects
+
+- `effects` on a clip (on the clip's picture after retiming and before its transform; the clip
+  `opacity` applies after them; keyframes clip-local) and on a video track (on the track's
+  picture before its matte; timeline time): an ordered stack of `{"type": ..., "id"?: name,
+  "enabled"?: true, params}`; the first entry runs first. Numeric params take a rational
+  (decimals as strings, `"0.8"`) or `{"keyframes": [...]}`; omitted ones take the default.
+  `enabled: false` bypasses an effect without losing its settings.
+  - `gaussian_blur`: `sigma` px (5; radius ~3 sigma), `dimensions` both | horizontal | vertical,
+    `repeat_edges` (false: blurs into transparency and grows the picture; true for full-frame video)
+  - `directional_blur`: `angle` deg (0 = horizontal), `length` px (10)
+  - `unsharp_mask`: `amount` (0.5), `sigma` px (1), `threshold` (0); `sharpen`: `amount` (0.5)
+  - `glow`: `threshold` (0.8, linear luminance), `sigma` px (10), `intensity` (1), `color` tint
+  - `drop_shadow`: `color` ([0, 0, 0, 1]), `opacity` (0.5), `angle` deg (135 = down-right,
+    After Effects convention), `distance` px (5), `softness` px (0), `shadow_only`
+  - `transform`: `anchor`, `position` ([x, y] px, default frame center), `scale` (1 or [x, y]),
+    `rotation` deg, `opacity` (1)
+  - `crop`: `left`, `top`, `right`, `bottom` px from the frame edges, `feather` px (inward)
+  - `letterbox`: `aspect` (2.39), `color` ([0, 0, 0, 1]), `opacity` (1); pillarbox when the
+    aspect is narrower than the frame
+  - other types registered by plug-in crates (color grading, OFX) appear in timeline_schema
+    `params` -> `video_effects` with their params and work the same way.
+- Ops: `add_video_effect` (`effect`, optional `index`), `set_video_effect_param` (`effect` =
+  index or id, `param` such as `sigma`, `color.g`, `enabled`; `value` incl. keyframes, `null` =
+  default), `remove_video_effect`, `move_video_effect` (`to`); each takes `clip` or `track`.
+- Effects work in linear light on premultiplied pixels; blurs, glows and shadows may extend
+  past the layer's edges (until a later `crop`), so put `crop` last to trim them.
+
+## Adjustment layers
+
+- A clip with `"adjustment": true` (no source or generator) and `effects` applies its stack to
+  everything composited below it while it is active (After Effects / Premiere adjustment
+  layer); its `opacity` mixes the result with the untouched picture, and a track `matte` on its
+  track (the track above as alpha / luma matte) limits where it applies. An adjustment track
+  holds only adjustment clips; they take no transform, 3D, blend mode, speed or transition (use
+  a `transform` effect, or a matte, instead).
+- Build one: `add_track` (video, above the tracks it should affect), `add_clip` `{"track":
+  "ADJ", "adjustment": true, "start": "2", "duration": "3"}` (id defaults to `adjustment`),
+  then `add_video_effect` on that clip.
+
 ## Audio effects
 
 - `audio.effects` on a clip (after its gain, fades and pan; keyframes clip-local) and
@@ -199,6 +239,7 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 | `nest` | move video `clips` (any tracks) into a new comp file `path` and replace them with one clip `id` on the lowest of their tracks |
 | `unnest` | replace a plain comp clip by the comp's clips; extra inner tracks go on new tracks right above |
 | `add_effect`, `set_effect_param`, `remove_effect` | audio effect chain of a clip (`clip`) or track bus (`track`); see Audio effects |
+| `add_video_effect`, `set_video_effect_param`, `remove_video_effect`, `move_video_effect` | video effect stack of a clip (`clip`, incl. adjustment layers) or video track (`track`); see Video effects |
 | `add_marker`, `update_marker`, `remove_marker` | timeline or clip (`clip`) markers; see Markers |
 | `relink` | point clips at moved / offline media; see Media management |
 
@@ -209,7 +250,8 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
   `transform.anchor_z`, `transform.rotation_x`, `transform.rotation_y`, `transform.orientation`
   (`.x`/`.y`/`.z`), `motion_blur`, `transition_in`, `sampling`, `blend_mode`, `speed`,
   `time_remap`, `audio.gain_db`, `audio.pan`, `audio.mute`, `audio.fade_in`, `audio.fade_out`,
-  `audio.crossfade_in`, `audio.preserve_pitch`, `audio.effects`; generator clips: `generator`,
+  `audio.crossfade_in`, `audio.preserve_pitch`, `audio.effects`, `effects` (video effects),
+  `adjustment`; generator clips: `generator`,
   `generator.color` (`.r`/`.g`/`.b`/`.a`), `generator.start_color`, `generator.end_color`,
   `generator.start`, `generator.end`, `generator.center` (`.x`/`.y`), `generator.radius`,
   `generator.interpolation`

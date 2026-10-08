@@ -71,6 +71,9 @@ pub struct ParamSpec {
     /// Default as JSON text (`"1"`, `"[w/2, h/2]"` described in `doc`, `"null"`).
     pub default: &'static str,
     pub doc: &'static str,
+    /// The allowed values of a [`ParamKind::Choice`] (empty: listed in `doc`).
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    pub choices: &'static [&'static str],
 }
 
 impl ParamSpec {
@@ -92,7 +95,20 @@ impl ParamSpec {
             max: None,
             default,
             doc,
+            choices: &[],
         }
+    }
+
+    /// A [`ParamKind::Choice`] that must be one of `choices`.
+    pub const fn choice(
+        name: &'static str,
+        choices: &'static [&'static str],
+        default: &'static str,
+        doc: &'static str,
+    ) -> Self {
+        let mut s = Self::fixed(name, ParamKind::Choice, "", default, doc);
+        s.choices = choices;
+        s
     }
 
     pub const fn with_kind(mut self, kind: ParamKind) -> Self {
@@ -129,6 +145,7 @@ impl ParamSpec {
             max: None,
             default,
             doc,
+            choices: &[],
         }
     }
 
