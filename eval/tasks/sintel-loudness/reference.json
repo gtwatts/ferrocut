@@ -1,17 +1,13 @@
 [
   {
-    "patch": [
-      {
-        "op": "replace",
-        "path": "/audio/loudness/target_lufs",
-        "value": "-23"
-      },
-      {
-        "op": "replace",
-        "path": "/audio/loudness/true_peak_dbtp",
-        "value": "-2"
-      }
-    ]
+    "mcp": "edit_apply",
+    "args": {
+      "timeline": "timeline.json",
+      "ops": [
+        { "op": "set_param", "param": "audio.loudness.target_lufs", "value": "-23" },
+        { "op": "set_param", "param": "audio.loudness.true_peak_dbtp", "value": "-2" }
+      ]
+    }
   },
   {
     "mcp": "render",

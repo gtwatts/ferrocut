@@ -1,67 +1,16 @@
 [
   {
-    "patch": [
-      {
-        "op": "replace",
-        "path": "/tracks/0/clips/0/duration",
-        "value": "11/2"
-      },
-      {
-        "op": "replace",
-        "path": "/tracks/0/clips/1/start",
-        "value": "9/2"
-      },
-      {
-        "op": "replace",
-        "path": "/tracks/0/clips/1/source_in",
-        "value": "0"
-      },
-      {
-        "op": "replace",
-        "path": "/tracks/0/clips/1/duration",
-        "value": "11/2"
-      },
-      {
-        "op": "add",
-        "path": "/tracks/0/clips/1/transition_in",
-        "value": {
-          "kind": "dissolve",
-          "duration": "1"
-        }
-      },
-      {
-        "op": "add",
-        "path": "/tracks/0/clips/0/opacity",
-        "value": {
-          "keyframes": [
-            {
-              "t": "0",
-              "v": "0"
-            },
-            {
-              "t": "1",
-              "v": "1"
-            }
-          ]
-        }
-      },
-      {
-        "op": "add",
-        "path": "/tracks/0/clips/1/opacity",
-        "value": {
-          "keyframes": [
-            {
-              "t": "9/2",
-              "v": "1"
-            },
-            {
-              "t": "11/2",
-              "v": "0"
-            }
-          ]
-        }
-      }
-    ]
+    "mcp": "edit_apply",
+    "args": {
+      "timeline": "timeline.json",
+      "ops": [
+        { "op": "add_transition", "clip": "b", "duration": "1", "align": "center" },
+        { "op": "set_keyframes", "clip": "a", "param": "opacity",
+          "keyframes": [ { "t": "0", "v": "0" }, { "t": "1", "v": "1" } ] },
+        { "op": "set_keyframes", "clip": "b", "param": "opacity", "timeline_time": true,
+          "keyframes": [ { "t": "9", "v": "1" }, { "t": "10", "v": "0" } ] }
+      ]
+    }
   },
   {
     "mcp": "plan",

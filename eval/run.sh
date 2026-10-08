@@ -98,6 +98,7 @@ TOML
         ${MODEL:+-m "$MODEL"} -o "$RESULTS/$t.codex-last-message.txt" "$prompt" \
         </dev/null > "$RESULTS/$t.codex.jsonl" 2> "$RESULTS/$t.agent.log"
       echo "  codex exit $?"
+      python3 "$EVAL/lib/agent_usage.py" "$RESULTS/$t.codex.jsonl" "$RESULTS/$t.usage.json" || true
       set -e
       ;;
   esac
