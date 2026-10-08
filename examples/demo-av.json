@@ -1,0 +1,53 @@
+{
+  "name": "ferrocut-demo-av",
+  "output": { "width": 1920, "height": 1080, "fps": "24", "gop": 24, "gops_per_chunk": 1 },
+  "tracks": [
+    {
+      "name": "V1",
+      "clips": [
+        { "id": "cam_a", "source": "../media/cam_a.mov", "start": "0", "source_in": "0", "duration": "5",
+          "audio": { "out_offset": "-1/2" } },
+        { "id": "cam_b", "source": "../media/cam_b.mov", "start": "5", "source_in": "1", "duration": "5",
+          "audio": { "in_offset": "-1", "out_offset": "1", "gain_db": "-3",
+                     "crossfade_in": { "duration": "1/2", "curve": "equal_power" },
+                     "fade_out": { "duration": "1/2", "curve": "linear" } } },
+        { "id": "grad", "source": "../media/gradients.mov", "start": "10", "source_in": "1/2", "duration": "3" }
+      ]
+    },
+    {
+      "name": "V2",
+      "clips": [
+        { "id": "logo", "source": "../media/overlay.mov", "start": "6", "source_in": "0", "duration": "3", "opacity": "1/2" }
+      ]
+    }
+  ],
+  "audio_tracks": [
+    {
+      "name": "dialogue",
+      "clips": [
+        { "id": "vo", "source": "../media/dialogue.wav", "start": "1", "source_in": "0", "duration": "11",
+          "audio": { "pan": { "keyframes": [
+            { "t": "0", "v": "-1/2", "interp": "ease_in_out" },
+            { "t": "11", "v": "1/2" } ] } } }
+      ]
+    },
+    {
+      "name": "music",
+      "bus": {
+        "gain_db": { "keyframes": [
+          { "t": "0", "v": "-4" },
+          { "t": "11", "v": "-4", "interp": "easy_ease" },
+          { "t": "13", "v": "-10" } ] },
+        "duck": { "key": ["dialogue"], "threshold_db": "-32", "ratio": "6", "attack_ms": "15", "release_ms": "300", "range_db": "12" }
+      },
+      "clips": [
+        { "id": "score", "source": "../media/music.flac", "start": "0", "source_in": "1/2", "duration": "13",
+          "audio": { "fade_in": { "duration": "1" }, "fade_out": { "duration": "2" } } }
+      ]
+    }
+  ],
+  "audio": {
+    "sample_rate": 48000,
+    "loudness": { "target_lufs": "-14", "true_peak_dbtp": "-1" }
+  }
+}

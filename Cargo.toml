@@ -9,5 +9,6 @@ license = "Apache-2.0"
 repository = "https://github.com/gtwatts/ferrocut"
 
 [workspace.dependencies]
+ferrocut-audio = { path = "crates/ferrocut-audio" }
 ferrocut-core = { path = "crates/ferrocut-core" }
 ferrocut-types = { path = "crates/ferrocut-types" }

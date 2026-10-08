@@ -24,6 +24,13 @@
 //! a fresh worker, at most `max_chunk_restarts` times. Chunks finished on the
 //! old device are only committed if it was still alive at the end of the chunk.
 //!
+//! Audio: the timeline's audio is decoded and analyzed once per render
+//! (see [`crate::audio`]), then each chunk's exact sample range is mixed
+//! (statelessly, in parallel) and muxed as PCM next to the chunk's video
+//! packets during the lossless concat. Mixing is cheap, so audio is re-mixed
+//! on every render; the per-chunk `audio_blake3` in the report shows which
+//! chunks' audio an edit changed. Video chunk keys don't depend on audio.
+//!
 //! Sequential nodes: if any node feeding the output is
 //! [`AccessPattern::Sequential`], the chunks to render are split into at most
 //! `jobs` contiguous runs, one per worker, each rendered in increasing time
@@ -44,10 +51,11 @@ use ferrocut_core::{
 use rayon::prelude::*;
 use serde::Serialize;
 
+use crate::audio::{AudioReport, frame_sample};
 use crate::compile::Compiled;
 use crate::compositor::{Compositor, ReadbackRing, compositor_slot};
 use crate::graph::FrameCache;
-use crate::media::concat::concat;
+use crate::media::concat::{ConcatAudio, concat};
 use crate::media::encode::{ChunkEncoder, EncodeSettings};
 use crate::timeline::Timeline;
 
@@ -79,6 +87,9 @@ pub struct ChunkReport {
     pub status: ChunkStatus,
     pub file_blake3: String,
     pub render_ms: u128,
+    /// blake3 of this chunk's audio (interleaved f32le), if the timeline has audio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_blake3: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -116,6 +127,10 @@ pub struct RenderReport {
     /// GPU contexts recreated after device loss.
     pub gpu_recreations: u64,
     pub final_blake3: String,
+    /// blake3 of the master's video packet payloads in order.
+    pub video_blake3: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioReport>,
 }
 
 /// Output frames in flight per chunk worker in the readback ring.
@@ -463,6 +478,7 @@ pub fn render(
     std::fs::create_dir_all(&chunk_dir)
         .with_context(|| format!("creating {}", chunk_dir.display()))?;
     let plans = plan(tl, c);
+    let audio_plan = crate::audio::prepare(tl).context("preparing audio")?;
     let gpu0 = gpu.get();
     let pool_before = gpu0.pool_stats();
     let recreations_before = gpu.recreations();
@@ -539,6 +555,18 @@ pub fn render(
         }
     };
 
+    // Audio: each chunk's exact sample range, mixed statelessly in parallel.
+    let t_audio = Instant::now();
+    let audio_chunks: Option<Vec<ferrocut_audio::Stereo>> = audio_plan.as_ref().map(|a| {
+        pool.install(|| {
+            plans
+                .par_iter()
+                .map(|p| a.render_frames(tl, p.start_frame, p.frames))
+                .collect()
+        })
+    });
+    let audio_render_ms = t_audio.elapsed().as_millis();
+
     let t_concat = Instant::now();
     let paths: Vec<PathBuf> = plans.iter().map(path_of).collect();
     let refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
@@ -547,7 +575,23 @@ pub fn render(
         std::fs::create_dir_all(dir).ok();
     }
     let tmp_out = out.with_extension("partial.mkv");
-    concat(&refs, &starts, tl.output.fps, &tmp_out)?;
+    let fs = |i: i64| frame_sample(tl, i);
+    let concat_audio = match (&audio_plan, &audio_chunks) {
+        (Some(a), Some(ch)) => Some(ConcatAudio {
+            rate: a.program.rate,
+            chunks: ch,
+            frame_sample: &fs,
+            total: a.program.total,
+        }),
+        _ => None,
+    };
+    let stats = concat(
+        &refs,
+        &starts,
+        tl.output.fps,
+        &tmp_out,
+        concat_audio.as_ref(),
+    )?;
     std::fs::rename(&tmp_out, out)?;
     let concat_ms = t_concat.elapsed().as_millis();
 
@@ -568,6 +612,11 @@ pub fn render(
             status,
             file_blake3: file_blake3(path)?,
             render_ms: ms[p.index].unwrap_or(0),
+            audio_blake3: audio_chunks.as_ref().map(|ch| {
+                blake3::hash(&ch[p.index].to_f32le_interleaved())
+                    .to_hex()
+                    .to_string()
+            }),
         });
     }
     let render_fps = if rendered > 0 && render_wall_ms > 0 {
@@ -603,6 +652,27 @@ pub fn render(
         chunk_restarts: restarts.load(Ordering::Relaxed),
         gpu_recreations: gpu.recreations() - recreations_before,
         final_blake3: file_blake3(out)?,
+        video_blake3: stats.video_blake3,
+        audio: match (audio_plan, audio_chunks) {
+            (Some(a), Some(ch)) => {
+                let mut all = ferrocut_audio::Stereo::default();
+                ch.iter().for_each(|c| all.append(c));
+                Some(AudioReport {
+                    codec: "pcm_f32le",
+                    sample_rate: a.program.rate,
+                    channels: crate::audio::CHANNELS,
+                    samples: all.len() as i64,
+                    output: ferrocut_audio::measure(&all.l, &all.r, a.program.rate).ok(),
+                    sources: a.info,
+                    analysis: a.analysis,
+                    blake3: stats.audio_blake3.unwrap_or_default(),
+                    decode_ms: a.decode_ms,
+                    analysis_ms: a.analysis_ms,
+                    render_ms: audio_render_ms,
+                })
+            }
+            _ => None,
+        },
     })
 }
 

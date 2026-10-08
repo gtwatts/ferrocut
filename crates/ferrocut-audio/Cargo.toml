@@ -1,0 +1,13 @@
+[package]
+name = "ferrocut-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Ferrocut's deterministic audio mixer: sample-exact clip placement, gain/pan, crossfades, buses, sidechain ducking, EBU R128 normalization and a true-peak limiter (pure Rust, no FFmpeg, no GPU)"
+
+[dependencies]
+ferrocut-types.workspace = true
+# EBU R128 / ITU-R BS.1770 loudness + true peak, pure-Rust port of libebur128. MIT.
+ebur128 = { version = "0.1.10", default-features = false }
+serde = { version = "1", features = ["derive"] }

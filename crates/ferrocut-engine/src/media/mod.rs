@@ -1,5 +1,6 @@
 //! FFmpeg I/O via `ffmpeg-next` (dynamically linked system libav*, FFmpeg 8/9 API).
 
+pub mod audio;
 pub mod concat;
 pub mod decode;
 pub mod encode;

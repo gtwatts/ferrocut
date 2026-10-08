@@ -1,0 +1,130 @@
+//! Sidechain ducking and the true-peak limiter (sequential, whole-program).
+
+use crate::program::Duck;
+
+/// Per-sample linear gains for a ducked track from its key signal.
+///
+/// Peak detector on `max(|L|, |R|)` with one-pole attack/release smoothing,
+/// then a hard-knee gain computer: above `threshold_db` the level is reduced
+/// by `over · (1 - 1/ratio)` dB, at most `range_db`.
+pub fn duck_gains(key_l: &[f32], key_r: &[f32], d: &Duck, rate: u32) -> Vec<f32> {
+    let fs = rate as f64;
+    let a_att = (-1.0 / (d.attack_s * fs)).exp();
+    let a_rel = (-1.0 / (d.release_s * fs)).exp();
+    let slope = 1.0 - 1.0 / d.ratio;
+    let mut env = 0.0f64;
+    key_l
+        .iter()
+        .zip(key_r)
+        .map(|(&l, &r)| {
+            let x = (l.abs().max(r.abs())) as f64;
+            let c = if x > env { a_att } else { a_rel };
+            env = x + (env - x) * c;
+            let over = 20.0 * env.max(1e-10).log10() - d.threshold_db;
+            if over > 0.0 {
+                let red = (over * slope).min(d.range_db);
+                10f64.powf(-red / 20.0) as f32
+            } else {
+                1.0
+            }
+        })
+        .collect()
+}
+
+/// Half-length of the true-peak interpolation filter (taps per phase = 2·H).
+const H: usize = 8;
+
+/// 4x oversampling true-peak estimator (windowed-sinc polyphase, phases 1/4,
+/// 2/4, 3/4 between samples; each phase normalized to unity DC gain).
+pub struct TruePeak {
+    phases: [[f64; 2 * H]; 3],
+}
+
+impl Default for TruePeak {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TruePeak {
+    pub fn new() -> Self {
+        let mut phases = [[0.0; 2 * H]; 3];
+        for (k, ph) in phases.iter_mut().enumerate() {
+            let f = (k + 1) as f64 / 4.0;
+            for (j, c) in ph.iter_mut().enumerate() {
+                // Tap j multiplies x[n + j - H + 1]; its distance from n + f:
+                let x = (j as f64 - H as f64 + 1.0) - f;
+                let sinc = if x == 0.0 {
+                    1.0
+                } else {
+                    (std::f64::consts::PI * x).sin() / (std::f64::consts::PI * x)
+                };
+                let w = 0.5 * (1.0 + (std::f64::consts::PI * x / H as f64).cos());
+                *c = sinc * w;
+            }
+            let s: f64 = ph.iter().sum();
+            ph.iter_mut().for_each(|c| *c /= s);
+        }
+        TruePeak { phases }
+    }
+
+    /// Estimated true peak (linear) of one channel between samples `n` and `n + 1`, including `x[n]`.
+    #[inline]
+    pub fn at(&self, x: &[f32], n: usize) -> f64 {
+        let mut m = (x[n] as f64).abs();
+        let lo = n as isize - H as isize + 1;
+        for ph in &self.phases {
+            let mut acc = 0.0f64;
+            for (j, c) in ph.iter().enumerate() {
+                let i = lo + j as isize;
+                if i >= 0 && (i as usize) < x.len() {
+                    acc += c * x[i as usize] as f64;
+                }
+            }
+            m = m.max(acc.abs());
+        }
+        m
+    }
+}
+
+/// Look-ahead of the limiter (attack ramp length), seconds.
+pub const LIMITER_LOOKAHEAD_S: f64 = 0.005;
+/// Release time constant of the limiter, seconds.
+pub const LIMITER_RELEASE_S: f64 = 0.08;
+
+/// Per-sample limiter gains keeping the stereo-linked true peak of `l`/`r`
+/// at or below `ceiling` (linear). Offline look-ahead: the gain ramps down
+/// linearly over the look-ahead before each over-peak (so it reaches the
+/// required gain exactly at the peak), then releases exponentially. No delay
+/// line is needed because the whole signal is available. Returns the gains
+/// and the minimum gain.
+pub fn limiter_gains(l: &[f32], r: &[f32], ceiling: f64, rate: u32) -> (Vec<f32>, f64) {
+    let n = l.len();
+    let tp = TruePeak::new();
+    // Required gain at each over-ceiling sample.
+    let mut hot: Vec<(usize, f64)> = Vec::new();
+    for i in 0..n {
+        let p = tp.at(l, i).max(tp.at(r, i));
+        if p > ceiling {
+            hot.push((i, ceiling / p));
+        }
+    }
+    let la = ((rate as f64 * LIMITER_LOOKAHEAD_S).round() as usize).max(1);
+    let rel = 1.0 - (-1.0 / (LIMITER_RELEASE_S * rate as f64)).exp();
+    let mut out = Vec::with_capacity(n);
+    let (mut env, mut min_g, mut first) = (1.0f64, 1.0f64, 0usize);
+    for i in 0..n {
+        while first < hot.len() && hot[first].0 < i {
+            first += 1;
+        }
+        let mut ramp = 1.0f64;
+        for &(k, req) in hot[first..].iter().take_while(|(k, _)| *k <= i + la) {
+            let g = req + (1.0 - req) * (k - i) as f64 / la as f64;
+            ramp = ramp.min(g);
+        }
+        env = ramp.min(env + (1.0 - env) * rel);
+        min_g = min_g.min(env);
+        out.push(env as f32);
+    }
+    (out, min_g)
+}

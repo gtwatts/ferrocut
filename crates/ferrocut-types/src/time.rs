@@ -18,7 +18,9 @@ pub enum TimeError {
     ZeroDenominator,
     #[error("rational arithmetic overflowed i64")]
     Overflow,
-    #[error("cannot parse rational from {0:?} (expected \"n\" or \"n/d\")")]
+    #[error(
+        "cannot parse rational from {0:?} (expected \"n\", \"n/d\" or an exact decimal \"n.ddd\")"
+    )]
     Parse(String),
 }
 
@@ -128,6 +130,11 @@ impl Rational {
     pub fn to_f32_param(self) -> f32 {
         (self.num as f64 / self.den as f64) as f32
     }
+    /// Lossy conversion for DSP/animation math (`num / den` in f64, one
+    /// rounding per operand, deterministic). Never use this for time keys.
+    pub fn to_f64(self) -> f64 {
+        self.num as f64 / self.den as f64
+    }
     /// Stable byte encoding for hashing.
     pub fn hash_bytes(self) -> [u8; 16] {
         let mut b = [0u8; 16];
@@ -205,7 +212,22 @@ impl FromStr for Rational {
                 n.trim().parse::<i64>().map_err(|_| err())? as i128,
                 d.trim().parse::<i64>().map_err(|_| err())? as i128,
             ),
-            None => Ok(Rational::from_int(s.parse::<i64>().map_err(|_| err())?)),
+            None => match s.split_once('.') {
+                // Exact decimal: "0.42" -> 21/50, "-1.5" -> -3/2.
+                Some((i, f)) if !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()) => {
+                    let neg = i.trim_start().starts_with('-');
+                    let ip = match i.trim() {
+                        "" | "-" | "+" => 0,
+                        v => v.parse::<i64>().map_err(|_| err())?.abs(),
+                    };
+                    let scale = 10i128.checked_pow(f.len() as u32).ok_or_else(err)?;
+                    let fp = f.parse::<i128>().map_err(|_| err())?;
+                    let n = ip as i128 * scale + fp;
+                    Rational::try_new(if neg { -n } else { n }, scale)
+                }
+                Some(_) => Err(err()),
+                None => Ok(Rational::from_int(s.parse::<i64>().map_err(|_| err())?)),
+            },
         }
     }
 }
@@ -285,6 +307,12 @@ impl Sub for RationalTime {
     type Output = RationalTime;
     fn sub(self, o: Self) -> Self {
         RationalTime(self.0 - o.0)
+    }
+}
+impl Neg for RationalTime {
+    type Output = RationalTime;
+    fn neg(self) -> Self {
+        RationalTime(-self.0)
     }
 }
 impl fmt::Display for RationalTime {
@@ -430,7 +458,15 @@ mod tests {
         assert_eq!("49/24".parse::<Rational>().unwrap(), Rational::new(49, 24));
         assert_eq!(" 3 ".parse::<Rational>().unwrap(), Rational::from_int(3));
         assert!("1/0".parse::<Rational>().is_err());
-        assert!("1.5".parse::<Rational>().is_err());
+        // Decimal strings are exact (no float involved); JSON float numbers are still rejected.
+        assert_eq!("1.5".parse::<Rational>().unwrap(), Rational::new(3, 2));
+        assert_eq!("-0.42".parse::<Rational>().unwrap(), Rational::new(-21, 50));
+        assert_eq!(".25".parse::<Rational>().unwrap(), Rational::new(1, 4));
+        assert_eq!("-.5".parse::<Rational>().unwrap(), Rational::new(-1, 2));
+        assert!("1.".parse::<Rational>().is_err());
+        assert!("1.2.3".parse::<Rational>().is_err());
+        assert!("1e3".parse::<Rational>().is_err());
+        assert!(serde_json::from_str::<Rational>("1.5").is_err());
         let t: RationalTime = serde_json::from_str("\"1001/24000\"").unwrap();
         assert_eq!(t, RationalTime::new(1001, 24000));
         let t: RationalTime = serde_json::from_str("4").unwrap();

@@ -193,6 +193,38 @@ fn main() -> anyhow::Result<()> {
                     r.worker_tasks, r.sequential_resets
                 );
             }
+            if let Some(a) = &r.audio {
+                println!(
+                    "audio: {} {} Hz x{} {} samples | decode {} ms, analysis {} ms, mix {} ms | blake3 {}",
+                    a.codec,
+                    a.sample_rate,
+                    a.channels,
+                    a.samples,
+                    a.decode_ms,
+                    a.analysis_ms,
+                    a.render_ms,
+                    a.blake3
+                );
+                if let (Some(m), Some(t)) = (&a.output, a.analysis.target_lufs) {
+                    println!(
+                        "loudness: {:.2} LUFS (target {t}), true peak {:.2} dBTP | gain {:+.2} dB, limiter max {:.2} dB, {} passes",
+                        m.integrated_lufs,
+                        m.true_peak_dbtp,
+                        a.analysis.norm_gain_db,
+                        a.analysis.limiter_max_reduction_db,
+                        a.analysis.passes
+                    );
+                }
+                for d in &a.analysis.ducks {
+                    println!(
+                        "duck {:?}: max {:.1} dB, ducked {:.0}% of the time",
+                        d.track,
+                        d.max_reduction_db,
+                        d.ducked_fraction * 100.0
+                    );
+                }
+            }
+            println!("video stream blake3 {}", r.video_blake3);
             println!("output: {}  blake3 {}", r.output.display(), r.final_blake3);
             let report_path = report.unwrap_or_else(|| output.with_extension("report.json"));
             std::fs::write(&report_path, serde_json::to_string_pretty(&r)?)

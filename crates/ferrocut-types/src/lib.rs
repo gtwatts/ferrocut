@@ -9,6 +9,7 @@ pub mod color;
 pub mod error;
 pub mod hash;
 pub mod image;
+pub mod keyframe;
 pub mod manifest;
 pub mod time;
 
@@ -17,5 +18,6 @@ pub use color::{AlphaMode, ColorSpace};
 pub use error::{ErrorKind, GpuFault, NodeError};
 pub use hash::{FrameKey, NodeHash};
 pub use image::{CpuFrame, CpuImage, PixelRect};
+pub use keyframe::{Animatable, Interp, Keyframe, KeyframeTrack};
 pub use manifest::FileManifest;
 pub use time::{FrameRate, Rational, RationalTime, TimeError};
