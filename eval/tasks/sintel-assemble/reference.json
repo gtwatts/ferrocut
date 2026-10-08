@@ -1,0 +1,50 @@
+[
+  {
+    "mcp": "edit_apply",
+    "args": {
+      "timeline": "timeline.json",
+      "ops": [
+        {
+          "op": "ripple_insert",
+          "track": "V1",
+          "at": "0",
+          "clip": {
+            "id": "s1",
+            "source": "media/s1.mkv",
+            "source_in": "0",
+            "duration": "4"
+          }
+        },
+        {
+          "op": "ripple_insert",
+          "track": "V1",
+          "at": "4",
+          "clip": {
+            "id": "s2",
+            "source": "media/s2.mkv",
+            "source_in": "1",
+            "duration": "4"
+          }
+        },
+        {
+          "op": "ripple_insert",
+          "track": "V1",
+          "at": "8",
+          "clip": {
+            "id": "s3",
+            "source": "media/s3.mkv",
+            "source_in": "0",
+            "duration": "4"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "mcp": "render",
+    "args": {
+      "timeline": "timeline.json",
+      "output": "out.mkv"
+    }
+  }
+]

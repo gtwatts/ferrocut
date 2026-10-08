@@ -1,0 +1,23 @@
+[
+  {
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/audio/loudness/target_lufs",
+        "value": "-23"
+      },
+      {
+        "op": "replace",
+        "path": "/audio/loudness/true_peak_dbtp",
+        "value": "-2"
+      }
+    ]
+  },
+  {
+    "mcp": "render",
+    "args": {
+      "timeline": "timeline.json",
+      "output": "out.mkv"
+    }
+  }
+]

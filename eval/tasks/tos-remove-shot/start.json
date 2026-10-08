@@ -1,0 +1,44 @@
+{
+  "name": "tos-remove-shot",
+  "output": {
+    "width": 1280,
+    "height": 534,
+    "fps": "24",
+    "gop": 24
+  },
+  "tracks": [
+    {
+      "name": "V1",
+      "clips": [
+        {
+          "id": "shot_a",
+          "source": "media/t1.mkv",
+          "start": "0",
+          "source_in": "1",
+          "duration": "3"
+        },
+        {
+          "id": "shot_b",
+          "source": "media/t2.mkv",
+          "start": "3",
+          "source_in": "1",
+          "duration": "3"
+        },
+        {
+          "id": "shot_c",
+          "source": "media/t3.mkv",
+          "start": "6",
+          "source_in": "1",
+          "duration": "3"
+        },
+        {
+          "id": "shot_d",
+          "source": "media/t4.mkv",
+          "start": "9",
+          "source_in": "1",
+          "duration": "3"
+        }
+      ]
+    }
+  ]
+}

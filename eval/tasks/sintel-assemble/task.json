@@ -1,0 +1,41 @@
+{
+  "clips": [
+    "s1",
+    "s2",
+    "s3"
+  ],
+  "expect": {
+    "tracks": {
+      "V1": [
+        {
+          "source": "media/s1.mkv",
+          "start": "0",
+          "duration": "4",
+          "source_in": "0"
+        },
+        {
+          "source": "media/s2.mkv",
+          "start": "4",
+          "duration": "4",
+          "source_in": "1"
+        },
+        {
+          "source": "media/s3.mkv",
+          "start": "8",
+          "duration": "4",
+          "source_in": "0"
+        }
+      ]
+    },
+    "duration": "12",
+    "render": {
+      "frames": 288
+    },
+    "check": {
+      "cuts": [
+        "4",
+        "8"
+      ]
+    }
+  }
+}

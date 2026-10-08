@@ -1,0 +1,52 @@
+{
+  "clips": [
+    "s4",
+    "s5"
+  ],
+  "expect": {
+    "tracks": {
+      "V1": [
+        {
+          "source": "media/s4.mkv",
+          "start": "0",
+          "duration": "5",
+          "source_in": "0"
+        },
+        {
+          "source": "media/s5.mkv",
+          "start": "5",
+          "duration": "5",
+          "source_in": "0"
+        }
+      ]
+    },
+    "duration": "10",
+    "fields": [
+      {
+        "path": "audio.loudness.target_lufs",
+        "min": "-24",
+        "max": "-22"
+      },
+      {
+        "path": "audio.loudness.true_peak_dbtp",
+        "max": "-2"
+      }
+    ],
+    "render": {
+      "frames": 240
+    },
+    "check": {
+      "cuts": [
+        "5"
+      ],
+      "args": [
+        "--loudness-target",
+        "-23",
+        "--loudness-tolerance",
+        "1",
+        "--true-peak-max",
+        "-2"
+      ]
+    }
+  }
+}

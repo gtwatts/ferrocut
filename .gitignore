@@ -6,3 +6,6 @@ target/
 .ferrocut-cache/
 .cutline-cache/
 /third_party/
+/eval/media/
+/eval/results/
+__pycache__/

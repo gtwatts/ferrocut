@@ -1,0 +1,30 @@
+{
+  "name": "tos-dissolve-fade",
+  "output": {
+    "width": 1280,
+    "height": 534,
+    "fps": "24",
+    "gop": 24
+  },
+  "tracks": [
+    {
+      "name": "V1",
+      "clips": [
+        {
+          "id": "a",
+          "source": "media/t5.mkv",
+          "start": "0",
+          "source_in": "1/2",
+          "duration": "5"
+        },
+        {
+          "id": "b",
+          "source": "media/t6.mkv",
+          "start": "5",
+          "source_in": "1/2",
+          "duration": "5"
+        }
+      ]
+    }
+  ]
+}

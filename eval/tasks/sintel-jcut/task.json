@@ -1,0 +1,45 @@
+{
+  "clips": [
+    "s3",
+    "s4"
+  ],
+  "expect": {
+    "tracks": {
+      "V1": [
+        {
+          "source": "media/s3.mkv",
+          "start": "0",
+          "duration": "5",
+          "source_in": "0"
+        },
+        {
+          "source": "media/s4.mkv",
+          "start": "5",
+          "duration": "5",
+          "source_in": "1"
+        }
+      ]
+    },
+    "duration": "10",
+    "audio_regions": [
+      {
+        "source": "media/s3.mkv",
+        "start": "0",
+        "end": "4"
+      },
+      {
+        "source": "media/s4.mkv",
+        "start": "4",
+        "end": "10"
+      }
+    ],
+    "render": {
+      "frames": 240
+    },
+    "check": {
+      "cuts": [
+        "5"
+      ]
+    }
+  }
+}

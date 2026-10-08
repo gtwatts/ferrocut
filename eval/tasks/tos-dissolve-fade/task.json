@@ -1,0 +1,89 @@
+{
+  "clips": [
+    "t5",
+    "t6"
+  ],
+  "expect": {
+    "tracks": {
+      "V1": [
+        {
+          "source": "media/t5.mkv",
+          "start": "0",
+          "source_in": "1/2",
+          "end": "11/2"
+        },
+        {
+          "source": "media/t6.mkv",
+          "start": "9/2",
+          "end": "10",
+          "transition_in": {
+            "kind": "dissolve",
+            "duration": "1"
+          }
+        }
+      ]
+    },
+    "duration": "10",
+    "opacity": [
+      {
+        "source": "media/t5.mkv",
+        "at": "0",
+        "max": "0.02"
+      },
+      {
+        "source": "media/t5.mkv",
+        "at": "1/2",
+        "min": "0.2",
+        "max": "0.8"
+      },
+      {
+        "source": "media/t5.mkv",
+        "at": "1",
+        "min": "0.98"
+      },
+      {
+        "source": "media/t6.mkv",
+        "at_end": "-1",
+        "min": "0.98"
+      },
+      {
+        "source": "media/t6.mkv",
+        "at_end": "-1/2",
+        "min": "0.2",
+        "max": "0.8"
+      },
+      {
+        "source": "media/t6.mkv",
+        "at_end": "0",
+        "max": "0.02"
+      }
+    ],
+    "render": {
+      "frames": 240,
+      "luma": [
+        {
+          "frame": 0,
+          "max": 20
+        },
+        {
+          "frame": 239,
+          "max": 22
+        },
+        {
+          "frame": 72,
+          "min": 25
+        },
+        {
+          "frame": 168,
+          "min": 25
+        }
+      ]
+    },
+    "check": {
+      "cuts": [],
+      "config": {
+        "require_audio": false
+      }
+    }
+  }
+}

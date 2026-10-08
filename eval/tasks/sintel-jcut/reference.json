@@ -1,0 +1,27 @@
+[
+  {
+    "mcp": "edit_apply",
+    "args": {
+      "timeline": "timeline.json",
+      "ops": [
+        {
+          "op": "jl_cut",
+          "clip": "b",
+          "in_offset": "-1"
+        },
+        {
+          "op": "jl_cut",
+          "clip": "a",
+          "out_offset": "-1"
+        }
+      ]
+    }
+  },
+  {
+    "mcp": "render",
+    "args": {
+      "timeline": "timeline.json",
+      "output": "out.mkv"
+    }
+  }
+]

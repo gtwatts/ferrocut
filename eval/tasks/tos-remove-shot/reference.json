@@ -1,0 +1,21 @@
+[
+  {
+    "mcp": "edit_apply",
+    "args": {
+      "timeline": "timeline.json",
+      "ops": [
+        {
+          "op": "ripple_delete",
+          "clip": "shot_c"
+        }
+      ]
+    }
+  },
+  {
+    "mcp": "render",
+    "args": {
+      "timeline": "timeline.json",
+      "output": "out.mkv"
+    }
+  }
+]

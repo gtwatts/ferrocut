@@ -1,0 +1,79 @@
+[
+  {
+    "patch": [
+      {
+        "op": "replace",
+        "path": "/tracks/0/clips/0/duration",
+        "value": "11/2"
+      },
+      {
+        "op": "replace",
+        "path": "/tracks/0/clips/1/start",
+        "value": "9/2"
+      },
+      {
+        "op": "replace",
+        "path": "/tracks/0/clips/1/source_in",
+        "value": "0"
+      },
+      {
+        "op": "replace",
+        "path": "/tracks/0/clips/1/duration",
+        "value": "11/2"
+      },
+      {
+        "op": "add",
+        "path": "/tracks/0/clips/1/transition_in",
+        "value": {
+          "kind": "dissolve",
+          "duration": "1"
+        }
+      },
+      {
+        "op": "add",
+        "path": "/tracks/0/clips/0/opacity",
+        "value": {
+          "keyframes": [
+            {
+              "t": "0",
+              "v": "0"
+            },
+            {
+              "t": "1",
+              "v": "1"
+            }
+          ]
+        }
+      },
+      {
+        "op": "add",
+        "path": "/tracks/0/clips/1/opacity",
+        "value": {
+          "keyframes": [
+            {
+              "t": "9/2",
+              "v": "1"
+            },
+            {
+              "t": "11/2",
+              "v": "0"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "mcp": "plan",
+    "args": {
+      "timeline": "timeline.json"
+    }
+  },
+  {
+    "mcp": "render",
+    "args": {
+      "timeline": "timeline.json",
+      "output": "out.mkv"
+    }
+  }
+]
