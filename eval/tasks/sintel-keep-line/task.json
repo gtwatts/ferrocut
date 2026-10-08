@@ -1,0 +1,31 @@
+{
+  "clips": [
+    "d1"
+  ],
+  "expect": {
+    "tracks": {
+      "V1": [
+        {
+          "source": "media/d1.mkv",
+          "start": "0"
+        }
+      ]
+    },
+    "source_windows": [
+      {
+        "track": "V1",
+        "source": "media/d1.mkv",
+        "in_min": "8.9",
+        "in_max": "10.75",
+        "out_min": "14.9",
+        "out_max": "16.6",
+        "why": "speech energy: 'Thank you' ends ~8.8 s, the line runs ~10.8-14.85 s, the next line starts ~16.7 s"
+      }
+    ],
+    "check": {
+      "config": {
+        "check_cuts": false
+      }
+    }
+  }
+}

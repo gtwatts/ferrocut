@@ -1,0 +1,30 @@
+[
+  {
+    "mcp": "transcript_search",
+    "args": {
+      "media": "media/d1.mkv",
+      "query": "So, what brings you to the land of the gatekeepers?",
+      "max_results": 1
+    },
+    "bind": "found"
+  },
+  {
+    "mcp": "edit_apply",
+    "args": {
+      "timeline": "timeline.json",
+      "ops": [
+        { "op": "split", "clip": "scene", "at": "{{found.hits.0.cut_out}}", "new_id": "after" },
+        { "op": "ripple_delete", "clip": "after" },
+        { "op": "split", "clip": "scene", "at": "{{found.hits.0.cut_in}}", "new_id": "line" },
+        { "op": "ripple_delete", "clip": "scene" }
+      ]
+    }
+  },
+  {
+    "mcp": "render",
+    "args": {
+      "timeline": "timeline.json",
+      "output": "out.mkv"
+    }
+  }
+]

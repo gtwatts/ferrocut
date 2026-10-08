@@ -8,6 +8,7 @@ pub mod deliver;
 pub mod diff;
 pub mod edit;
 pub mod graph;
+pub mod index;
 pub mod media;
 pub mod nodes;
 pub mod params;

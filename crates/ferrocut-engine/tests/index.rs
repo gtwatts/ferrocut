@@ -1,0 +1,326 @@
+//! Media index: whisper JSON parsing, transcript search, padded cut ranges,
+//! the content-hashed cache (with a fake whisper-cli), GPU->CPU fallback, the
+//! shot-detection hook, and (when whisper.cpp, its model and the eval clip
+//! are present) a real transcription of a Sintel line.
+
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::{Path, PathBuf};
+
+use ferrocut_core::{BoundaryKind, Rational, RationalTime, ShotBoundary, TimeRange};
+use ferrocut_engine::index::{
+    self, IndexOptions, Part, Transcript, WhisperConfig, padded_range, search, shots, whisper,
+};
+
+fn rt(n: i64, d: i64) -> RationalTime {
+    RationalTime::new(n, d)
+}
+
+const WHISPER_JSON: &str = r#"{
+  "transcription": [
+    { "offsets": { "from": 0, "to": 2000 }, "text": " So, what brings you?",
+      "tokens": [
+        { "text": "[_BEG_]", "offsets": { "from": 0, "to": 0 }, "p": 0.9 },
+        { "text": " So", "offsets": { "from": 120, "to": 300 }, "p": 0.9 },
+        { "text": ",", "offsets": { "from": 300, "to": 310 }, "p": 0.8 },
+        { "text": " what", "offsets": { "from": 400, "to": 600 }, "p": 0.95 },
+        { "text": " br", "offsets": { "from": 600, "to": 700 }, "p": 0.7 },
+        { "text": "ings", "offsets": { "from": 700, "to": 900 }, "p": 0.99 },
+        { "text": " you", "offsets": { "from": 900, "to": 1100 }, "p": 0.9 },
+        { "text": "?", "offsets": { "from": 1100, "to": 1110 }, "p": 0.9 },
+        { "text": "[_TT_55]", "offsets": { "from": 2000, "to": 2000 }, "p": 0.1 }
+      ] },
+    { "offsets": { "from": 3000, "to": 4000 }, "text": " You're lucky.",
+      "tokens": [
+        { "text": " You", "offsets": { "from": 3000, "to": 3200 }, "p": 0.9 },
+        { "text": "'re", "offsets": { "from": 3200, "to": 3300 }, "p": 0.9 },
+        { "text": " lucky", "offsets": { "from": 3300, "to": 3800 }, "p": 0.9 },
+        { "text": ".", "offsets": { "from": 3800, "to": 3810 }, "p": 0.9 }
+      ] }
+  ]
+}"#;
+
+#[test]
+fn parses_whisper_tokens_into_words() {
+    let segs = whisper::parse(WHISPER_JSON).unwrap();
+    assert_eq!(segs.len(), 2);
+    let w: Vec<(&str, RationalTime, RationalTime)> = segs[0]
+        .words
+        .iter()
+        .map(|w| (w.text.as_str(), w.start, w.end))
+        .collect();
+    assert_eq!(
+        w,
+        [
+            ("So,", rt(3, 25), rt(31, 100)),
+            ("what", rt(2, 5), rt(3, 5)),
+            ("brings", rt(3, 5), rt(9, 10)),
+            ("you?", rt(9, 10), rt(111, 100)),
+        ]
+    );
+    assert_eq!(segs[0].words[2].p, 0.7, "lowest token probability");
+    assert_eq!((segs[1].start, segs[1].end), (rt(3, 1), rt(4, 1)));
+    assert_eq!(segs[1].words[0].text, "You're");
+    assert_eq!(segs[0].text, "So, what brings you?");
+}
+
+fn transcript() -> Transcript {
+    Transcript {
+        engine: "whisper.cpp".into(),
+        model: "m".into(),
+        model_blake3: "x".into(),
+        language: "en".into(),
+        device: "cpu".into(),
+        segments: whisper::parse(WHISPER_JSON).unwrap(),
+    }
+}
+
+#[test]
+fn search_finds_phrases_exactly_and_approximately() {
+    let t = transcript();
+    assert_eq!(index::search::tokens("You're LUCKY!"), ["youre", "lucky"]);
+    let h = search(&t, "so what brings you", 5);
+    assert_eq!(h[0].score, 1.0);
+    assert!(h[0].exact);
+    assert_eq!((h[0].start, h[0].end), (rt(3, 25), rt(111, 100)));
+    assert_eq!(h[0].text, "So, what brings you?");
+    assert_eq!(h[0].segment.index, 0);
+    // Punctuation and case don't matter; one wrong word still matches (3/4).
+    let h = search(&t, "So... what BRINGS them", 5);
+    assert!(!h[0].exact && (h[0].score - 0.75).abs() < 1e-6, "{h:?}");
+    assert_eq!(h[0].start, rt(3, 25));
+    // Across segments: the hit spans both.
+    let h = search(&t, "brings you you're lucky", 1);
+    assert_eq!((h[0].start, h[0].end), (rt(3, 5), rt(381, 100)));
+    assert_eq!(h[0].text, "brings you? You're lucky.");
+    // Hits never overlap; nothing below the threshold.
+    let h = search(&t, "you", 10);
+    assert!(h.len() == 1 && h[0].text == "you?", "{h:?}");
+    assert!(search(&t, "dragon hunter quest", 5).is_empty());
+    assert!(search(&t, "  ", 5).is_empty());
+}
+
+#[test]
+fn padded_ranges_snap_out_to_frames_and_clamp() {
+    let r = Rational::from_int(24);
+    let (a, b) = padded_range(rt(10, 1), rt(12, 1), rt(1, 4), Some(r), Some(rt(24, 1)));
+    assert_eq!((a, b), (RationalTime::from_frames(234, r), rt(147, 12)));
+    assert_eq!(b, rt(49, 4));
+    // Clamped to the media.
+    let (a, b) = padded_range(rt(1, 10), rt(23, 1), rt(1, 2), Some(r), Some(rt(23, 1)));
+    assert_eq!((a, b), (RationalTime::ZERO, rt(23, 1)));
+    // No frame rate: exact.
+    let (a, b) = padded_range(rt(1, 1), rt(2, 1), rt(1, 3), None, None);
+    assert_eq!((a, b), (rt(2, 3), rt(7, 3)));
+}
+
+fn write_tone(path: &Path, secs: f32) {
+    let n = (secs * 16000.0) as usize;
+    let s: Vec<f32> = (0..n).map(|i| 0.1 * (i as f32 * 0.05).sin()).collect();
+    whisper::write_wav(path, &s, 16000).unwrap();
+}
+
+/// A whisper-cli stand-in: writes WHISPER_JSON to `<-of>.json`, counts its
+/// runs, and fails without `-ng` while `gpu-broken` exists next to it.
+fn fake_whisper(dir: &Path) -> PathBuf {
+    let json = dir.join("fixture.json");
+    std::fs::write(&json, WHISPER_JSON).unwrap();
+    let p = dir.join("whisper-cli");
+    std::fs::write(
+        &p,
+        format!(
+            r#"#!/bin/sh
+cpu=0
+while [ $# -gt 0 ]; do
+  case "$1" in -of) of=$2; shift;; -ng) cpu=1;; esac
+  shift
+done
+echo run >> "{d}/runs"
+if [ -e "{d}/gpu-broken" ] && [ $cpu = 0 ]; then echo "no CUDA device" >&2; exit 1; fi
+cp "{j}" "$of.json"
+"#,
+            d = dir.display(),
+            j = json.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+fn runs(dir: &Path) -> usize {
+    std::fs::read_to_string(dir.join("runs"))
+        .map(|s| s.lines().count())
+        .unwrap_or(0)
+}
+
+#[test]
+fn index_is_cached_by_content_and_falls_back_to_cpu() {
+    let d = tempfile::tempdir().unwrap();
+    let tools = d.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    let cli = fake_whisper(&tools);
+    let model = tools.join("ggml-test.bin");
+    std::fs::write(&model, b"model v1").unwrap();
+    let media = d.path().join("talk.wav");
+    write_tone(&media, 2.0);
+    let opts = |force: bool| IndexOptions {
+        transcribe: true,
+        shots: true,
+        force,
+        cached_only: false,
+        whisper: WhisperConfig {
+            cli: Some(cli.clone()),
+            model: Some(model.clone()),
+            ..Default::default()
+        },
+    };
+    let (ix, info) = index::index_media(&media, &opts(false)).unwrap();
+    assert!(!info.cached);
+    assert!(
+        info.index_path
+            .starts_with(d.path().join(".ferrocut-index"))
+    );
+    let t = ix.transcript.done().expect("transcript");
+    assert_eq!((t.device.as_str(), t.words()), ("gpu", 6));
+    assert_eq!(ix.media.duration, Some(rt(2, 1)));
+    // Audio only: no shots to detect.
+    assert_eq!(
+        ix.shots,
+        Part::Unavailable {
+            reason: "no video stream".into()
+        }
+    );
+    // Same content: read back, whisper not run again.
+    let (ix2, info2) = index::index_media(&media, &opts(false)).unwrap();
+    assert!(info2.cached && ix2 == ix && runs(&tools) == 1);
+    // force rebuilds; a new model or new media bytes change the key.
+    index::index_media(&media, &opts(true)).unwrap();
+    assert_eq!(runs(&tools), 2);
+    std::fs::write(&model, b"model v2").unwrap();
+    let (ix3, info3) = index::index_media(&media, &opts(false)).unwrap();
+    assert!(!info3.cached && ix3.key != ix.key && runs(&tools) == 3);
+    write_tone(&media, 3.0);
+    let (ix4, _) = index::index_media(&media, &opts(false)).unwrap();
+    assert!(ix4.key != ix3.key && ix4.media.duration == Some(rt(3, 1)));
+    // GPU failure: retried on the CPU, and recorded.
+    std::fs::write(tools.join("gpu-broken"), b"").unwrap();
+    let (ix5, _) = index::index_media(&media, &opts(true)).unwrap();
+    assert_eq!(ix5.transcript.done().unwrap().device, "cpu");
+    // cached_only never builds.
+    let other = d.path().join("other.wav");
+    write_tone(&other, 1.0);
+    let e = index::index_media(
+        &other,
+        &IndexOptions {
+            cached_only: true,
+            ..opts(false)
+        },
+    )
+    .unwrap_err();
+    assert!(e.to_string().contains("no index yet"), "{e}");
+    // No whisper at all: the transcript is unavailable with the reason.
+    let (ix6, _) = index::index_media(
+        &other,
+        &IndexOptions {
+            whisper: WhisperConfig {
+                cli: Some(cli.clone()),
+                model: Some(tools.join("missing.bin")),
+                ..Default::default()
+            },
+            ..opts(false)
+        },
+    )
+    .unwrap();
+    let Part::Unavailable { reason } = &ix6.transcript else {
+        panic!("{:?}", ix6.transcript)
+    };
+    assert!(reason.contains("missing.bin"), "{reason}");
+}
+
+fn fake_detector(
+    _: &Path,
+    range: Option<TimeRange>,
+) -> Result<Vec<ShotBoundary>, ferrocut_core::NodeError> {
+    let all = vec![
+        ShotBoundary {
+            at: rt(2, 1),
+            span: None,
+            kind: BoundaryKind::Cut,
+            confidence: 0.9,
+        },
+        ShotBoundary {
+            at: rt(5, 1),
+            span: Some((rt(9, 2), rt(11, 2))),
+            kind: BoundaryKind::Dissolve,
+            confidence: 0.6,
+        },
+    ];
+    Ok(all
+        .into_iter()
+        .filter(|b| range.is_none_or(|r| r.contains(b.at)))
+        .collect())
+}
+
+#[test]
+fn shot_hook_uses_the_registered_detector() {
+    // (This test binary's only registration.)
+    assert!(shots::register("fake", fake_detector));
+    assert!(!shots::register("again", fake_detector), "first wins");
+    assert_eq!(shots::detector_id().as_deref(), Some("in-process:fake"));
+    let b = shots::detect_shots(Path::new("x.mkv"), None, &shots::ShotOptions::default()).unwrap();
+    assert_eq!(b.len(), 2);
+    assert_eq!(b[1].span, Some((rt(9, 2), rt(11, 2))));
+    let b = shots::detect_shots(
+        Path::new("x.mkv"),
+        Some(TimeRange::new(rt(4, 1), rt(2, 1))),
+        &shots::ShotOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(b.len(), 1);
+    // The subprocess protocol's JSON (array or {"boundaries": [...]}).
+    let j = r#"{"boundaries":[{"at":"5/2","span":null,"kind":"fade_in","confidence":1.0}]}"#;
+    assert_eq!(
+        shots::parse_boundaries(j).unwrap()[0].kind,
+        BoundaryKind::FadeIn
+    );
+    assert!(shots::parse_boundaries("[]").unwrap().is_empty());
+    assert!(shots::parse_boundaries(r#"{"x":1}"#).is_err());
+}
+
+#[test]
+fn real_whisper_finds_the_gatekeepers_line() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let clip = repo.join("eval/media/clips/d1.mkv");
+    let cfg = WhisperConfig::default();
+    let (Ok(_), Ok(_), true) = (
+        whisper::find_cli(&cfg),
+        whisper::find_model(&cfg),
+        clip.is_file(),
+    ) else {
+        eprintln!(
+            "SKIP: needs whisper.cpp (scripts/build-whisper.sh), a model and eval/media/clips/d1.mkv"
+        );
+        return;
+    };
+    let d = tempfile::tempdir().unwrap();
+    let media = d.path().join("d1.mkv");
+    std::fs::copy(&clip, &media).unwrap();
+    let (ix, _) = index::index_media(
+        &media,
+        &IndexOptions {
+            transcribe: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let t = ix.transcript.done().expect("transcript");
+    let h = search(t, "So, what brings you to the land of the gatekeepers?", 1);
+    assert!(h[0].score >= 0.9, "{h:?}");
+    // Speech energy puts the line at ~10.8..14.85 s; whisper's token times
+    // run early at the start.
+    let (a, b) = (h[0].start.seconds().to_f64(), h[0].end.seconds().to_f64());
+    assert!(
+        (9.8..=10.9).contains(&a) && (14.5..=15.3).contains(&b),
+        "{a}..{b}"
+    );
+}

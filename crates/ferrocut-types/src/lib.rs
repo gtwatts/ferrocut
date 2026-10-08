@@ -12,6 +12,7 @@ pub mod image;
 pub mod keyframe;
 pub mod manifest;
 pub mod param;
+pub mod shot;
 pub mod time;
 
 pub use cancel::CancelToken;
@@ -22,4 +23,5 @@ pub use image::{CpuFrame, CpuImage, PixelRect};
 pub use keyframe::{Animatable, Interp, Keyframe, KeyframeTrack};
 pub use manifest::FileManifest;
 pub use param::{ParamKind, ParamSpec, TimeBase};
-pub use time::{FrameRate, Rational, RationalTime, TimeError};
+pub use shot::{BoundaryKind, ShotBoundary};
+pub use time::{FrameRate, Rational, RationalTime, TimeError, TimeRange};

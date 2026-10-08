@@ -1,12 +1,12 @@
 # Ferrocut in-house eval
 
-Five small editing tasks on clips from two Blender open movies. Each task has a brief an agent reads, a starting
+Six small editing tasks on clips from two Blender open movies. Each task has a brief an agent reads, a starting
 `timeline.json`, machine-checkable expectations, and a reference solution. The grader scores the agent's final
 timeline and render. It is free to run: the media is CC-BY, everything runs locally, and the agent run uses an
 existing Codex (ChatGPT plan) login, never a paid API key.
 
 ```sh
-eval/fetch-media.sh                      # once: download films (~1 GB), verify, cut 12 clips (eval/media/, gitignored)
+eval/fetch-media.sh                      # once: download films (~1 GB), verify, cut 13 clips (eval/media/, gitignored)
 eval/run.sh all                          # reference solutions (--agent none): validates tasks, grader and engine
 eval/run.sh tos-dissolve-fade --agent codex   # one task with Codex CLI
 ```
@@ -25,6 +25,7 @@ Workdirs live under `/tmp/ferrocut-eval/<run-id>/<task>/` (`EVAL_WORK` to move t
 | `sintel-jcut` | Sintel | turn a straight cut into a J-cut: incoming sound 1 s early, picture cut unchanged | audio regions `[0, 4)` / `[4, 10)`, picture cut at 5 s |
 | `sintel-loudness` | Sintel | redeliver for broadcast: -23 LUFS ±1, true peak ≤ -2 dBTP, edit unchanged | loudness settings, and the render *measured* by the checker |
 | `tos-dissolve-fade` | Tears of Steel | 1 s dissolve centred on the cut (needs handles), fade in from and out to black | clip edges, `transition_in`, opacity curve, frame luma, no visible hard cut |
+| `sintel-keep-line` | Sintel | cut a 24 s dialogue scene down to one named line (find it with `transcript_search`) | one clip at 0 whose source range holds the whole line and none of the neighbouring lines (windows from the speech energy) |
 
 Every task also checks:
 
@@ -41,8 +42,8 @@ loudness) rather than taste.
 
 ### Clips
 
-`fetch-media.sh` cuts 6 s single-shot segments: 144 frames at 24 fps, MPEG-4 Part 2 q2 (an LGPL encoder) in
-MKV.
+`fetch-media.sh` cuts 6 s single-shot segments (`s*`, `t*`): 144 frames at 24 fps, MPEG-4 Part 2 q2 (an LGPL
+encoder) in MKV, plus `d1`, a 24 s Sintel dialogue scene (with camera cuts) for the transcript task.
 
 - Sintel clips (1280x544) keep their sound as stereo PCM.
 - Tears of Steel clips (1280x534) are **picture only**, because the ToS soundtrack is licensed CC-BY-ND
@@ -70,8 +71,10 @@ The renders an eval run produces are derivative works of these films. If you sha
 ## Agents
 
 - `--agent none` applies `tasks/<task>/reference.json` through `ferrocut-mcp`, the same way an agent would:
-  MCP tool calls, plus JSON patches for properties no edit op sets (loudness targets, opacity, transitions).
-  Then it grades the result. All five must score 100 %.
+  MCP tool calls only (a step can `bind` its result and later steps use `"{{name.path}}"`, e.g. the
+  `cut_in` of a `transcript_search` hit). Then it grades the result. All six must score 100 %.
+- Codex runs also write `<task>.usage.json` (`lib/agent_usage.py`): MCP calls by tool, shell commands,
+  hand edits of `timeline.json`, reads of engine source, and whether it stayed inside the tools.
 - `--agent codex` runs `codex exec` once per task, non-interactively:
   - Codex runs in the task workdir with `approval_policy = "never"` and `sandbox_mode = "workspace-write"`.
   - Its only configured MCP server is `ferrocut-mcp --root <workdir>`.
@@ -95,7 +98,7 @@ The renders an eval run produces are derivative works of these films. If you sha
    - `brief.md`, the agent's instructions;
    - `start.json`, with sources as `media/<clip>.mkv`;
    - `task.json`: `clips`, plus `expect` (see `lib/evallib.py` `grade()` for the check kinds: `tracks`,
-     `duration`, `audio_regions`, `fields`, `opacity`, `render.frames`, `render.luma`, `check.cuts` /
+     `duration`, `audio_regions`, `source_windows`, `fields`, `opacity`, `render.frames`, `render.luma`, `check.cuts` /
      `config` / `args`);
    - `reference.json`.
 2. Run `eval/run.sh <name>`: the reference must score 100 %.

@@ -483,3 +483,22 @@ mod tests {
         assert_eq!(big.checked_add(big), Err(TimeError::Overflow));
     }
 }
+
+/// A span of time: `[start, start + duration)`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize, Deserialize)]
+pub struct TimeRange {
+    pub start: RationalTime,
+    pub duration: RationalTime,
+}
+
+impl TimeRange {
+    pub fn new(start: RationalTime, duration: RationalTime) -> Self {
+        TimeRange { start, duration }
+    }
+    pub fn end(&self) -> RationalTime {
+        self.start + self.duration
+    }
+    pub fn contains(&self, t: RationalTime) -> bool {
+        t >= self.start && t < self.end()
+    }
+}

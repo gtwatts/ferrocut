@@ -132,13 +132,40 @@ def apply_patch(doc, ops):
     return doc
 
 
+def lookup(bound, ref):
+    """`name.key.0.key` in the results bound by earlier reference steps."""
+    name, *path = ref.split(".")
+    v = bound[name]
+    for p in path:
+        v = v[int(p)] if isinstance(v, list) else v[p]
+    return v
+
+
+def substitute(v, bound):
+    """Replace every string that is exactly `{{ref}}` with the bound value."""
+    if isinstance(v, str):
+        m = re.fullmatch(r"\{\{\s*([\w.]+)\s*\}\}", v)
+        return lookup(bound, m.group(1)) if m else v
+    if isinstance(v, list):
+        return [substitute(x, bound) for x in v]
+    if isinstance(v, dict):
+        return {k: substitute(x, bound) for k, x in v.items()}
+    return v
+
+
 def reference(taskdir, workdir):
+    """Run reference.json: `{"mcp": tool, "args": {...}, "bind": name}` steps
+    (later args may use `"{{name.path}}"` to reuse a bound result) and
+    `{"patch": [...]}` JSON patches of timeline.json."""
     steps = load(os.path.join(taskdir, "reference.json"))
     mcp = Mcp(workdir)
+    bound = {}
     try:
         for s in steps:
             if "mcp" in s:
-                r = mcp.call(s["mcp"], s["args"])
+                r = mcp.call(s["mcp"], substitute(s["args"], bound))
+                if "bind" in s:
+                    bound[s["bind"]] = r
                 print(f"  mcp {s['mcp']}: ok" + (f" ({r.get('final_blake3', '')[:16]})" if s["mcp"] == "render" else ""))
             else:
                 p = os.path.join(workdir, "timeline.json")
@@ -247,6 +274,22 @@ def grade(taskdir, workdir, result_path):
             e = R(c.get("start", 0)) + R(c.get("duration", 0)) + R(au.get("out_offset", 0))
             check(f"audio of {a['source']} plays [{a['start']}, {a['end']})",
                   s == R(a["start"]) and e == R(a["end"]), f"got [{s}, {e})")
+        for w in exp.get("source_windows", []):
+            # A clip whose source range must start inside [in_min, in_max] and
+            # end inside [out_min, out_max] (e.g. "keep this line, nothing else").
+            got = sorted(tracks.get(w["track"], {}).get("clips", []), key=lambda c: R(c.get("start", 0)))
+            i = w.get("index", 0)
+            if i >= len(got):
+                check(f"{w['track']}[{i}] source window", False, "clip missing")
+                continue
+            c = got[i]
+            a = R(c.get("source_in", 0))
+            b = a + R(c.get("duration", 0))
+            ok = (norm_src(c.get("source", "")) == w["source"]
+                  and R(w["in_min"]) <= a <= R(w["in_max"]) and R(w["out_min"]) <= b <= R(w["out_max"]))
+            check(f"{w['track']}[{i}] keeps {w['source']} [{w['in_min']}..{w['in_max']}, {w['out_min']}..{w['out_max']}]"
+                  + (f" ({w['why']})" if "why" in w else ""), ok,
+                  f"got {norm_src(c.get('source', ''))} [{float(a):.3f}, {float(b):.3f}]")
         for f in exp.get("fields", []):
             v = get_path(tl, f["path"])
             ok = v is not None and in_range(R(v), f)

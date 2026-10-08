@@ -1,7 +1,8 @@
 //! Ferrocut MCP server: timeline inspection, journaled edits (with dry run),
 //! structured diffs, chunk plans, renders and render reports, over stdio.
 //!
-//! Tools: `timeline_get`, `timeline_schema`, `media_probe`, `edit_apply`,
+//! Tools: `timeline_get`, `timeline_schema`, `media_probe`, `index_media`,
+//! `transcript_search`, `shots_list`, `edit_apply`,
 //! `diff`, `plan`, `render`, `report_read`, `quality_check`, `log`, `undo`,
 //! `branch`, `openh264`. Resources: `docs://` documents (timeline JSON
 //! Schema, authoring guide, edit-op schema, parameter registry, the
@@ -185,6 +186,27 @@ pub fn tools() -> Vec<Tool> {
             "Probe a media file (no decoding): exact duration (the longest source_in + duration a clip can use), frame rate, size, whether it has video and audio, sample rate/channels, and every stream (kind, codec, duration).",
             schema::media_probe(),
             ro().idempotent(true),
+        ),
+        tool(
+            "index_media",
+            "Index media (transcript, shots)",
+            "Build or read back the cached index of a media file: a whisper.cpp transcript with word-level times and shot boundaries (cut/dissolve/fade with span and confidence, once the detector is available). Cached next to the media in .ferrocut-index/, keyed by content hashes, so repeat calls are instant. Returns status per part, counts, and the transcript segments (start, end, text) as source times of the file.",
+            schema::index_media(),
+            rw(false).idempotent(true),
+        ),
+        tool(
+            "transcript_search",
+            "Find words in a transcript",
+            "Find spoken text in a media file (indexes it on first use): hits best first, each with start/end of the matched words (source time of the file, usable as source_in), the matched text, score (1 = exact phrase), the containing segment, and cut_in/cut_out: the range padded by `pad` and widened to whole frames, ready for split/trim ops.",
+            schema::transcript_search(),
+            rw(false).idempotent(true),
+        ),
+        tool(
+            "shots_list",
+            "List shot boundaries",
+            "Shot boundaries of a media file (indexes it on first use): at (cut point or transition midpoint), span [start, end) for gradual transitions (null for cuts), kind (cut, dissolve, fade_in, fade_out), confidence. status=unavailable with a reason until the shot detector lands.",
+            schema::shots_list(),
+            rw(false).idempotent(true),
         ),
         tool(
             "edit_apply",
@@ -414,6 +436,185 @@ struct SchemaArgs {
 #[serde(deny_unknown_fields)]
 struct ProbeArgs {
     path: PathBuf,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndexArgs {
+    media: PathBuf,
+    #[serde(default = "yes")]
+    transcribe: bool,
+    #[serde(default = "yes")]
+    shots: bool,
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    cpu: bool,
+    #[serde(default = "yes")]
+    segments: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchArgs {
+    media: PathBuf,
+    query: String,
+    #[serde(default)]
+    max_results: Option<usize>,
+    #[serde(default)]
+    pad: Option<ferrocut_core::RationalTime>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShotsArgs {
+    media: PathBuf,
+    #[serde(default)]
+    start: Option<ferrocut_core::RationalTime>,
+    #[serde(default)]
+    end: Option<ferrocut_core::RationalTime>,
+}
+
+/// `p` relative to the project root when inside it.
+fn rel(cx: &Ctx, p: &std::path::Path) -> String {
+    p.strip_prefix(cx.root.dir())
+        .unwrap_or(p)
+        .display()
+        .to_string()
+}
+
+/// Index `media` (cached), checked against the root.
+fn indexed(
+    cx: &Ctx,
+    media: &std::path::Path,
+    opts: ferrocut_engine::index::IndexOptions,
+) -> anyhow::Result<(
+    ferrocut_engine::index::MediaIndex,
+    ferrocut_engine::index::IndexInfo,
+)> {
+    let p = cx.root.check(media)?;
+    ferrocut_engine::index::index_media(&p, &opts)
+}
+
+fn part_json<T>(p: &ferrocut_engine::index::Part<T>, done: impl Fn(&T) -> Value) -> Value {
+    use ferrocut_engine::index::Part;
+    match p {
+        Part::Done(t) => {
+            let mut v = done(t);
+            v["status"] = json!("done");
+            v
+        }
+        Part::Skipped => json!({ "status": "skipped" }),
+        Part::Unavailable { reason } => json!({ "status": "unavailable", "reason": reason }),
+    }
+}
+
+fn index_tool(cx: &Ctx, a: IndexArgs) -> anyhow::Result<Value> {
+    use ferrocut_engine::index::{IndexOptions, WhisperConfig};
+    let (ix, info) = indexed(
+        cx,
+        &a.media,
+        IndexOptions {
+            transcribe: a.transcribe,
+            shots: a.shots,
+            force: a.force,
+            cached_only: false,
+            whisper: WhisperConfig {
+                cpu: a.cpu,
+                ..Default::default()
+            },
+        },
+    )?;
+    Ok(json!({
+        "media": a.media,
+        "index": rel(cx, &info.index_path),
+        "cached": info.cached,
+        "elapsed_ms": info.elapsed_ms as u64,
+        "duration": ix.media.duration,
+        "has_audio": ix.media.has_audio,
+        "transcript": part_json(&ix.transcript, |t| {
+            let mut v = json!({
+                "engine": t.engine, "model": t.model, "device": t.device, "language": t.language,
+                "segment_count": t.segments.len(), "word_count": t.words(),
+            });
+            if a.segments {
+                v["segments"] = json!(t.segments.iter().map(|s| json!({
+                    "start": s.start, "end": s.end, "text": s.text
+                })).collect::<Vec<_>>());
+            }
+            v
+        }),
+        "shots": part_json(&ix.shots, |s| json!({
+            "detector": s.detector, "count": s.boundaries.len()
+        })),
+    }))
+}
+
+fn search_tool(cx: &Ctx, a: SearchArgs) -> anyhow::Result<Value> {
+    use ferrocut_engine::index::{self, IndexOptions, Part};
+    let (ix, info) = indexed(
+        cx,
+        &a.media,
+        IndexOptions {
+            transcribe: true,
+            shots: true,
+            ..Default::default()
+        },
+    )?;
+    let t = match &ix.transcript {
+        Part::Done(t) => t,
+        Part::Skipped => bail!("no transcript"),
+        Part::Unavailable { reason } => bail!("no transcript for {}: {reason}", a.media.display()),
+    };
+    let fps = ferrocut_engine::media::probe(&cx.root.check(&a.media)?)
+        .ok()
+        .and_then(|m| m.fps);
+    let pad = a.pad.unwrap_or(ferrocut_core::RationalTime::new(1, 4));
+    let hits: Vec<Value> = index::search(t, &a.query, a.max_results.unwrap_or(5))
+        .into_iter()
+        .map(|h| {
+            let (cin, cout) = index::padded_range(h.start, h.end, pad, fps, ix.media.duration);
+            let mut v = serde_json::to_value(&h).unwrap_or_default();
+            v["cut_in"] = json!(cin);
+            v["cut_out"] = json!(cout);
+            v
+        })
+        .collect();
+    Ok(json!({
+        "media": a.media,
+        "query": a.query,
+        "hits": hits,
+        "index": rel(cx, &info.index_path),
+        "note": "times are source times of the media file (use as source_in; for a clip at start S with source_in I, timeline time = S + t - I). Word times come from whisper token timestamps: allow a few hundred ms of slack (cut_in/cut_out include `pad`).",
+    }))
+}
+
+fn shots_tool(cx: &Ctx, a: ShotsArgs) -> anyhow::Result<Value> {
+    use ferrocut_engine::index::IndexOptions;
+    let (ix, info) = indexed(
+        cx,
+        &a.media,
+        IndexOptions {
+            transcribe: true,
+            shots: true,
+            ..Default::default()
+        },
+    )?;
+    let mut v = part_json(&ix.shots, |s| {
+        let keep: Vec<_> = s
+            .boundaries
+            .iter()
+            .filter(|b| a.start.is_none_or(|t| b.at >= t) && a.end.is_none_or(|t| b.at < t))
+            .collect();
+        json!({ "detector": s.detector, "boundaries": keep })
+    });
+    v["media"] = json!(a.media);
+    v["index"] = json!(rel(cx, &info.index_path));
+    Ok(v)
 }
 
 #[derive(Deserialize)]
@@ -915,6 +1116,9 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
             v["path"] = json!(a.path);
             Ok(v)
         }),
+        "index_media" => args(name, a).and_then(|a| index_tool(cx, a)),
+        "transcript_search" => args(name, a).and_then(|a| search_tool(cx, a)),
+        "shots_list" => args(name, a).and_then(|a| shots_tool(cx, a)),
         "edit_apply" => args(name, a).and_then(|a| edit_apply(cx, a)),
         "diff" => args(name, a).and_then(|a| diff_tool(cx, a)),
         "plan" => args(name, a).and_then(|a| plan_tool(cx, a)),
@@ -959,6 +1163,8 @@ impl ServerHandler for FerrocutServer {
             .with_instructions(
                 "Ferrocut: agent-native video editing. Learn the timeline format with timeline_schema \
                  (or the docs:// resources), probe media with media_probe, inspect with timeline_get. \
+                 Find spoken lines with transcript_search (source ranges, cut_in/cut_out) and shot \
+                 boundaries with shots_list (index_media builds the cached index). \
                  Build and change timelines only with edit_apply ops (add_track, add_clip, \
                  add_transition, set_param, set_keyframes, split, trim, ripple_delete, ...), never by \
                  editing the JSON file: ops are validated, atomic and journaled. Preview with \

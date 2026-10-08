@@ -4,6 +4,7 @@ target/
 /out/
 /media/
 .ferrocut-cache/
+.ferrocut-index/
 .cutline-cache/
 /third_party/
 /eval/media/

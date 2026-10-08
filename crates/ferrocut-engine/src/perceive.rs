@@ -238,6 +238,22 @@ pub fn timeline_has_audio(path: &Path) -> Option<bool> {
 /// Longest wait for `ferrocut-perceive check --help` (flag detection).
 const HELP_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Spawn, retrying briefly on ETXTBSY: the binary is still open for writing
+/// somewhere (being rebuilt, or a concurrent fork inherited a write fd).
+pub(crate) fn spawn_retrying(cmd: &mut Command) -> std::io::Result<std::process::Child> {
+    let mut spawned = cmd.spawn();
+    for _ in 0..20 {
+        match &spawned {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(Duration::from_millis(50));
+                spawned = cmd.spawn();
+            }
+            _ => break,
+        }
+    }
+    spawned
+}
+
 /// `<bin> check --help` output (empty if it fails or takes longer than `limit`).
 fn check_help(bin: &Path, limit: Duration) -> String {
     let mut cmd = Command::new(bin);
@@ -247,7 +263,7 @@ fn check_help(bin: &Path, limit: Duration) -> String {
         .stderr(Stdio::null());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    let Ok(mut child) = cmd.spawn() else {
+    let Ok(mut child) = spawn_retrying(&mut cmd) else {
         return String::new();
     };
     let mut so = child.stdout.take().expect("piped");
@@ -511,19 +527,7 @@ pub fn check(render: &Path, timeline: &Path, opts: &CheckOptions) -> CheckOutcom
     // (otherwise a grandchild keeps the pipes open).
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    // ETXTBSY: the binary is still open for writing somewhere (being rebuilt,
-    // or a concurrent fork inherited a write fd): retry briefly.
-    let mut spawned = cmd.spawn();
-    for _ in 0..20 {
-        match &spawned {
-            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
-                std::thread::sleep(Duration::from_millis(50));
-                spawned = cmd.spawn();
-            }
-            _ => break,
-        }
-    }
-    let mut child = match spawned {
+    let mut child = match spawn_retrying(&mut cmd) {
         Ok(c) => c,
         Err(e) => {
             let mut o = CheckOutcome::new(

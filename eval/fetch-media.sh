@@ -38,8 +38,9 @@ fi
 # md5 published next to the zip on the mirror
 echo "08d1108e0160b847f894acfdbce82305  $SRC/Sintel.2010.720p.mkv" | md5sum -c -
 
-# name  film  start(s)  -- 6 s single-shot segments (no cuts inside; checked by
-# eval/check-clips.py), picked from long shots 0.5 s past the shot's first frame.
+# name  film  start(s)  [seconds, default 6]
+# s*/t*: 6 s single-shot segments, picked from long shots 0.5 s past the shot's
+# first frame. d*: longer dialogue scenes (with cuts) for transcript tasks.
 CLIP_LIST="
 s1 sintel 89.04
 s2 sintel 138.62
@@ -53,27 +54,29 @@ t3 tos 159.04
 t4 tos 239.17
 t5 tos 445.38
 t6 tos 605.04
+d1 sintel 116.5 24
 "
-cut() { # name film start
-  local name=$1 film=$2 ss=$3 out="$CLIPS/$1.mkv"
+cut() { # name film start [seconds]
+  local name=$1 film=$2 ss=$3 secs=${4:-6} out="$CLIPS/$1.mkv"
+  local frames=$((secs * 24))
   [ -f "$out" ] && [ "${FORCE:-0}" != 1 ] && return
-  echo "== $name ($film @ ${ss}s)"
+  echo "== $name ($film @ ${ss}s, ${secs}s)"
   if [ "$film" = sintel ]; then
     # Sintel: picture + score/dialogue (AC-3 5.1 -> stereo PCM)
     "$FF" -nostdin -v error -y -ss "$ss" -i "$SRC/Sintel.2010.720p.mkv" -map 0:v:0 -map 0:a:0 \
-      -frames:v 144 -t 6 -c:v mpeg4 -q:v 2 -g 24 -bf 0 -pix_fmt yuv420p -threads 1 \
+      -frames:v "$frames" -t "$secs" -c:v mpeg4 -q:v 2 -g 24 -bf 0 -pix_fmt yuv420p -threads 1 \
       -c:a pcm_s16le -ar 48000 -ac 2 -fflags +bitexact -flags:v +bitexact -flags:a +bitexact \
       "$out.tmp.mkv"
   else
     # Tears of Steel: picture only (its soundtrack is CC-BY-ND, so no audio edits)
     "$FF" -nostdin -v error -y -ss "$ss" -i "$SRC/tears_of_steel_720p.mov" -map 0:v:0 -an \
-      -frames:v 144 -c:v mpeg4 -q:v 2 -g 24 -bf 0 -pix_fmt yuv420p -threads 1 \
+      -frames:v "$frames" -c:v mpeg4 -q:v 2 -g 24 -bf 0 -pix_fmt yuv420p -threads 1 \
       -fflags +bitexact -flags:v +bitexact "$out.tmp.mkv"
   fi
   mv "$out.tmp.mkv" "$out"
 }
-while read -r name film ss; do
-  [ -n "${name:-}" ] && cut "$name" "$film" "$ss"
+while read -r name film ss secs; do
+  [ -n "${name:-}" ] && cut "$name" "$film" "$ss" "$secs"
 done <<< "$CLIP_LIST"
 echo "clips in $CLIPS:"
 ls -l "$CLIPS"

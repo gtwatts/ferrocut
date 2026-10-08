@@ -293,3 +293,108 @@ async fn docs_resources_over_stdio() {
     assert!(!err && v["params"]["track"].is_array());
     client.cancel().await.unwrap();
 }
+
+/// index_media / transcript_search / shots_list over stdio, with a whisper-cli
+/// stand-in (FERROCUT_WHISPER_CLI) that emits a fixed transcript.
+#[tokio::test(flavor = "multi_thread")]
+async fn transcript_tools_over_stdio() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let json_path = d.join("fixture.json");
+    std::fs::write(
+        &json_path,
+        r#"{"transcription":[{"offsets":{"from":1000,"to":3000},"text":" A kindred spirit.","tokens":[
+            {"text":" A","offsets":{"from":1000,"to":1100},"p":0.9},
+            {"text":" kindred","offsets":{"from":1100,"to":1600},"p":0.9},
+            {"text":" spirit","offsets":{"from":1600,"to":2210},"p":0.9},
+            {"text":".","offsets":{"from":2210,"to":2220},"p":0.9}]}]}"#,
+    )
+    .unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let cli = tools.path().join("whisper-cli");
+    std::fs::write(
+        &cli,
+        format!(
+            "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = -of ] && of=$2; shift; done\ncp '{}' \"$of.json\"\n",
+            json_path.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let model = tools.path().join("ggml-fake.bin");
+    std::fs::write(&model, b"fake").unwrap();
+    // 4 s of video (24 fps) with no audio, and a 4 s WAV.
+    synth(&d.join("pic.mkv"), 96, 1);
+    let tone: Vec<f32> = (0..4 * 16000)
+        .map(|i| (i as f32 * 0.03).sin() * 0.1)
+        .collect();
+    ferrocut_engine::index::whisper::write_wav(&d.join("talk.wav"), &tone, 16000).unwrap();
+
+    let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_ferrocut-mcp"));
+    cmd.arg("--root")
+        .arg(d)
+        .current_dir(d)
+        .env("FERROCUT_WHISPER_CLI", &cli)
+        .env("FERROCUT_WHISPER_MODEL", &model);
+    let client = ().serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap();
+
+    let (err, v) = call(&client, "index_media", json!({ "media": "talk.wav" })).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["cached"], false);
+    assert_eq!(v["transcript"]["status"], "done");
+    assert_eq!(v["transcript"]["word_count"], 3);
+    assert_eq!(v["transcript"]["segments"][0]["text"], "A kindred spirit.");
+    assert_eq!(v["shots"]["status"], "unavailable");
+    assert!(
+        v["index"]
+            .as_str()
+            .unwrap()
+            .starts_with(".ferrocut-index/talk.wav.")
+    );
+    let (_, v) = call(&client, "index_media", json!({ "media": "talk.wav" })).await;
+    assert_eq!(v["cached"], true);
+
+    let (err, v) = call(
+        &client,
+        "transcript_search",
+        json!({ "media": "talk.wav", "query": "kindred spirit", "pad": "1/2" }),
+    )
+    .await;
+    assert!(!err, "{v}");
+    let h = &v["hits"][0];
+    assert_eq!(
+        (h["start"].as_str(), h["end"].as_str()),
+        (Some("11/10"), Some("111/50"))
+    );
+    assert_eq!(h["exact"], true);
+    // No video stream -> no frame grid: exact padding, clamped to the media.
+    assert_eq!(
+        (h["cut_in"].as_str(), h["cut_out"].as_str()),
+        (Some("3/5"), Some("68/25"))
+    );
+
+    // Video without audio: no transcript; shots wait for the detector.
+    let (err, v) = call(
+        &client,
+        "transcript_search",
+        json!({ "media": "pic.mkv", "query": "x" }),
+    )
+    .await;
+    assert!(
+        err && v["error"].as_str().unwrap().contains("no audio"),
+        "{v}"
+    );
+    let (err, v) = call(&client, "shots_list", json!({ "media": "pic.mkv" })).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["status"], "unavailable");
+    assert!(
+        v["reason"].as_str().unwrap().contains("detect_shots"),
+        "{v}"
+    );
+
+    // Outside the root: refused before anything is read or written.
+    let (err, v) = call(&client, "index_media", json!({ "media": "/etc/hostname" })).await;
+    assert!(err, "{v}");
+    client.cancel().await.unwrap();
+}

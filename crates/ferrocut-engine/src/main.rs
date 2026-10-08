@@ -108,6 +108,36 @@ enum Cmd {
     Plan { timeline: PathBuf },
     /// Probe a media file: duration, frame rate, size, streams, audio presence (JSON).
     Probe { media: PathBuf },
+    /// Build (or read back) the cached media index: whisper.cpp transcript with
+    /// word times, and shot boundaries (when SeePlus's detector is available).
+    /// Stored in `<media dir>/.ferrocut-index/`, keyed by content hashes.
+    Index {
+        media: PathBuf,
+        /// Rebuild even if a cached index exists.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        no_transcript: bool,
+        #[arg(long)]
+        no_shots: bool,
+        /// Transcribe on the CPU (default: GPU, falling back to the CPU).
+        #[arg(long)]
+        cpu: bool,
+        /// whisper ggml model (default: $FERROCUT_WHISPER_MODEL or third_party/whisper-models).
+        #[arg(long)]
+        model: Option<PathBuf>,
+        /// whisper-cli binary (default: $FERROCUT_WHISPER_CLI or third_party/whisper.cpp).
+        #[arg(long)]
+        whisper_cli: Option<PathBuf>,
+        #[arg(long, default_value = "en")]
+        language: String,
+        /// Also search the transcript for this text and print the hits.
+        #[arg(long)]
+        search: Option<String>,
+        /// Print the whole index JSON instead of a summary.
+        #[arg(long)]
+        json: bool,
+    },
     /// Apply a JSON list of edit operations (split, trim, ripple_delete,
     /// ripple_insert, roll, slip, slide, move, jl_cut) to a timeline, in place
     /// or to `-o`, and append them to the output's journal
@@ -350,6 +380,77 @@ fn main() -> anyhow::Result<()> {
             println!("{}", serde_json::to_string_pretty(&o)?);
             eprintln!("{}", check_line(&o));
             std::process::exit(o.exit_code_for(require));
+        }
+        Cmd::Index {
+            media,
+            force,
+            no_transcript,
+            no_shots,
+            cpu,
+            model,
+            whisper_cli,
+            language,
+            search,
+            json,
+        } => {
+            use ferrocut_engine::index::{self, IndexOptions, Part, WhisperConfig};
+            let opts = IndexOptions {
+                transcribe: !no_transcript,
+                shots: !no_shots,
+                force,
+                cached_only: false,
+                whisper: WhisperConfig {
+                    cli: whisper_cli,
+                    model,
+                    cpu,
+                    language: Some(language),
+                    threads: None,
+                },
+            };
+            let (ix, info) = index::index_media(&media, &opts)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&ix)?);
+            } else {
+                println!(
+                    "index: {} ({}, {} ms)",
+                    info.index_path.display(),
+                    if info.cached { "cached" } else { "built" },
+                    info.elapsed_ms
+                );
+                match &ix.transcript {
+                    Part::Done(t) => println!(
+                        "transcript: {} segments, {} words ({} {}, {})",
+                        t.segments.len(),
+                        t.words(),
+                        t.engine,
+                        t.model,
+                        t.device
+                    ),
+                    Part::Skipped => println!("transcript: skipped"),
+                    Part::Unavailable { reason } => println!("transcript: unavailable: {reason}"),
+                }
+                match &ix.shots {
+                    Part::Done(s) => {
+                        println!("shots: {} boundaries ({})", s.boundaries.len(), s.detector)
+                    }
+                    Part::Skipped => println!("shots: skipped"),
+                    Part::Unavailable { reason } => println!("shots: unavailable: {reason}"),
+                }
+            }
+            if let Some(q) = search {
+                let Part::Done(t) = &ix.transcript else {
+                    anyhow::bail!("no transcript to search");
+                };
+                for h in index::search(t, &q, 10) {
+                    println!(
+                        "{:>9} .. {:<9} score {:.2}  {}",
+                        h.start.to_string(),
+                        h.end.to_string(),
+                        h.score,
+                        h.text
+                    );
+                }
+            }
         }
         Cmd::Probe { media } => {
             let info = ferrocut_engine::media::probe(&media)?;

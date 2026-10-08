@@ -679,6 +679,44 @@ pub fn media_probe() -> Value {
     )
 }
 
+pub fn index_media() -> Value {
+    let b = |d: bool, desc: &str| json!({ "type": "boolean", "default": d, "description": desc });
+    object(
+        json!({
+            "media": path("media file to index"),
+            "transcribe": b(true, "build the whisper.cpp transcript (word times)"),
+            "shots": b(true, "detect shot boundaries (when the detector is available)"),
+            "force": b(false, "rebuild even if a cached index exists"),
+            "cpu": b(false, "transcribe on the CPU instead of the GPU"),
+            "segments": b(true, "include the transcript segments (start, end, text) in the result"),
+        }),
+        &["media"],
+    )
+}
+
+pub fn transcript_search() -> Value {
+    object(
+        json!({
+            "media": path("media file (indexed on first use)"),
+            "query": { "type": "string", "minLength": 1, "description": "words to find (case and punctuation are ignored; near matches are scored)" },
+            "max_results": { "type": "integer", "minimum": 1, "maximum": 100, "default": 5 },
+            "pad": rational("handle added before and after each hit for cut_in/cut_out, seconds (default 1/4)"),
+        }),
+        &["media", "query"],
+    )
+}
+
+pub fn shots_list() -> Value {
+    object(
+        json!({
+            "media": path("media file (indexed on first use)"),
+            "start": rational("only boundaries at or after this source time"),
+            "end": rational("only boundaries before this source time"),
+        }),
+        &["media"],
+    )
+}
+
 /// `expect_audio` for render(check) / quality_check.
 pub fn expect_audio() -> Value {
     json!({

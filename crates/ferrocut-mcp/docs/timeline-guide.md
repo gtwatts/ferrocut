@@ -81,6 +81,10 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
 - Sound leads picture by 1 s: `jl_cut` with `in_offset: "-1"` on the incoming clip.
 - Music under dialogue: `add_track` audio, `add_clip`, then `set_param` `bus.duck`
   `{"key": ["V1"]}` on the music track.
+- Keep one spoken line: `transcript_search` the words; each hit has `cut_in`/`cut_out` (source
+  times with a handle, on the frame grid). For a clip at `start` S with `source_in` I, the
+  timeline time of source time t is `S + t - I`: `split` there and `ripple_delete` the parts
+  you don't want. `shots_list` gives shot boundaries the same way.
 
 ## Nodes
 
@@ -94,4 +98,5 @@ into the timeline format; until then they are not valid timeline content.
 `render` writes a lossless FFV1/PCM MKV and reuses unchanged chunks. `quality_check` (or
 `render` with `check: true`) runs the perceptual checker: cuts, black/frozen/flash frames,
 loudness, true peak, audio presence. `expect_audio` defaults to `auto`: a timeline with no audio
-isn't expected to have any. The checker's report schema: `docs://perceive/check.schema.json`.
+isn't expected to have any. Checker flags go in `args`; a wrong flag returns the checker's
+`--help` in the error. The checker's report schema: `docs://perceive/check.schema.json`.
