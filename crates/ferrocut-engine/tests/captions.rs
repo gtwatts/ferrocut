@@ -212,6 +212,75 @@ fn captions_use_normal_atomic_edits_dry_run_and_undo() {
     assert_eq!(Timeline::load(&path).unwrap().tracks.len(), 1);
 }
 
+/// The font a caption clip's text was imported with, as the file holds it.
+fn stored_font(timeline: &Path) -> PathBuf {
+    let tl = project::read_timeline(timeline).unwrap();
+    let c = &tl
+        .tracks
+        .iter()
+        .find(|t| t.name == "Captions")
+        .unwrap()
+        .clips[0];
+    let Some(ferrocut_engine::generator::GeneratorSpec::Text { text }) = &c.generator else {
+        panic!("caption clip is not text")
+    };
+    text.font.clone()
+}
+
+#[test]
+fn caption_import_keeps_project_fonts_relative_to_the_timeline() {
+    // explainer-16x9 #16: a style in authoring/ naming ../assets/fonts/...
+    // used to put an absolute authoring/../assets path in every clip.
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    std::fs::create_dir_all(root.join("assets/fonts")).unwrap();
+    std::fs::create_dir_all(root.join("authoring")).unwrap();
+    std::fs::copy(font(), root.join("assets/fonts/NotoSans-Regular.ttf")).unwrap();
+    let timeline = root.join("project.json");
+    let subtitles = root.join("authoring/captions.srt");
+    std::fs::write(&subtitles, "1\n00:00:00,000 --> 00:00:01,000\nHello\n").unwrap();
+    let import = |style: serde_json::Value| {
+        std::fs::write(&timeline, serde_json::to_vec_pretty(&empty()).unwrap()).unwrap();
+        let style_path = root.join("authoring/caption-style.json");
+        std::fs::write(&style_path, style.to_string()).unwrap();
+        let out = Command::new(env!("CARGO_BIN_EXE_ferrocut"))
+            .args([
+                "captions".as_ref(),
+                "import".as_ref(),
+                timeline.as_os_str(),
+                subtitles.as_os_str(),
+                "--style".as_ref(),
+                style_path.as_os_str(),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (
+            stored_font(&timeline),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let style = |font: &Path| json!({"content": "", "font": font, "font_size": "24"});
+    // Relative to the style, inside the project: relative to the timeline.
+    let (stored, note) = import(style(Path::new("../assets/fonts/NotoSans-Regular.ttf")));
+    assert_eq!(stored, Path::new("assets/fonts/NotoSans-Regular.ttf"));
+    assert!(!note.contains("outside"), "{note}");
+    // An absolute path into the project: relative as well.
+    let (stored, _) = import(style(&root.join("assets/fonts/NotoSans-Regular.ttf")));
+    assert_eq!(stored, Path::new("assets/fonts/NotoSans-Regular.ttf"));
+    // Outside the project: absolute, and said so.
+    let (stored, note) = import(style(&font()));
+    assert_eq!(stored, std::fs::canonicalize(font()).unwrap());
+    assert!(note.contains("outside the timeline's directory"), "{note}");
+    // Its fonts resolve: the graph (which reads them) builds.
+    let tl = Timeline::load(&timeline).unwrap();
+    ferrocut_engine::compile(&tl).unwrap();
+}
+
 #[test]
 fn caption_cli_import_export_and_existing_output_protection() {
     let dir = tempfile::tempdir().unwrap();

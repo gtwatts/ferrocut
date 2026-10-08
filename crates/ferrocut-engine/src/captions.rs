@@ -582,6 +582,61 @@ pub fn retime(
     ))
 }
 
+/// Place a caption style's fonts for a timeline. A relative font is
+/// relative to the style file's directory. A font inside the timeline's
+/// directory is stored relative to it, so the project stays portable; any
+/// other is stored as an absolute path, and returned so the caller can say
+/// so. Leading `..` segments are resolved against the (canonical) style
+/// directory.
+pub fn place_style_fonts(
+    style: &mut crate::text::TextSpec,
+    style_dir: &Path,
+    timeline_dir: &Path,
+) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    use std::path::{Component, PathBuf};
+    let canon = |d: &Path| {
+        std::fs::canonicalize(d).with_context(|| format!("resolving directory {}", d.display()))
+    };
+    let (style_dir, timeline_dir) = (canon(style_dir)?, canon(timeline_dir)?);
+    let mut outside = Vec::new();
+    for font in style.font_paths_mut() {
+        let joined = if font.is_relative() {
+            let mut p = style_dir.clone();
+            let mut rest = font.components().peekable();
+            while let Some(c) = rest.peek() {
+                match c {
+                    Component::ParentDir => {
+                        p.pop();
+                    }
+                    Component::CurDir => {}
+                    _ => break,
+                }
+                rest.next();
+            }
+            p.extend(rest);
+            p
+        } else {
+            font.clone()
+        };
+        // As written, then with every symlink resolved (an absolute path may
+        // reach the project through another name).
+        let real = std::fs::canonicalize(&joined).ok();
+        let rel = [Some(&joined), real.as_ref()]
+            .into_iter()
+            .flatten()
+            .find_map(|p| p.strip_prefix(&timeline_dir).ok().map(PathBuf::from));
+        *font = match rel {
+            Some(r) => r,
+            None => {
+                let abs = real.unwrap_or(joined);
+                outside.push(abs.clone());
+                abs
+            }
+        };
+    }
+    Ok(outside)
+}
+
 /// Produce normal journalable edits; a supplied TextSpec defines the style.
 /// Each cue remains an editable native text clip, addressable by its stable id.
 pub fn import_ops(

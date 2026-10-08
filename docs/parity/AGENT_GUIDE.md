@@ -208,7 +208,7 @@ The native master is lossless FFV1 video/PCM audio in MKV. Optional H.264/AAC MP
 
 ## Captions are editable text clips
 
-The CLI imports plain-text SRT/WebVTT cues through the same atomic edits and journal. Supply a `TextSpec` style JSON with explicit font assets; its `content` is replaced by each cue. Fonts in that style resolve relative to the **style file**, not the caption or timeline file.
+The CLI imports plain-text SRT/WebVTT cues through the same atomic edits and journal. Supply a `TextSpec` style JSON with explicit font assets; its `content` is replaced by each cue. Fonts in that style resolve relative to the **style file**, not the caption or timeline file. The imported clips store a font inside the timeline's directory relative to it (`assets/fonts/x.otf`, `..` resolved), so the project stays portable; a font elsewhere is stored as an absolute path and the import prints a note.
 
 ```sh
 ./target/debug/ferrocut captions import project.json dialogue.vtt --style caption-style.json --track Captions --dry-run

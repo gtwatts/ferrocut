@@ -341,7 +341,9 @@ enum TrackingCmd {
 #[derive(Subcommand)]
 enum CaptionCmd {
     /// Import cues through normal atomic edits and undo journal. Fonts are
-    /// resolved relative to the style JSON file. Overlaps need separate tracks.
+    /// resolved relative to the style JSON file and stored relative to the
+    /// timeline when inside its directory (else absolute, with a note).
+    /// Overlaps need separate tracks.
     Import {
         timeline: PathBuf,
         subtitles: PathBuf,
@@ -570,11 +572,18 @@ fn main() -> anyhow::Result<()> {
                         &std::fs::read_to_string(&style)
                             .with_context(|| format!("reading style {}", style.display()))?,
                     )?;
-                    let base = std::fs::canonicalize(project::dir_of(&style))?;
-                    for font in spec.font_paths_mut() {
-                        if font.is_relative() {
-                            *font = base.join(&*font);
-                        }
+                    // Fonts resolve against the style file; the timeline
+                    // keeps those inside its directory relative.
+                    let outside = captions::place_style_fonts(
+                        &mut spec,
+                        &project::dir_of(&style),
+                        &project::dir_of(&timeline),
+                    )?;
+                    for f in &outside {
+                        eprintln!(
+                            "note: font {} is outside the timeline's directory, so it is stored as an absolute path; copy it into the project to keep the project portable",
+                            f.display()
+                        );
                     }
                     let timing = if exact_timing {
                         captions::CaptionTiming::exact()
