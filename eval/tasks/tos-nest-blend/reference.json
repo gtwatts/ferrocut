@@ -1,0 +1,25 @@
+[
+  {
+    "mcp": "edit_apply",
+    "args": {
+      "timeline": "timeline.json",
+      "ops": [
+        { "op": "nest", "clips": ["a", "b"], "path": "comps/overlay.json", "id": "overlay" },
+        { "op": "set_param", "clip": "overlay", "param": "blend_mode", "value": "screen" }
+      ]
+    }
+  },
+  {
+    "mcp": "plan",
+    "args": {
+      "timeline": "timeline.json"
+    }
+  },
+  {
+    "mcp": "render",
+    "args": {
+      "timeline": "timeline.json",
+      "output": "out.mkv"
+    }
+  }
+]

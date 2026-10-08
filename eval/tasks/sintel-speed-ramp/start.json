@@ -1,0 +1,30 @@
+{
+  "name": "sintel-speed-ramp",
+  "output": {
+    "width": 1280,
+    "height": 544,
+    "fps": "24",
+    "gop": 24
+  },
+  "tracks": [
+    {
+      "name": "V1",
+      "clips": [
+        {
+          "id": "a",
+          "source": "media/s4.mkv",
+          "start": "0",
+          "source_in": "0",
+          "duration": "5"
+        }
+      ]
+    }
+  ],
+  "audio": {
+    "sample_rate": 48000,
+    "loudness": {
+      "target_lufs": "-14",
+      "true_peak_dbtp": "-1"
+    }
+  }
+}

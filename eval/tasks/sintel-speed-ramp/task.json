@@ -1,0 +1,72 @@
+{
+  "clips": [
+    "s4"
+  ],
+  "expect": {
+    "tracks": {
+      "V1": [
+        {
+          "source": "media/s4.mkv",
+          "start": "0",
+          "source_in": "0",
+          "end": "15/2"
+        }
+      ]
+    },
+    "duration": "15/2",
+    "fields": [
+      {
+        "path": "tracks.0.clips.0.audio.preserve_pitch",
+        "equals": true
+      }
+    ],
+    "render": {
+      "frames": 180,
+      "source_frames": [
+        {
+          "frame": 24,
+          "source": "media/s4.mkv",
+          "source_frame": 24
+        },
+        {
+          "frame": 47,
+          "source": "media/s4.mkv",
+          "source_frame": 47
+        },
+        {
+          "frame": 66,
+          "source": "media/s4.mkv",
+          "source_frame": 63
+        },
+        {
+          "frame": 84,
+          "source": "media/s4.mkv",
+          "source_frame": 72
+        },
+        {
+          "frame": 96,
+          "source": "media/s4.mkv",
+          "source_frame": 78
+        },
+        {
+          "frame": 130,
+          "source": "media/s4.mkv",
+          "source_frame": 95
+        },
+        {
+          "frame": 160,
+          "source": "media/s4.mkv",
+          "source_frame": 110
+        },
+        {
+          "frame": 179,
+          "source": "media/s4.mkv",
+          "source_frame": 120
+        }
+      ]
+    },
+    "check": {
+      "cuts": []
+    }
+  }
+}

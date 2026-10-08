@@ -1,0 +1,24 @@
+{
+  "name": "tos-nest-blend",
+  "output": {
+    "width": 1280,
+    "height": 534,
+    "fps": "24",
+    "gop": 24
+  },
+  "tracks": [
+    {
+      "name": "V1",
+      "clips": [
+        { "id": "bg", "source": "media/t3.mkv", "start": "0", "source_in": "0", "duration": "6" }
+      ]
+    },
+    {
+      "name": "V2",
+      "clips": [
+        { "id": "a", "source": "media/t1.mkv", "start": "0", "source_in": "0", "duration": "3" },
+        { "id": "b", "source": "media/t2.mkv", "start": "3", "source_in": "1", "duration": "3" }
+      ]
+    }
+  ]
+}

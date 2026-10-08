@@ -1,0 +1,71 @@
+{
+  "clips": [
+    "t1",
+    "t2",
+    "t3"
+  ],
+  "expect": {
+    "tracks": {
+      "V1": [
+        {
+          "source": "media/t3.mkv",
+          "start": "0",
+          "source_in": "0",
+          "end": "6"
+        }
+      ],
+      "V2": [
+        {
+          "source": "comps/overlay.json",
+          "start": "0",
+          "end": "6",
+          "equals": {
+            "id": "overlay",
+            "blend_mode": "screen"
+          }
+        }
+      ]
+    },
+    "comps": [
+      {
+        "path": "comps/overlay.json",
+        "tracks": {
+          "V2": [
+            {
+              "source": "media/t1.mkv",
+              "start": "0",
+              "source_in": "0",
+              "end": "3"
+            },
+            {
+              "source": "media/t2.mkv",
+              "start": "3",
+              "source_in": "1",
+              "end": "6"
+            }
+          ]
+        }
+      }
+    ],
+    "duration": "6",
+    "render": {
+      "frames": 144,
+      "luma": [
+        {
+          "frame": 36,
+          "min": 110
+        },
+        {
+          "frame": 108,
+          "min": 120
+        }
+      ]
+    },
+    "check": {
+      "cuts": [],
+      "config": {
+        "require_audio": false
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+[
+  {
+    "mcp": "edit_apply",
+    "args": {
+      "timeline": "timeline.json",
+      "ops": [
+        { "op": "set_keyframes", "clip": "a", "param": "speed",
+          "keyframes": [ { "t": "0", "v": "1" }, { "t": "2", "v": "1" }, { "t": "3", "v": "1/2" } ] },
+        { "op": "set_param", "clip": "a", "param": "audio.preserve_pitch", "value": true },
+        { "op": "trim", "clip": "a", "edge": "out", "delta": "5/2" }
+      ]
+    }
+  },
+  {
+    "mcp": "plan",
+    "args": {
+      "timeline": "timeline.json"
+    }
+  },
+  {
+    "mcp": "render",
+    "args": {
+      "timeline": "timeline.json",
+      "output": "out.mkv"
+    }
+  }
+]

@@ -199,11 +199,15 @@ def opacity_at(clip, t):
 
 
 def get_path(doc, path):
+    """`a.b.0.c`: dict keys and list indices."""
     node = doc
     for p in path.split("."):
-        if not isinstance(node, dict) or p not in node:
+        if isinstance(node, list) and p.isdigit() and int(p) < len(node):
+            node = node[int(p)]
+        elif isinstance(node, dict) and p in node:
+            node = node[p]
+        else:
             return None
-        node = node[p]
     return node
 
 
@@ -219,6 +223,56 @@ def luma(path, frame):
                           "-f", "null", "-"], capture_output=True, text=True, env=env()).stdout
     m = re.search(r"YAVG=([0-9.]+)", out)
     return float(m.group(1)) if m else None
+
+
+def frame_gray(path, frame, w=160, h=68):
+    """Frame `frame` of `path` scaled to w x h, 8-bit gray, as bytes (None on failure)."""
+    vf = f"select=eq(n\\,{frame}),scale={w}:{h}:flags=area,format=gray"
+    r = subprocess.run([FFMPEG, "-nostdin", "-v", "error", "-i", path, "-an", "-vf", vf, "-frames:v", "1",
+                        "-f", "rawvideo", "-"], capture_output=True, env=env())
+    return r.stdout if r.returncode == 0 and len(r.stdout) == w * h else None
+
+
+def best_source_frame(out, frame, src, guess, radius):
+    """The source frame in [guess - radius, guess + radius] that best matches
+    `frame` of `out` (lowest mean squared difference on small gray thumbnails)."""
+    a = frame_gray(out, frame)
+    if a is None:
+        return None, None
+    best = (None, None)
+    for m in range(max(0, guess - radius), guess + radius + 1):
+        b = frame_gray(src, m)
+        if b is None:
+            continue
+        mse = sum((x - y) ** 2 for x, y in zip(a, b)) / len(a)
+        if best[1] is None or mse < best[1]:
+            best = (m, mse)
+    return best
+
+
+def check_tracks(check, label, tl, want_tracks):
+    tracks = {t.get("name", f"#{i}"): t for i, t in enumerate(tl.get("tracks", []))}
+    for name, want in want_tracks.items():
+        got = sorted(tracks.get(name, {}).get("clips", []), key=lambda c: R(c.get("start", 0)))
+        check(f"{label}{name}: {len(want)} clips", len(got) == len(want),
+              f"got {[norm_src(c.get('source', '')) for c in got]}")
+        for i, (w, g) in enumerate(zip(want, got)):
+            bad = []
+            if norm_src(g.get("source", "")) != w["source"]:
+                bad.append(f"source {g.get('source')} != {w['source']}")
+            for k in ("start", "duration", "source_in"):
+                if k in w and R(g.get(k, 0)) != R(w[k]):
+                    bad.append(f"{k} {g.get(k, 0)} != {w[k]}")
+            if "end" in w and R(g.get("start", 0)) + R(g.get("duration", 0)) != R(w["end"]):
+                bad.append(f"end {R(g.get('start', 0)) + R(g.get('duration', 0))} != {w['end']}")
+            if "transition_in" in w:
+                ti = g.get("transition_in") or {}
+                if ti.get("kind") != w["transition_in"]["kind"] or R(ti.get("duration", 0)) != R(w["transition_in"]["duration"]):
+                    bad.append(f"transition_in {ti} != {w['transition_in']}")
+            for k, v in w.get("equals", {}).items():
+                if get_path(g, k) != v:
+                    bad.append(f"{k} {get_path(g, k)!r} != {v!r}")
+            check(f"{label}{name}[{i}] {w['source']}", not bad, "; ".join(bad))
 
 
 def grade(taskdir, workdir, result_path):
@@ -241,24 +295,23 @@ def grade(taskdir, workdir, result_path):
         for t in tl.get("tracks", []):
             for c in t.get("clips", []):
                 clips_by_src.setdefault(norm_src(c.get("source", "")), c)
-        for name, want in exp.get("tracks", {}).items():
-            got = sorted(tracks.get(name, {}).get("clips", []), key=lambda c: R(c.get("start", 0)))
-            check(f"{name}: {len(want)} clips", len(got) == len(want),
-                  f"got {[norm_src(c.get('source', '')) for c in got]}")
-            for i, (w, g) in enumerate(zip(want, got)):
-                bad = []
-                if norm_src(g.get("source", "")) != w["source"]:
-                    bad.append(f"source {g.get('source')} != {w['source']}")
-                for k in ("start", "duration", "source_in"):
-                    if k in w and R(g.get(k, 0)) != R(w[k]):
-                        bad.append(f"{k} {g.get(k, 0)} != {w[k]}")
-                if "end" in w and R(g.get("start", 0)) + R(g.get("duration", 0)) != R(w["end"]):
-                    bad.append(f"end {R(g.get('start', 0)) + R(g.get('duration', 0))} != {w['end']}")
-                if "transition_in" in w:
-                    ti = g.get("transition_in") or {}
-                    if ti.get("kind") != w["transition_in"]["kind"] or R(ti.get("duration", 0)) != R(w["transition_in"]["duration"]):
-                        bad.append(f"transition_in {ti} != {w['transition_in']}")
-                check(f"{name}[{i}] {w['source']}", not bad, "; ".join(bad))
+        check_tracks(check, "", tl, exp.get("tracks", {}))
+        for comp in exp.get("comps", []):
+            # A nested composition file the agent created (paths relative to it).
+            cp = os.path.join(workdir, comp["path"])
+            try:
+                ctl = load(cp)
+            except Exception as e:  # noqa: BLE001
+                check(f"comp {comp['path']} exists", False, str(e))
+                continue
+            check(f"comp {comp['path']} exists", True)
+            base = os.path.dirname(comp["path"])
+            for t in ctl.get("tracks", []):
+                for c in t.get("clips", []):
+                    # Relative to the comp's directory, or absolute: compare relative to the workdir.
+                    full = os.path.normpath(os.path.join(workdir, base, c.get("source", "")))
+                    c["source"] = os.path.relpath(full, workdir)
+            check_tracks(check, f"comp {comp['path']} ", ctl, comp["tracks"])
         if "duration" in exp:
             ends = [R(c.get("start", 0)) + R(c.get("duration", 0))
                     for t in tl.get("tracks", []) + tl.get("audio_tracks", []) for c in t.get("clips", [])]
@@ -292,6 +345,9 @@ def grade(taskdir, workdir, result_path):
                   f"got {norm_src(c.get('source', ''))} [{float(a):.3f}, {float(b):.3f}]")
         for f in exp.get("fields", []):
             v = get_path(tl, f["path"])
+            if "equals" in f:
+                check(f"{f['path']} == {f['equals']!r}", v == f["equals"], f"got {v!r}")
+                continue
             ok = v is not None and in_range(R(v), f)
             check(f"{f['path']} in [{f.get('min', '-inf')}, {f.get('max', 'inf')}]", ok, f"got {v}")
         for o in exp.get("opacity", []):
@@ -338,6 +394,15 @@ def grade(taskdir, workdir, result_path):
                   "stale or edited render" if got_sha != want_sha else "bit-exact re-render")
             if "frames" in rexp:
                 check(f"{rexp['frames']} frames", ref["total_frames"] == rexp["frames"], f"got {ref['total_frames']}")
+        for sf in rexp.get("source_frames", []):
+            # Retiming: output frame `frame` must show source frame `source_frame`
+            # (+- tol), found by searching the source around it.
+            src = os.path.join(workdir, sf["source"])
+            tol = sf.get("tol", 1)
+            m, mse = best_source_frame(out, sf["frame"], src, sf["source_frame"], tol + 3)
+            check(f"frame {sf['frame']} shows {sf['source']} frame {sf['source_frame']} +-{tol}",
+                  m is not None and abs(m - sf["source_frame"]) <= tol and mse < sf.get("max_mse", 60),
+                  f"best match source frame {m} (mse {mse})")
         for L in rexp.get("luma", []):
             y = luma(out, L["frame"])
             ok = y is not None and (y <= L["max"] if "max" in L else True) and (y >= L["min"] if "min" in L else True)
