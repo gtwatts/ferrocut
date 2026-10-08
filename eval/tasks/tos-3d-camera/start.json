@@ -1,0 +1,23 @@
+{
+  "name": "tos-3d-camera",
+  "output": {
+    "width": 1280,
+    "height": 534,
+    "fps": "24",
+    "gop": 24
+  },
+  "tracks": [
+    {
+      "name": "V1",
+      "clips": [
+        {
+          "id": "shot",
+          "source": "media/t1.mkv",
+          "start": "0",
+          "source_in": "0",
+          "duration": "4"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+[
+  {
+    "mcp": "edit_apply",
+    "args": {
+      "timeline": "timeline.json",
+      "ops": [
+        { "op": "add_track", "kind": "video", "name": "BG", "index": 0 },
+        { "op": "add_clip", "track": "BG", "id": "bg", "start": "0", "duration": "4",
+          "generator": { "type": "linear_gradient", "start": ["640", "0"], "end": ["640", "534"],
+                         "start_color": ["1/20", "2/25", "1/5"], "end_color": ["0", "0", "0"] } },
+        { "op": "set_param", "clip": "shot", "param": "three_d", "value": true },
+        { "op": "set_param", "clip": "shot", "param": "transform.scale", "value": "3/5" },
+        { "op": "set_param", "clip": "shot", "param": "transform.rotation_y", "value": "20" },
+        { "op": "add_track", "kind": "video", "name": "Card" },
+        { "op": "add_clip", "track": "Card", "id": "card", "start": "0", "duration": "4",
+          "generator": { "type": "solid", "color": ["1", "11/20", "1/10"] } },
+        { "op": "set_param", "clip": "card", "param": "three_d", "value": true },
+        { "op": "set_param", "clip": "card", "param": "transform.scale", "value": "3/20" },
+        { "op": "set_param", "clip": "card", "param": "transform.position", "value": ["1000", "140"] },
+        { "op": "set_param", "clip": "card", "param": "transform.position_z", "value": "-300" },
+        { "op": "set_param", "param": "camera.point_of_interest", "value": ["640", "267", "0"] },
+        { "op": "set_keyframes", "param": "camera.position.x",
+          "keyframes": [ { "t": "0", "v": "640" }, { "t": "4", "v": "400" } ] },
+        { "op": "set_keyframes", "param": "camera.position.y",
+          "keyframes": [ { "t": "0", "v": "267" }, { "t": "4", "v": "200" } ] },
+        { "op": "set_keyframes", "param": "camera.position.z",
+          "keyframes": [ { "t": "0", "v": "-1778" }, { "t": "4", "v": "-1100" } ] }
+      ]
+    }
+  },
+  {
+    "mcp": "plan",
+    "args": {
+      "timeline": "timeline.json"
+    }
+  },
+  {
+    "mcp": "render",
+    "args": {
+      "timeline": "timeline.json",
+      "output": "out.mkv"
+    }
+  }
+]

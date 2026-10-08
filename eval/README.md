@@ -1,6 +1,6 @@
 # Ferrocut in-house eval
 
-Eight small editing tasks on clips from two Blender open movies. Each task has a brief an agent reads, a starting
+Nine small editing tasks on clips from two Blender open movies. Each task has a brief an agent reads, a starting
 `timeline.json`, machine-checkable expectations, and a reference solution. The grader scores the agent's final
 timeline and render. It is free to run: the media is CC-BY, everything runs locally, and the agent run uses an
 existing Codex (ChatGPT plan) login, never a paid API key.
@@ -28,6 +28,7 @@ Workdirs live under `/tmp/ferrocut-eval/<run-id>/<task>/` (`EVAL_WORK` to move t
 | `sintel-keep-line` | Sintel | cut a 24 s dialogue scene down to one named line (find it with `transcript_search`) | one clip at 0 whose source range holds the whole line and none of the neighbouring lines (windows from the speech energy) |
 | `sintel-speed-ramp` | Sintel | 100 % for 2 s, linear ramp to 50 % over 1 s, then slow motion until source 5 s; sound pitch-preserved | clip ends at 7.5 s, `audio.preserve_pitch`; rendered frames matched against the source frames the ramp must show (any implementation: speed keys or time remap) |
 | `tos-nest-blend` | Tears of Steel | nest two shots into `comps/overlay.json` and screen the comp over a background | outer clip (`id`, `blend_mode`), the comp file's clips and timing, frame luma above both layers |
+| `tos-3d-camera` | Tears of Steel | 2.5D scene: gradient background track below, the shot as a rotated 3D layer, a 3D solid card in front, and a linear camera dolly | generator layers and track order, 3D switches and values, and four frames matched against a render of `expected.json` (any timeline that looks the same passes) |
 
 Every task also checks:
 
@@ -74,7 +75,7 @@ The renders an eval run produces are derivative works of these films. If you sha
 
 - `--agent none` applies `tasks/<task>/reference.json` through `ferrocut-mcp`, the same way an agent would:
   MCP tool calls only (a step can `bind` its result and later steps use `"{{name.path}}"`, e.g. the
-  `cut_in` of a `transcript_search` hit). Then it grades the result. All eight must score 100 %.
+  `cut_in` of a `transcript_search` hit). Then it grades the result. All nine must score 100 %.
 - Codex runs also write `<task>.usage.json` (`lib/agent_usage.py`): MCP calls by tool, shell commands,
   hand edits of `timeline.json`, reads of engine source, and whether it stayed inside the tools.
 - `--agent codex` runs `codex exec` once per task, non-interactively:
@@ -99,11 +100,12 @@ The renders an eval run produces are derivative works of these films. If you sha
 1. Add `tasks/<name>/` with these files:
    - `brief.md`, the agent's instructions;
    - `start.json`, with sources as `media/<clip>.mkv`;
-   - `task.json`: `clips`, plus `expect` (see `lib/evallib.py` `grade()` for the check kinds: `tracks`,
+   - `task.json`: `clips`, plus `expect` (see `lib/evallib.py` `grade()` for the check kinds: `tracks`
+     (a clip is matched by `source`, or by `generator` type for generator layers), `track_order`,
      `duration`, `audio_regions`, `source_windows`, `fields` (range or `equals`; paths take list indices),
      `comps` (track checks on a nested comp file), track `equals` (exact clip fields), `opacity`, `render.frames`,
-     `render.luma`, `render.source_frames` (which source frame an output frame shows), `check.cuts` / `config` /
-     `args`);
+     `render.luma`, `render.source_frames` (which source frame an output frame shows), `render.match`
+     (frames compared with a render of a task-provided expected timeline), `check.cuts` / `config` / `args`);
    - `reference.json`.
 2. Run `eval/run.sh <name>`: the reference must score 100 %.
 3. Check that a no-op scores well below 100 %.

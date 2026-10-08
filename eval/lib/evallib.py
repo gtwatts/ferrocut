@@ -258,7 +258,12 @@ def check_tracks(check, label, tl, want_tracks):
               f"got {[norm_src(c.get('source', '')) for c in got]}")
         for i, (w, g) in enumerate(zip(want, got)):
             bad = []
-            if norm_src(g.get("source", "")) != w["source"]:
+            if "generator" in w:
+                # A generator layer: its type instead of a source.
+                gt = (g.get("generator") or {}).get("type")
+                if gt != w["generator"]:
+                    bad.append(f"generator {gt} != {w['generator']}")
+            elif norm_src(g.get("source", "")) != w["source"]:
                 bad.append(f"source {g.get('source')} != {w['source']}")
             for k in ("start", "duration", "source_in"):
                 if k in w and R(g.get(k, 0)) != R(w[k]):
@@ -272,7 +277,8 @@ def check_tracks(check, label, tl, want_tracks):
             for k, v in w.get("equals", {}).items():
                 if get_path(g, k) != v:
                     bad.append(f"{k} {get_path(g, k)!r} != {v!r}")
-            check(f"{label}{name}[{i}] {w['source']}", not bad, "; ".join(bad))
+            what = w["source"] if "source" in w else f"generator {w['generator']}"
+            check(f"{label}{name}[{i}] {what}", not bad, "; ".join(bad))
 
 
 def grade(taskdir, workdir, result_path):
@@ -296,6 +302,9 @@ def grade(taskdir, workdir, result_path):
             for c in t.get("clips", []):
                 clips_by_src.setdefault(norm_src(c.get("source", "")), c)
         check_tracks(check, "", tl, exp.get("tracks", {}))
+        if "track_order" in exp:
+            names = [t.get("name") for t in tl.get("tracks", [])]
+            check(f"video tracks bottom to top: {exp['track_order']}", names == exp["track_order"], f"got {names}")
         for comp in exp.get("comps", []):
             # A nested composition file the agent created (paths relative to it).
             cp = os.path.join(workdir, comp["path"])
@@ -403,6 +412,23 @@ def grade(taskdir, workdir, result_path):
             check(f"frame {sf['frame']} shows {sf['source']} frame {sf['source_frame']} +-{tol}",
                   m is not None and abs(m - sf["source_frame"]) <= tol and mse < sf.get("max_mse", 60),
                   f"best match source frame {m} (mse {mse})")
+        if "match" in rexp and have and tl is not None:
+            # Picture match against a render of the task's expected timeline
+            # (any timeline that looks the same passes): small gray thumbnails.
+            mt = rexp["match"]
+            exp_tl = os.path.join(workdir, ".expected-timeline.json")
+            shutil.copyfile(os.path.join(taskdir, mt["timeline"]), exp_tl)
+            os.makedirs(regrade, exist_ok=True)
+            em = os.path.join(regrade, "expected.mkv")
+            er = subprocess.run([FERROCUT, "render", exp_tl, "-o", em, "--cache-dir",
+                                 os.path.join(workdir, ".ferrocut-cache"), "-j", "4", *cpu],
+                                capture_output=True, text=True, env=env())
+            for fr in mt["frames"]:
+                a, b = frame_gray(out, fr), (frame_gray(em, fr) if er.returncode == 0 else None)
+                mse = None if a is None or b is None else sum((x - y) ** 2 for x, y in zip(a, b)) / len(a)
+                check(f"frame {fr} matches the expected picture (mse <= {mt.get('max_mse', 2)})",
+                      mse is not None and mse <= mt.get("max_mse", 2),
+                      f"mse {mse}" if er.returncode == 0 else (er.stderr or er.stdout)[-300:])
         for L in rexp.get("luma", []):
             y = luma(out, L["frame"])
             ok = y is not None and (y <= L["max"] if "max" in L else True) and (y >= L["min"] if "min" in L else True)

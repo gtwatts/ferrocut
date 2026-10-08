@@ -1,0 +1,24 @@
+{
+  "output": { "width": 1280, "height": 534, "fps": "24", "gop": 24 },
+  "camera": {
+    "position": [
+      { "keyframes": [ { "t": "0", "v": "640" }, { "t": "4", "v": "400" } ] },
+      { "keyframes": [ { "t": "0", "v": "267" }, { "t": "4", "v": "200" } ] },
+      { "keyframes": [ { "t": "0", "v": "-1778" }, { "t": "4", "v": "-1100" } ] }
+    ],
+    "point_of_interest": ["640", "267", "0"]
+  },
+  "tracks": [
+    { "name": "BG", "clips": [
+      { "id": "bg", "start": "0", "duration": "4",
+        "generator": { "type": "linear_gradient", "start": ["640", "0"], "end": ["640", "534"],
+                       "start_color": ["0.05", "0.08", "0.2"], "end_color": ["0", "0", "0"] } } ] },
+    { "name": "V1", "clips": [
+      { "id": "shot", "source": "media/t1.mkv", "start": "0", "source_in": "0", "duration": "4",
+        "three_d": true, "transform": { "scale": "0.6", "rotation_y": "20" } } ] },
+    { "name": "Card", "clips": [
+      { "id": "card", "start": "0", "duration": "4", "three_d": true,
+        "generator": { "type": "solid", "color": ["1", "0.55", "0.1"] },
+        "transform": { "position": ["1000", "140"], "position_z": "-300", "scale": "0.15" } } ] }
+  ]
+}

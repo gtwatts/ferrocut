@@ -1,0 +1,38 @@
+{
+  "clips": [
+    "t1"
+  ],
+  "expect": {
+    "tracks": {
+      "BG": [
+        { "generator": "linear_gradient", "start": "0", "end": "4" }
+      ],
+      "V1": [
+        { "source": "media/t1.mkv", "start": "0", "source_in": "0", "end": "4", "equals": { "three_d": true } }
+      ],
+      "Card": [
+        { "generator": "solid", "start": "0", "end": "4", "equals": { "three_d": true } }
+      ]
+    },
+    "track_order": ["BG", "V1", "Card"],
+    "duration": "4",
+    "fields": [
+      { "path": "tracks.1.clips.0.transform.rotation_y", "min": "20", "max": "20" },
+      { "path": "tracks.2.clips.0.transform.position_z", "min": "-300", "max": "-300" }
+    ],
+    "render": {
+      "frames": 96,
+      "match": {
+        "timeline": "expected.json",
+        "frames": [0, 32, 64, 95],
+        "max_mse": 2
+      }
+    },
+    "check": {
+      "cuts": [],
+      "config": {
+        "require_audio": false
+      }
+    }
+  }
+}
