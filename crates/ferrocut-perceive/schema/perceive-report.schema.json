@@ -1,0 +1,1003 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ferrocut/ferrocut/crates/ferrocut-perceive/schema/perceive-report.schema.json",
+  "title": "Ferrocut perception report",
+  "description": "Written by ferrocut-perceive after a render. Frames are output frame indices (frame i is at i/fps); times are exact rationals in seconds. Byte-identical for identical inputs. schema_version changes when a field is removed, renamed or changes meaning.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generator",
+    "timeline",
+    "settings",
+    "summary",
+    "issues",
+    "shots",
+    "audio",
+    "contact_sheet",
+    "chunks"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ferrocut.perceive/1"
+    },
+    "generator": {
+      "type": "string"
+    },
+    "timeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "width",
+        "height",
+        "fps",
+        "total_frames",
+        "chunk_frames",
+        "duration"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "fps": {
+          "$ref": "#/$defs/rational"
+        },
+        "total_frames": {
+          "type": "integer"
+        },
+        "chunk_frames": {
+          "type": "integer"
+        },
+        "duration": {
+          "$ref": "#/$defs/rational"
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sample_every",
+        "scope_images",
+        "thumb_width",
+        "thresholds"
+      ],
+      "properties": {
+        "sample_every": {
+          "type": "integer"
+        },
+        "scope_images": {
+          "type": "boolean"
+        },
+        "thumb_width": {
+          "type": "integer"
+        },
+        "thresholds": {
+          "$ref": "#/$defs/thresholds"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frames",
+        "sampled_frames",
+        "levels",
+        "color",
+        "shots",
+        "cuts",
+        "dissolves",
+        "missed_cuts",
+        "unexpected_cuts",
+        "flash_frames",
+        "black_frames",
+        "frozen_frames",
+        "integrated_lufs",
+        "true_peak_dbtp",
+        "issues"
+      ],
+      "properties": {
+        "frames": {
+          "type": "integer"
+        },
+        "sampled_frames": {
+          "type": "integer"
+        },
+        "levels": {
+          "$ref": "#/$defs/levels"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "shots": {
+          "type": "integer"
+        },
+        "cuts": {
+          "type": "integer"
+        },
+        "dissolves": {
+          "type": "integer"
+        },
+        "missed_cuts": {
+          "type": "integer"
+        },
+        "unexpected_cuts": {
+          "type": "integer"
+        },
+        "flash_frames": {
+          "type": "integer"
+        },
+        "black_frames": {
+          "type": "integer"
+        },
+        "frozen_frames": {
+          "type": "integer"
+        },
+        "integrated_lufs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "true_peak_dbtp": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "issues": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "error",
+            "warning",
+            "info"
+          ],
+          "properties": {
+            "error": {
+              "type": "integer"
+            },
+            "warning": {
+              "type": "integer"
+            },
+            "info": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
+    },
+    "shots": {
+      "$ref": "#/$defs/shots"
+    },
+    "audio": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/audio"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "contact_sheet": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "chunks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/chunk"
+      }
+    }
+  },
+  "$defs": {
+    "rational": {
+      "type": "string",
+      "pattern": "^-?[0-9]+(/[0-9]+)?$",
+      "description": "Exact rational as \"num/den\" or \"num\" (seconds for times, frames/s for rates)."
+    },
+    "timecode": {
+      "type": "string",
+      "pattern": "^[0-9]{2,}:[0-9]{2}:[0-9]{2}:[0-9]{2}$",
+      "description": "Non-drop-frame HH:MM:SS:FF at the nominal (rounded) frame rate."
+    },
+    "levels": {
+      "description": "Levels from luma (BT.709 Y' on encoded values) and RGB histograms. Levels are 0..1 codes (1st/99th percentile black/white); *_pct are percentages: luma clipped = Y' >= 253, crushed = Y' <= 2; RGB clipped = 255, crushed = 0.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "luma_black",
+        "luma_white",
+        "luma_mean",
+        "luma_median",
+        "luma_clipped_pct",
+        "luma_crushed_pct",
+        "rgb_black",
+        "rgb_white",
+        "rgb_mean",
+        "rgb_clipped_pct",
+        "rgb_crushed_pct"
+      ],
+      "properties": {
+        "luma_black": {
+          "type": "number"
+        },
+        "luma_white": {
+          "type": "number"
+        },
+        "luma_mean": {
+          "type": "number"
+        },
+        "luma_median": {
+          "type": "number"
+        },
+        "luma_clipped_pct": {
+          "type": "number"
+        },
+        "luma_crushed_pct": {
+          "type": "number"
+        },
+        "rgb_black": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "rgb_white": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "rgb_mean": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "rgb_clipped_pct": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "rgb_crushed_pct": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    "color": {
+      "description": "Vectorscope statistics. Chroma = sqrt(Cb^2+Cr^2) in 0..~0.5; saturated = chroma > 0.35; hue 0 deg = +Cb, counter-clockwise; skin = within +-25 deg of the 123 deg skin-tone line with chroma > 0.03; deviation positive = towards red.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chroma_mean",
+        "chroma_p95",
+        "saturated_pct",
+        "hue_mean_deg",
+        "skin_pct",
+        "skin_line_dev_deg"
+      ],
+      "properties": {
+        "chroma_mean": {
+          "type": "number"
+        },
+        "chroma_p95": {
+          "type": "number"
+        },
+        "saturated_pct": {
+          "type": "number"
+        },
+        "hue_mean_deg": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "skin_pct": {
+          "type": "number"
+        },
+        "skin_line_dev_deg": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    },
+    "span": {
+      "description": "[start, end) in output frames.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "integer"
+        },
+        "end": {
+          "type": "integer"
+        }
+      }
+    },
+    "audio_span": {
+      "description": "Seconds on the timeline. channel/samples only on clipping spans.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/rational"
+        },
+        "end": {
+          "$ref": "#/$defs/rational"
+        },
+        "channel": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "integer"
+        }
+      }
+    },
+    "loudness": {
+      "description": "EBU R128 / BS.1770-4 figures; null = no signal above the gates. Silence: sample peak < -60 dBFS for >= 0.5 s. Clipping: >= 3 consecutive samples with |x| >= 0.999.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "integrated_lufs",
+        "loudness_range_lu",
+        "momentary_max_lufs",
+        "short_term_max_lufs",
+        "true_peak_dbtp",
+        "sample_peak_dbfs",
+        "silence",
+        "clipping"
+      ],
+      "properties": {
+        "integrated_lufs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "loudness_range_lu": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "momentary_max_lufs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "short_term_max_lufs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "true_peak_dbtp": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sample_peak_dbfs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "silence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/audio_span"
+          }
+        },
+        "clipping": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/audio_span"
+          }
+        }
+      }
+    },
+    "thresholds": {
+      "description": "Shot-detection thresholds in effect (see the README).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cut_min",
+        "cut_ratio",
+        "window",
+        "dissolve_step",
+        "dissolve_ratio",
+        "baseline_window",
+        "dissolve_min_frames",
+        "dissolve_fit",
+        "flash_max_frames",
+        "black_luma",
+        "black_pct",
+        "frozen_min_frames",
+        "tolerance"
+      ],
+      "properties": {
+        "cut_min": {
+          "type": "number"
+        },
+        "cut_ratio": {
+          "type": "number"
+        },
+        "window": {
+          "type": "integer"
+        },
+        "dissolve_step": {
+          "type": "number"
+        },
+        "dissolve_ratio": {
+          "type": "number"
+        },
+        "baseline_window": {
+          "type": "integer"
+        },
+        "dissolve_min_frames": {
+          "type": "integer"
+        },
+        "dissolve_fit": {
+          "type": "number"
+        },
+        "flash_max_frames": {
+          "type": "integer"
+        },
+        "black_luma": {
+          "type": "integer"
+        },
+        "black_pct": {
+          "type": "integer"
+        },
+        "frozen_min_frames": {
+          "type": "integer"
+        },
+        "tolerance": {
+          "type": "integer"
+        }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity",
+        "kind",
+        "frame",
+        "end_frame",
+        "timecode",
+        "chunk",
+        "message"
+      ],
+      "properties": {
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "info"
+          ]
+        },
+        "kind": {
+          "type": "string"
+        },
+        "frame": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "end_frame": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "timecode": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/timecode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "chunk": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "frame",
+        "end_frame"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "cut",
+            "dissolve",
+            "flash",
+            "black",
+            "frozen",
+            "missed_cut",
+            "unexpected_cut",
+            "missed_dissolve"
+          ]
+        },
+        "frame": {
+          "type": "integer"
+        },
+        "end_frame": {
+          "type": "integer"
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "frame",
+        "time",
+        "timecode",
+        "levels",
+        "color",
+        "scope_image"
+      ],
+      "properties": {
+        "frame": {
+          "type": "integer"
+        },
+        "time": {
+          "$ref": "#/$defs/rational"
+        },
+        "timecode": {
+          "$ref": "#/$defs/timecode"
+        },
+        "levels": {
+          "$ref": "#/$defs/levels"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "scope_image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "chunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "start_frame",
+        "frames",
+        "start",
+        "end",
+        "timecode",
+        "key",
+        "analysis_key",
+        "levels",
+        "color",
+        "motion",
+        "black_frames",
+        "frozen_frames",
+        "samples",
+        "events",
+        "audio",
+        "contact_sheet"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer"
+        },
+        "start_frame": {
+          "type": "integer"
+        },
+        "frames": {
+          "type": "integer"
+        },
+        "start": {
+          "$ref": "#/$defs/rational"
+        },
+        "end": {
+          "$ref": "#/$defs/rational"
+        },
+        "timecode": {
+          "$ref": "#/$defs/timecode"
+        },
+        "key": {
+          "type": "string"
+        },
+        "analysis_key": {
+          "type": "string"
+        },
+        "levels": {
+          "$ref": "#/$defs/levels"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "motion": {
+          "type": "number"
+        },
+        "black_frames": {
+          "type": "integer"
+        },
+        "frozen_frames": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sample"
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/event"
+          }
+        },
+        "audio": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/loudness"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contact_sheet": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "shots": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cuts",
+        "dissolves",
+        "missed_cuts",
+        "unexpected_cuts",
+        "missed_dissolves",
+        "unexpected_dissolves",
+        "flash_frames",
+        "black",
+        "frozen",
+        "shots"
+      ],
+      "properties": {
+        "cuts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "frame",
+              "distance",
+              "intended"
+            ],
+            "properties": {
+              "frame": {
+                "type": "integer"
+              },
+              "distance": {
+                "type": "number"
+              },
+              "intended": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "dissolves": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "start",
+              "end",
+              "fit",
+              "intended"
+            ],
+            "properties": {
+              "start": {
+                "type": "integer"
+              },
+              "end": {
+                "type": "integer"
+              },
+              "fit": {
+                "type": "number"
+              },
+              "intended": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "missed_cuts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "frame",
+              "distance"
+            ],
+            "properties": {
+              "frame": {
+                "type": "integer"
+              },
+              "distance": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "unexpected_cuts": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "missed_dissolves": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/span"
+          }
+        },
+        "unexpected_dissolves": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/span"
+          }
+        },
+        "flash_frames": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/span"
+          }
+        },
+        "black": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/span"
+          }
+        },
+        "frozen": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/span"
+          }
+        },
+        "shots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/span"
+          }
+        }
+      }
+    },
+    "audio": {
+      "description": "Whole-program audio (loudness fields flattened in). Deltas = integrated minus -23 (EBU R128) / -14 (streaming). `engine`: the engine's own measurement of the master and our figures minus it. `join_mismatch_chunks`: chunks whose decoded master PCM doesn't hash to the render report's audio_blake3.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "sample_rate",
+        "channels",
+        "duration",
+        "integrated_lufs",
+        "loudness_range_lu",
+        "momentary_max_lufs",
+        "short_term_max_lufs",
+        "true_peak_dbtp",
+        "sample_peak_dbfs",
+        "silence",
+        "clipping",
+        "delta_ebu_r128_lu",
+        "delta_streaming_lu",
+        "short_term_per_second",
+        "engine",
+        "join_mismatch_chunks"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "sample_rate": {
+          "type": "integer"
+        },
+        "channels": {
+          "type": "integer"
+        },
+        "duration": {
+          "$ref": "#/$defs/rational"
+        },
+        "integrated_lufs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "loudness_range_lu": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "momentary_max_lufs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "short_term_max_lufs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "true_peak_dbtp": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sample_peak_dbfs": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "silence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/audio_span"
+          }
+        },
+        "clipping": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/audio_span"
+          }
+        },
+        "delta_ebu_r128_lu": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "delta_streaming_lu": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "short_term_per_second": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "engine": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "integrated_lufs",
+                "true_peak_dbtp",
+                "delta_integrated_lu",
+                "delta_true_peak_db"
+              ],
+              "properties": {
+                "integrated_lufs": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "true_peak_dbtp": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "delta_integrated_lu": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "delta_true_peak_db": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "join_mismatch_chunks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

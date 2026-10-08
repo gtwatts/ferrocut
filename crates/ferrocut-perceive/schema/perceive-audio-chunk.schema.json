@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ferrocut.dev/schema/perceive-audio-chunk.schema.json",
+  "title": "ferrocut-perceive audio chunk cache entry (ferrocut.perceive.audio-chunk/1)",
+  "description": "<cache>/perceive/v1/audio/<key>.json: one engine chunk's loudness analysis on the global 100 ms grid, plus the filter state it was entered with (digest) and left with. See the crate README, 'Audio chunk cache', for the exact algorithms, key and digest byte layouts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "sample_rate",
+    "channels",
+    "start",
+    "end",
+    "pcm_blake3",
+    "state_in",
+    "pieces",
+    "clip_runs",
+    "state_out"
+  ],
+  "properties": {
+    "version": {
+      "const": "ferrocut.perceive.audio-chunk/1"
+    },
+    "sample_rate": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "channels": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "start": {
+      "description": "First timeline sample (inclusive).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "end": {
+      "description": "Last timeline sample (exclusive).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "pcm_blake3": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "blake3 of the chunk's interleaved f32 LE samples (= the render report's per-chunk audio_blake3)."
+    },
+    "state_in": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Digest of the edge state the chunk was analysed from."
+    },
+    "pieces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "block",
+          "start",
+          "n",
+          "energy",
+          "sample_peak",
+          "true_peak"
+        ],
+        "properties": {
+          "block": {
+            "description": "Global sub-block index k: samples [floor(k*rate/10), floor((k+1)*rate/10)).",
+            "type": "integer",
+            "minimum": 0
+          },
+          "start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "energy": {
+            "description": "Per channel: sum of y^2 of the K-weighted signal over the piece, accumulated in sample order from 0.0 (f64 bits).",
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/f64"
+            }
+          },
+          "sample_peak": {
+            "$ref": "#/$defs/f32"
+          },
+          "true_peak": {
+            "$ref": "#/$defs/f32"
+          }
+        }
+      }
+    },
+    "clip_runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "start",
+          "len",
+          "channel"
+        ],
+        "properties": {
+          "start": {
+            "type": "integer"
+          },
+          "len": {
+            "type": "integer"
+          },
+          "channel": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "state_out": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sample",
+        "channels"
+      ],
+      "properties": {
+        "sample": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/channel_state"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "f64": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "IEEE-754 binary64 bit pattern, 16 lowercase hex digits (format!(\"{:016x}\", v.to_bits()))."
+    },
+    "f32": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}$",
+      "description": "IEEE-754 binary32 bit pattern, 8 lowercase hex digits."
+    },
+    "channel_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "shelf",
+        "highpass",
+        "tp_history"
+      ],
+      "description": "One channel's filter state at an edge (after sample `sample - 1`, before `sample`).",
+      "properties": {
+        "shelf": {
+          "description": "K-weighting stage 1 (high-shelf pre-filter), direct form I: [x[n-1], x[n-2], y[n-1], y[n-2]] as f64 bit patterns.",
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/f64"
+          }
+        },
+        "highpass": {
+          "description": "K-weighting stage 2 (RLB high-pass, input = stage 1 output), same layout.",
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/f64"
+          }
+        },
+        "tp_history": {
+          "description": "True-peak interpolator history: the last ceil(49 / factor) input samples (13 at < 96 kHz, 25 at < 192 kHz, none above), oldest first, f32 bit patterns.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/f32"
+          }
+        }
+      }
+    }
+  }
+}
