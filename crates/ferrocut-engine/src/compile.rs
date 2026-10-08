@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 
 use crate::graph::{Graph, NodeId};
-use crate::nodes::{ClipNode, ClipRange, OverNode, SequenceNode, SourceNode};
+use crate::nodes::{ClipNode, ClipRange, OverNode, SequenceNode, SourceNode, TransformNode};
 use crate::timeline::Timeline;
 
 pub struct Compiled {
@@ -45,9 +45,19 @@ pub fn compile_with(
                 start: c.start,
                 source_in: c.source_in,
                 duration: c.duration,
-                opacity: c.opacity,
+                opacity: c.opacity.clone(),
             };
-            clip_ids.push(g.add(Arc::new(clip), vec![src]));
+            let mut top = g.add(Arc::new(clip), vec![src]);
+            if let Some(spec) = &c.transform {
+                let node = TransformNode {
+                    start: c.start,
+                    spec: spec.clone(),
+                    width: w,
+                    height: h,
+                };
+                top = g.add(Arc::new(node), vec![top]);
+            }
+            clip_ids.push(top);
             ranges.push(ClipRange {
                 start: c.start,
                 end: c.end(),

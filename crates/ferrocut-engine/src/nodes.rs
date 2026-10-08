@@ -1,15 +1,17 @@
-//! Engine render nodes: source decode, clip (time map + opacity), track sequence
-//! (cuts, gaps, cross-dissolves) and over (track stacking).
+//! Engine render nodes: source decode, clip (time map + opacity), layer
+//! transform, track sequence (cuts, gaps, cross-dissolves) and over (track stacking).
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use ferrocut_core::{
-    Frame, FrameRate, NodeError, NodeHash, Pull, Rational, RationalTime, RenderCtx, RenderNode,
+    Animatable, Frame, FrameRate, NodeError, NodeHash, Pull, Rational, RationalTime, RenderCtx,
+    RenderNode,
 };
 
 use crate::compositor::{Compositor, compositor};
 use crate::media::decode::Decoder;
+use crate::transform::{TRANSFORM_VERSION, TransformAt, TransformSpec};
 
 /// Bumped whenever the pixel math of a node changes, so stale cache entries die.
 const SOURCE_VERSION: &[u8] =
@@ -83,12 +85,35 @@ impl RenderNode for SourceNode {
     }
 }
 
-/// Places a source on the timeline: maps timeline time to source time and applies opacity.
+/// Places a source on the timeline: maps timeline time to source time and
+/// applies opacity (constant or keyframed in clip-local time).
 pub struct ClipNode {
     pub start: RationalTime,
     pub source_in: RationalTime,
     pub duration: RationalTime,
-    pub opacity: Rational,
+    pub opacity: Animatable,
+}
+
+impl ClipNode {
+    /// Opacity at timeline time `t`, clamped to [0, 1] (bezier keys may overshoot).
+    pub fn opacity_at(&self, t: RationalTime) -> f32 {
+        match &self.opacity {
+            Animatable::Constant(v) => v.to_f32_param(),
+            k => k.eval(t - self.start).clamp(0.0, 1.0) as f32,
+        }
+    }
+
+    fn opacity_bytes(&self) -> Vec<u8> {
+        match &self.opacity {
+            // Same bytes as before keyframes existed, so constant-opacity keys are stable.
+            Animatable::Constant(v) => v.hash_bytes().to_vec(),
+            k => {
+                let mut h = blake3::Hasher::new();
+                k.hash_into(&mut h);
+                h.finalize().as_bytes().to_vec()
+            }
+        }
+    }
 }
 
 impl RenderNode for ClipNode {
@@ -108,7 +133,7 @@ impl RenderNode for ClipNode {
                 &self.start.hash_bytes(),
                 &self.source_in.hash_bytes(),
                 &self.duration.hash_bytes(),
-                &self.opacity.hash_bytes(),
+                &self.opacity_bytes(),
             ],
         )
     }
@@ -117,8 +142,14 @@ impl RenderNode for ClipNode {
     /// the source time, and `duration` only decides *where* the clip is active
     /// (the sequence's job). So trims, rolls and slips leave the keys of
     /// frames whose source frame didn't change untouched.
-    fn content_hash_at(&self, _t: RationalTime) -> NodeHash {
-        NodeHash::of("clip.at", &[&self.opacity.hash_bytes()])
+    fn content_hash_at(&self, t: RationalTime) -> NodeHash {
+        match &self.opacity {
+            Animatable::Constant(v) => NodeHash::of("clip.at", &[&v.hash_bytes()]),
+            _ => NodeHash::of(
+                "clip.at.anim",
+                &[&self.opacity_at(t).to_bits().to_le_bytes()],
+            ),
+        }
     }
     fn pulls(&self, t: RationalTime) -> Vec<Pull> {
         vec![Pull {
@@ -129,18 +160,87 @@ impl RenderNode for ClipNode {
     fn render(
         &self,
         ctx: &mut RenderCtx<'_>,
-        _t: RationalTime,
+        t: RationalTime,
         inputs: &[Arc<Frame>],
     ) -> Result<Arc<Frame>, NodeError> {
-        if self.opacity == Rational::ONE {
+        let opacity = self.opacity_at(t);
+        if opacity == 1.0 {
             return Ok(inputs[0].clone());
         }
         let comp = compositor(ctx)?;
-        Ok(Arc::new(comp.opacity(
-            ctx,
-            &inputs[0],
-            self.opacity.to_f32_param(),
-        )?))
+        Ok(Arc::new(comp.opacity(ctx, &inputs[0], opacity)?))
+    }
+}
+
+/// Animated 2D layer transform of one clip (see [`crate::transform`]). Sits
+/// between the clip and its track; keyframe times are clip-local.
+pub struct TransformNode {
+    pub start: RationalTime,
+    pub spec: TransformSpec,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl TransformNode {
+    pub fn at(&self, t: RationalTime) -> TransformAt {
+        self.spec.at(t - self.start, self.width, self.height)
+    }
+}
+
+impl RenderNode for TransformNode {
+    fn kind(&self) -> &'static str {
+        "transform"
+    }
+    fn batches_gpu_work(&self) -> bool {
+        true
+    }
+    fn supports_data_window(&self) -> bool {
+        true
+    }
+    fn content_hash(&self) -> NodeHash {
+        let mut h = blake3::Hasher::new();
+        h.update(&self.start.hash_bytes());
+        self.spec.hash_into(&mut h);
+        NodeHash::of(
+            "transform",
+            &[
+                h.finalize().as_bytes(),
+                &self.width.to_le_bytes(),
+                &self.height.to_le_bytes(),
+            ],
+        )
+    }
+    /// The evaluated parameters at `t` (the input's key covers the pixels and
+    /// pixel aspect), so a held or repeated pose reuses cached frames.
+    fn content_hash_at(&self, t: RationalTime) -> NodeHash {
+        let a = self.at(t);
+        if a.is_identity() {
+            return NodeHash::of("transform.identity", &[]);
+        }
+        NodeHash::of("transform.at", &[TRANSFORM_VERSION, &a.hash_bytes()])
+    }
+    fn pulls(&self, t: RationalTime) -> Vec<Pull> {
+        vec![Pull { input: 0, time: t }]
+    }
+    fn render(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        t: RationalTime,
+        inputs: &[Arc<Frame>],
+    ) -> Result<Arc<Frame>, NodeError> {
+        let a = self.at(t);
+        if a.is_identity() {
+            return Ok(inputs[0].clone());
+        }
+        let f = &inputs[0];
+        let comp = compositor(ctx)?;
+        let fwd = a.affine(f.pixel_aspect.to_f64());
+        Ok(Arc::new(
+            match crate::transform::plan(&fwd, f.data_window, f.width, f.height) {
+                Some(k) => comp.transform(ctx, f, &k)?,
+                None => comp.clear_window(ctx, f, ferrocut_core::PixelRect::new(0, 0, 1, 1)),
+            },
+        ))
     }
 }
 

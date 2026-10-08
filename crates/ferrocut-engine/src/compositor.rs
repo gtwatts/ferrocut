@@ -1,5 +1,5 @@
 //! wgpu compute compositor: input/output transforms, dissolve, over, opacity,
-//! reframe, clear, plus the per-chunk readback staging ring.
+//! reframe, clear, the layer transform, plus the per-chunk readback staging ring.
 //!
 //! Every op records into the worker's batched encoder ([`RenderCtx::encoder`])
 //! and allocates from the shared texture pool; nothing here submits except the
@@ -29,6 +29,18 @@ struct Params {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct TransformParams {
+    m0: [f32; 4],
+    m1: [f32; 4],
+    filt: [f32; 4],
+    src_origin: [i32; 2],
+    dst_origin: [i32; 2],
+    radius: [i32; 2],
+    _pad: [i32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct OutParams {
     src_origin: [i32; 2],
     _pad: [i32; 2],
@@ -41,6 +53,7 @@ pub struct Compositor {
     opacity: wgpu::ComputePipeline,
     clear: wgpu::ComputePipeline,
     output: wgpu::ComputePipeline,
+    transform: wgpu::ComputePipeline,
 }
 
 /// Worker-slot key under which the shared compositor is stored.
@@ -143,6 +156,10 @@ impl Compositor {
                 .into(),
             ),
         });
+        let xf = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("transform.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/transform.wgsl").into()),
+        });
         let mk = |m: &wgpu::ShaderModule, entry: &str| {
             dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
@@ -160,6 +177,7 @@ impl Compositor {
             opacity: mk(&comp, "opacity"),
             clear: mk(&comp, "clear"),
             output: mk(&out, "output_rec709"),
+            transform: mk(&xf, "transform"),
         }
     }
 
@@ -416,6 +434,72 @@ impl Compositor {
         window: PixelRect,
     ) -> Result<Frame, NodeError> {
         self.opacity_into(ctx, a, 1.0, window)
+    }
+
+    /// Resample `a` through a planned layer transform (see [`crate::transform`]).
+    /// The result covers `k.window` with `a`'s display window and pixel aspect.
+    pub fn transform(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        a: &Frame,
+        k: &crate::transform::KernelSetup,
+    ) -> Result<Frame, NodeError> {
+        let win = k.window;
+        let out = Frame::new_gpu_window(
+            ctx.gpu,
+            a.width,
+            a.height,
+            win,
+            a.pixel_aspect,
+            a.color_space.clone(),
+        );
+        let [m0, m1, m2, m3] = k.inverse.m;
+        let [t0, t1] = k.inverse.t;
+        let p = Self::uniform(
+            ctx.gpu,
+            &TransformParams {
+                m0: [m0 as f32, m1 as f32, t0 as f32, 0.0],
+                m1: [m2 as f32, m3 as f32, t1 as f32, 0.0],
+                filt: [
+                    k.filter_scale[0] as f32,
+                    k.filter_scale[1] as f32,
+                    crate::transform::FILTER_B,
+                    crate::transform::FILTER_C,
+                ],
+                src_origin: origin(&a.data_window),
+                dst_origin: origin(&win),
+                radius: k.radius,
+                _pad: [0; 2],
+            },
+        );
+        let res = [
+            (0, Res::Params(&p)),
+            (1, Res::Tex(view(a)?)),
+            (3, Res::Tex(view(&out)?)),
+        ];
+        Self::dispatch(ctx, &self.transform, &res, win.width, win.height);
+        Ok(out)
+    }
+
+    /// Fully transparent frame covering only `window`.
+    pub fn clear_window(&self, ctx: &mut RenderCtx<'_>, like: &Frame, window: PixelRect) -> Frame {
+        let out = Frame::new_gpu_window(
+            ctx.gpu,
+            like.width,
+            like.height,
+            window,
+            like.pixel_aspect,
+            like.color_space.clone(),
+        );
+        let dst = &out.gpu().expect("gpu").view;
+        Self::dispatch(
+            ctx,
+            &self.clear,
+            &[(3, Res::Tex(dst))],
+            window.width,
+            window.height,
+        );
+        out
     }
 
     pub fn clear(&self, ctx: &mut RenderCtx<'_>, w: u32, h: u32) -> Frame {

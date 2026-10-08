@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail, ensure};
 use ferrocut_audio::FadeCurve;
 use ferrocut_core::{Animatable, FrameRate, Rational, RationalTime};
+
+use crate::transform::TransformSpec;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -264,8 +266,12 @@ pub struct Clip {
     #[serde(default)]
     pub source_in: RationalTime,
     pub duration: RationalTime,
+    /// Constant or keyframed (clip-local time), in [0, 1].
     #[serde(default = "one")]
-    pub opacity: Rational,
+    pub opacity: Animatable,
+    /// Animated 2D layer transform (position/scale/rotation/anchor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<TransformSpec>,
     /// Transition from the previous clip on the same track. The previous clip
     /// must overlap this one by at least the transition duration (handles).
     #[serde(default)]
@@ -275,8 +281,8 @@ pub struct Clip {
     pub audio: ClipAudio,
 }
 
-fn one() -> Rational {
-    Rational::ONE
+fn one() -> Animatable {
+    Animatable::constant(Rational::ONE)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -308,7 +314,12 @@ impl Clip {
         self.start + self.duration
     }
     /// Shift clip-local video keyframes (opacity, transform) by `dt`.
-    pub(crate) fn shift_video_keys(&mut self, _dt: Rational) {}
+    pub(crate) fn shift_video_keys(&mut self, dt: Rational) {
+        self.opacity = self.opacity.shifted(dt);
+        if let Some(t) = &self.transform {
+            self.transform = Some(t.shifted(dt));
+        }
+    }
     pub fn audio_region(&self) -> (RationalTime, RationalTime) {
         audio_region(self.start, self.duration, &self.audio)
     }
@@ -378,11 +389,19 @@ impl Timeline {
                     "clip {}: source_in must be >= 0",
                     c.id
                 );
+                c.opacity
+                    .validate()
+                    .map_err(|e| anyhow::anyhow!("clip {}: opacity: {e}", c.id))?;
+                let (lo, hi) = c.opacity.key_range();
                 ensure!(
-                    c.opacity >= Rational::ZERO && c.opacity <= Rational::ONE,
+                    lo >= Rational::ZERO && hi <= Rational::ONE,
                     "clip {}: opacity must be in [0, 1]",
                     c.id
                 );
+                if let Some(t) = &c.transform {
+                    t.validate()
+                        .map_err(|e| anyhow::anyhow!("clip {}: {e}", c.id))?;
+                }
             }
             for pair in sorted.windows(2) {
                 let (a, b) = (pair[0], pair[1]);

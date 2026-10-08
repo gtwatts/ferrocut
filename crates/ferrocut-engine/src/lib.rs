@@ -10,6 +10,7 @@ pub mod media;
 pub mod nodes;
 pub mod render;
 pub mod timeline;
+pub mod transform;
 
 pub use compile::{Compiled, compile};
 pub use render::{RenderOptions, RenderReport, plan, render};

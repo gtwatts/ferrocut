@@ -17,7 +17,29 @@
     {
       "name": "V2",
       "clips": [
-        { "id": "logo", "source": "../media/overlay.mov", "start": "6", "source_in": "0", "duration": "3", "opacity": "1/2" }
+        { "id": "logo", "source": "../media/overlay.mov", "start": "6", "source_in": "0", "duration": "3",
+          "opacity": { "keyframes": [
+            { "t": "0", "v": "0", "interp": "ease_out" },
+            { "t": "1/2", "v": "0.8", "interp": "hold" },
+            { "t": "5/2", "v": "0.8", "interp": "ease_in" },
+            { "t": "3", "v": "0" } ] },
+          "transform": {
+            "anchor": ["960", "540"],
+            "position": [
+              { "keyframes": [
+                { "t": "0", "v": "480", "interp": { "bezier": ["0.2", "0", "0", "1"] } },
+                { "t": "3", "v": "1440" } ] },
+              { "keyframes": [
+                { "t": "0", "v": "270", "interp": "easy_ease" },
+                { "t": "3", "v": "810" } ] } ],
+            "scale": { "keyframes": [
+              { "t": "0", "v": "0.4", "interp": "ease_in_out" },
+              { "t": "3/2", "v": "0.75", "interp": "ease_in_out" },
+              { "t": "3", "v": "0.4" } ] },
+            "rotation": { "keyframes": [
+              { "t": "0", "v": "-12",
+                "interp": { "speed": { "out_speed": "0", "out_influence": "0.6", "in_speed": "0", "in_influence": "0.6" } } },
+              { "t": "3", "v": "12" } ] } } }
       ]
     }
   ],
