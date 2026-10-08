@@ -16,6 +16,8 @@ path = "src/main.rs"
 ferrocut-core.workspace = true
 ferrocut-audio.workspace = true
 ferrocut-colorspace = { path = "../ferrocut-colorspace" }
+# SeePlus's H.264/MP4 delivery (runtime-loaded Cisco OpenH264; never vendored).
+ferrocut-deliver = { path = "../ferrocut-deliver" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 blake3 = "1.8"

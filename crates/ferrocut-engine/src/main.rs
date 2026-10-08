@@ -55,6 +55,27 @@ enum Cmd {
         /// Extra argument for the checker (threshold flags, config file); repeatable.
         #[arg(long = "check-arg", allow_hyphen_values = true)]
         check_args: Vec<String>,
+        /// Also encode a delivery file from the master (after --check passes):
+        /// `mp4` = H.264 + AAC with Cisco's OpenH264, loaded at run time. The codec
+        /// must be enabled first (`ferrocut-deliver openh264 enable`, or pass
+        /// --download-openh264). Writes <output>.mp4 + <output>.deliver.json and a
+        /// `deliver` section in the report; IDRs sit on render chunk boundaries.
+        /// Exits 1 on a permanent delivery error, 75 on a retryable one.
+        #[arg(long, value_name = "FORMAT")]
+        deliver: Option<ferrocut_engine::deliver::DeliverFormat>,
+        /// Delivery file path (default: <output> with the format's extension).
+        #[arg(long, requires = "deliver")]
+        deliver_output: Option<PathBuf>,
+        /// Delivery constant QP (0..=51).
+        #[arg(long, default_value_t = ferrocut_engine::deliver::DEFAULT_QP, requires = "deliver")]
+        deliver_qp: u8,
+        /// Leave audio out of the delivery file.
+        #[arg(long, requires = "deliver")]
+        deliver_no_audio: bool,
+        /// I agree to download Cisco's OpenH264 binary now (shows Cisco's notice and
+        /// records the choice, like `ferrocut-deliver openh264 enable`).
+        #[arg(long, requires = "deliver")]
+        download_openh264: bool,
     },
     /// Perceptual quality check of a render via ferrocut-perceive (eval grader hook).
     /// Prints JSON; exits 0 pass (or skipped: checker not installed), 1 fail, 2 error.
@@ -342,8 +363,14 @@ fn main() -> anyhow::Result<()> {
             cpu,
             check,
             check_args,
+            deliver,
+            deliver_output,
+            deliver_qp,
+            deliver_no_audio,
+            download_openh264,
         } => {
             let started = std::time::Instant::now();
+            let jobs_arg = jobs;
             let tl = Timeline::load(&timeline)?;
             let c = compile(&tl)?;
             // One device for the whole render, from what the graph's nodes declared.
@@ -375,7 +402,7 @@ fn main() -> anyhow::Result<()> {
                 println!("jobs:    {why}");
                 j
             });
-            let r = render(
+            let mut r = render(
                 &tl,
                 &c,
                 &gpu,
@@ -505,6 +532,49 @@ fn main() -> anyhow::Result<()> {
                 let code = o.exit_code_for(false);
                 if code != 0 {
                     std::process::exit(code);
+                }
+            }
+            if let Some(format) = deliver {
+                use ferrocut_engine::deliver::{self as dl, openh264};
+                let mut provider = openh264::Provider::from_env()?;
+                if download_openh264 {
+                    provider.allow_download = true;
+                    provider.on_notice = Some(|n| eprintln!("{n}"));
+                }
+                let req = dl::DeliverRequest {
+                    format,
+                    output: deliver_output,
+                    qp: deliver_qp,
+                    audio: !deliver_no_audio,
+                    // Encoders are CPU-only: -j if given, else all cores (max 12).
+                    jobs: jobs_arg.unwrap_or_else(dl::default_jobs),
+                    ..dl::DeliverRequest::mp4(provider)
+                };
+                match dl::deliver(&r, &req, None) {
+                    Ok((s, _)) => {
+                        println!(
+                            "deliver: {}  {} frames, IDR at {:?}, {} bytes, sha256 {} | {} jobs, {} ms ({})",
+                            s.output.display(),
+                            s.frames,
+                            s.idr_frames,
+                            s.output_bytes,
+                            s.output_sha256,
+                            s.jobs,
+                            s.total_ms,
+                            s.encoder
+                        );
+                        eprintln!("{}", openh264::NOTICE);
+                        r.deliver = Some(s);
+                        std::fs::write(&report_path, serde_json::to_string_pretty(&r)?)
+                            .with_context(|| format!("writing {}", report_path.display()))?;
+                    }
+                    Err(e) => {
+                        eprintln!("ferrocut: delivery failed: {e}");
+                        std::process::exit(match e.kind {
+                            ferrocut_core::ErrorKind::Retryable => 75,
+                            _ => 1,
+                        });
+                    }
                 }
             }
         }

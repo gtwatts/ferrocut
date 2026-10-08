@@ -607,6 +607,7 @@ dependencies = [
  "ferrocut-audio",
  "ferrocut-colorspace",
  "ferrocut-core",
+ "ferrocut-deliver",
  "ffmpeg-next",
  "half",
  "libc",

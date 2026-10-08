@@ -2,7 +2,7 @@
 //! structured diffs, chunk plans, renders and render reports, over stdio.
 //!
 //! Tools: `timeline_get`, `edit_apply`, `diff`, `plan`, `render`,
-//! `report_read`, `quality_check`, `log`, `undo`, `branch`. Every input schema is hand-written
+//! `report_read`, `quality_check`, `log`, `undo`, `branch`, `openh264`. Every input schema is hand-written
 //! JSON Schema ([`schema`]); every result is structured JSON (also sent as
 //! text). Tool failures (bad op, missing file, render error) come back as
 //! `isError` results with `{"error": "..."}` so agents can read and react.
@@ -18,6 +18,13 @@
 //! [`CancelToken`]: the render stops between frames, the chunk being encoded
 //! is discarded (it never reaches the cache) and finished chunks stay cached,
 //! so the next render reuses them. Renders run one at a time per server.
+//!
+//! Delivery: `render` with `deliver: "mp4"` also encodes an H.264/AAC MP4
+//! (SeePlus's ferrocut-deliver, Cisco's OpenH264 loaded at run time) with IDRs
+//! on the render chunk boundaries; progress then has one more step (total =
+//! frames + 4). It only uses a codec the user already enabled and never
+//! downloads one: the `openh264` tool's `enable` action is the one way to
+//! fetch Cisco's binary, and it is never called implicitly.
 
 pub mod root;
 pub mod schema;
@@ -27,6 +34,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, bail};
 use ferrocut_core::{AdapterPreference, CancelToken, GpuContext, SharedGpu};
+use ferrocut_engine::deliver::{self as dl, DeliverFormat, openh264};
 use ferrocut_engine::edit::EditOp;
 use ferrocut_engine::perceive;
 use ferrocut_engine::project::{self, EditOptions, read_timeline, timeline_hash};
@@ -65,6 +73,9 @@ pub struct Ctx {
     pub cancel: CancelToken,
     /// Render progress sink (set when the request carried a progressToken).
     pub progress: Option<ProgressFn>,
+    /// OpenH264 provider for delivery and the `openh264` tool (default:
+    /// [`openh264::Provider::from_env`], the user's cache; tests point it elsewhere).
+    pub openh264: Option<openh264::Provider>,
 }
 
 impl Ctx {
@@ -73,6 +84,14 @@ impl Ctx {
             root,
             cancel: CancelToken::new(),
             progress: None,
+            openh264: None,
+        }
+    }
+
+    fn provider(&self) -> anyhow::Result<openh264::Provider> {
+        match &self.openh264 {
+            Some(p) => Ok(p.clone()),
+            None => Ok(openh264::Provider::from_env()?),
         }
     }
 }
@@ -82,13 +101,21 @@ static RENDER_LOCK: Mutex<()> = Mutex::new(());
 
 /// MCP progress value for a render update: frames, then one step per stage.
 pub fn progress_value(p: &RenderProgress) -> (f64, f64) {
-    let total = p.total_frames as f64 + 3.0;
+    progress_value_with(p, false)
+}
+
+/// [`progress_value`] for a render that also delivers: one more step
+/// (`Deliver` = frames + 3, `Done` = frames + 4).
+pub fn progress_value_with(p: &RenderProgress, deliver: bool) -> (f64, f64) {
+    let extra = if deliver { 1.0 } else { 0.0 };
+    let total = p.total_frames as f64 + 3.0 + extra;
     let v = p.frames_done as f64
         + match p.stage {
             RenderStage::Render => 0.0,
             RenderStage::Audio => 1.0,
             RenderStage::Concat => 2.0,
-            RenderStage::Done => 3.0,
+            RenderStage::Deliver => 3.0,
+            RenderStage::Done => 3.0 + extra,
         };
     (v, total)
 }
@@ -101,6 +128,7 @@ fn progress_message(p: &RenderProgress) -> String {
         ),
         RenderStage::Audio => "mixing audio".into(),
         RenderStage::Concat => "concatenating chunks".into(),
+        RenderStage::Deliver => "encoding the delivery file".into(),
         RenderStage::Done => "done".into(),
     }
 }
@@ -203,6 +231,18 @@ pub fn tools() -> Vec<Tool> {
             schema::branch(),
             rw(true),
         ),
+        Tool::new(
+            "openh264",
+            "Cisco's OpenH264 binary, which render's deliver=mp4 needs. status: whether it is enabled/installed (no network). enable: downloads Cisco's binary from Cisco, verifies it and records the user's consent; call it only when the user explicitly asks to enable H.264 export, never on your own. disable: stop using it (remove=true deletes the cached binary). license: Cisco's binary license. Every result carries Cisco's notice; show it to the user.",
+            obj(schema::openh264()),
+        )
+        .with_title("H.264 codec (Cisco OpenH264)")
+        .with_annotations(
+            ToolAnnotations::new()
+                .read_only(false)
+                .destructive(true)
+                .open_world(true),
+        ),
     ]
 }
 
@@ -261,6 +301,63 @@ struct RenderArgs {
     check: bool,
     #[serde(default)]
     check_args: Vec<String>,
+    deliver: Option<DeliverArg>,
+}
+
+/// `render.deliver`: `"mp4"` or `{format, output, qp, audio, jobs}`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum DeliverArg {
+    Format(DeliverFormat),
+    Options(DeliverOpts),
+}
+
+fn d_mp4() -> DeliverFormat {
+    DeliverFormat::Mp4
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeliverOpts {
+    #[serde(default = "d_mp4")]
+    format: DeliverFormat,
+    output: Option<PathBuf>,
+    qp: Option<u8>,
+    #[serde(default = "d_true")]
+    audio: bool,
+    jobs: Option<usize>,
+}
+
+impl DeliverArg {
+    fn opts(self) -> DeliverOpts {
+        match self {
+            DeliverArg::Format(format) => DeliverOpts {
+                format,
+                output: None,
+                qp: None,
+                audio: true,
+                jobs: None,
+            },
+            DeliverArg::Options(o) => o,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum OpenH264Action {
+    Status,
+    Enable,
+    Disable,
+    License,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OpenH264Args {
+    action: OpenH264Action,
+    #[serde(default)]
+    remove: bool,
 }
 
 #[derive(Deserialize)]
@@ -455,6 +552,7 @@ pub fn summarize(report: &Value) -> Value {
         "oom_backoffs": report["oom_backoffs"],
         "min_jobs_in_flight": report["min_jobs_in_flight"],
         "loudness": audio.get("output").cloned().unwrap_or(Value::Null),
+        "deliver": report.get("deliver").cloned().unwrap_or(Value::Null),
     })
 }
 
@@ -467,6 +565,32 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
     let output = cx.root.check(&a.output)?;
     let cache_dir = cx.root.check_opt(a.cache_dir)?;
     let report = cx.root.check_opt(a.report)?;
+    let deliver = match a.deliver {
+        Some(d) => {
+            let mut o = d.opts();
+            o.output = cx.root.check_opt(o.output)?;
+            if o.qp.is_some_and(|q| q > 51) {
+                bail!("deliver.qp must be 0..=51");
+            }
+            if o.jobs.is_some_and(|j| j == 0 || j > 32) {
+                bail!("deliver.jobs must be 1..=32");
+            }
+            Some(o)
+        }
+        None => None,
+    };
+    // With delivery, the render's own Done isn't the end: hold it back.
+    let progress = match (&cx.progress, deliver.is_some()) {
+        (Some(f), true) => {
+            let f = f.clone();
+            Some(Arc::new(move |p: &RenderProgress| {
+                if p.stage != RenderStage::Done {
+                    f(p)
+                }
+            }) as ProgressFn)
+        }
+        (p, _) => p.clone(),
+    };
     let _one_at_a_time = RENDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let c = compile(&tl)?;
     let pref = if a.cpu {
@@ -494,30 +618,98 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
             force: a.force,
             jobs,
             cancel: cx.cancel.clone(),
-            progress: cx.progress.clone(),
+            progress,
             deadline: a
                 .timeout_s
                 .map(|s| started + std::time::Duration::from_secs_f64(s)),
             ..RenderOptions::new(cache_dir)
         },
     )?;
+    let mut r = r;
     let report_path = report.unwrap_or_else(|| output.with_extension("report.json"));
     let v = serde_json::to_value(&r)?;
     std::fs::write(&report_path, serde_json::to_string_pretty(&v)?)
         .with_context(|| format!("writing {}", report_path.display()))?;
     let mut s = summarize(&v);
     s["report_path"] = json!(report_path);
+    let mut check_passed = true;
     if a.check {
-        s["check"] = serde_json::to_value(perceive::check(
+        let o = perceive::check(
             &r.output,
             &timeline,
             &perceive::CheckOptions {
                 extra_args: a.check_args,
                 ..Default::default()
             },
-        ))?;
+        );
+        check_passed = o.exit_code_for(false) == 0;
+        s["check"] = serde_json::to_value(o)?;
+    }
+    if let Some(d) = deliver {
+        let emit = |stage: RenderStage| {
+            if let Some(f) = &cx.progress {
+                f(&RenderProgress {
+                    stage,
+                    chunks_done: r.chunks.len(),
+                    total_chunks: r.chunks.len(),
+                    frames_done: r.total_frames,
+                    total_frames: r.total_frames,
+                    reused_chunks: r
+                        .chunks
+                        .iter()
+                        .filter(|c| c.status == ferrocut_engine::render::ChunkStatus::Reused)
+                        .count(),
+                })
+            }
+        };
+        if !check_passed {
+            s["deliver"] = json!({ "skipped": "the quality check did not pass" });
+        } else {
+            emit(RenderStage::Deliver);
+            let req = dl::DeliverRequest {
+                format: d.format,
+                output: d.output,
+                qp: d.qp.unwrap_or(dl::DEFAULT_QP),
+                audio: d.audio,
+                jobs: d.jobs.unwrap_or(jobs),
+                openh264: cx.provider()?,
+            };
+            let (summary, _) = dl::deliver(&r, &req, Some(&cx.cancel)).map_err(|e| {
+                anyhow::anyhow!(
+                    "rendered {} (report {}), but delivery failed: {e}",
+                    r.output.display(),
+                    report_path.display()
+                )
+            })?;
+            let mut dv = serde_json::to_value(&summary)?;
+            dv["notice"] = json!(openh264::NOTICE);
+            r.deliver = Some(summary);
+            std::fs::write(&report_path, serde_json::to_string_pretty(&r)?)
+                .with_context(|| format!("writing {}", report_path.display()))?;
+            s["deliver"] = dv;
+        }
+        emit(RenderStage::Done);
     }
     Ok(s)
+}
+
+fn openh264_tool(cx: &Ctx, a: OpenH264Args) -> anyhow::Result<Value> {
+    let p = cx.provider()?;
+    let mut out = match a.action {
+        OpenH264Action::Status => json!({ "status": p.status() }),
+        OpenH264Action::Enable => {
+            let lib = p.enable()?;
+            json!({ "enabled": true, "library": lib, "status": p.status() })
+        }
+        OpenH264Action::Disable => {
+            p.disable(a.remove)?;
+            json!({ "enabled": false, "removed": a.remove, "status": p.status() })
+        }
+        OpenH264Action::License => json!({ "license": openh264::BINARY_LICENSE }),
+    };
+    out["notice"] = json!(openh264::NOTICE);
+    out["license_url"] = json!(openh264::LICENSE_URL);
+    Ok(out)
 }
 
 fn report_read(cx: &Ctx, a: ReportArgs) -> anyhow::Result<Value> {
@@ -611,6 +803,7 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
             Ok(serde_json::to_value(project::undo(&t, a.force)?)?)
         }),
         "branch" => args(name, a).and_then(|a| branch_tool(cx, a)),
+        "openh264" => args(name, a).and_then(|a| openh264_tool(cx, a)),
         _ => return None,
     })
 }
@@ -671,6 +864,7 @@ impl ServerHandler for FerrocutServer {
         // Render progress -> notifications/progress (strictly increasing).
         let forwarder = match token {
             Some(token) if name == "render" => {
+                let delivering = a.get("deliver").is_some_and(|d| !d.is_null());
                 let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<RenderProgress>();
                 cx.progress = Some(Arc::new(move |p: &RenderProgress| {
                     let _ = tx.send(*p);
@@ -679,7 +873,7 @@ impl ServerHandler for FerrocutServer {
                 Some(tokio::spawn(async move {
                     let mut last = -1.0;
                     while let Some(p) = rx.recv().await {
-                        let (v, total) = progress_value(&p);
+                        let (v, total) = progress_value_with(&p, delivering);
                         if v <= last {
                             continue;
                         }

@@ -193,10 +193,11 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 | `edit_apply` | Apply edit ops atomically (`dry_run`, `plan` for chunks that would re-render, `output`, `return_timeline`); journaled |
 | `diff` | The structured diff above, with render impact |
 | `plan` | Chunk plan (index, frame range, content key) without decoding or GPU |
-| `render` | Incremental render (`jobs` (default 4, lowered to fit free VRAM), `force`, `cache_dir`, `cpu`, `timeout_s`); returns `report_path`, hashes, chunk-reuse stats and `oom_backoffs` |
+| `render` | Incremental render (`jobs` (default 4, lowered to fit free VRAM), `force`, `cache_dir`, `cpu`, `timeout_s`, `deliver: "mp4"` or `{format, output, qp, audio, jobs}`); returns `report_path`, hashes, chunk-reuse stats, `oom_backoffs` and, with `deliver`, a `deliver` section |
 | `report_read` | Summary (or `full`) of a render report |
 | `quality_check` | Perceptual quality check of a render via `ferrocut-perceive` (below): `status`, `problems`, `warnings`; `render` also takes `check: true` |
 | `log`, `undo`, `branch` | Journal log, undo, and branch `create`/`checkout`/`merge` |
+| `openh264` | Cisco's OpenH264 binary for delivery: `status`, `enable` (downloads it; only on the user's explicit request), `disable` (`remove` deletes it), `license`; every result carries Cisco's notice |
 
 - **Schemas** are hand-written JSON Schema (`crates/ferrocut-mcp/src/schema.rs`), not derived:
   - each edit op is a `oneOf` branch with `op` as a `const`, its required fields, `additionalProperties: false`
@@ -225,7 +226,8 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
     between check and use, or a hard link, is not caught.
 - **Progress.** A `render` call whose request carries `_meta.progressToken` gets `notifications/progress`:
   - `progress` is the number of frames done, starting at the frames reused from the cache, then one step each
-    for audio, concat and done; `total` is the frame count + 3;
+    for audio, concat and done; `total` is the frame count + 3 (+ 4 with `deliver`, which adds a `deliver`
+    step before done);
   - `message` reads like `rendering: 7/48 chunks (2 reused), 84/576 frames`;
   - updates come per finished chunk, strictly increasing, and all are sent before the result.
 - **Cancellation.** `notifications/cancelled` for an in-flight call fires the engine's `CancelToken`:
@@ -271,7 +273,7 @@ cwd = "/home/gordontwatts/Documents/projects/ferrocut"
 startup_timeout_sec = 20
 # Renders block until done; allow long ones (Codex's default is 60 s).
 tool_timeout_sec = 1800
-# Prompt before tools not marked read-only (edit_apply, render, undo, branch).
+# Prompt before tools not marked read-only (edit_apply, render, undo, branch, openh264).
 default_tools_approval_mode = "writes"
 ```
 
@@ -317,6 +319,32 @@ binary over stdio.
   - The MCP tools: `quality_check`, and `render` with `check: true`.
 - **Tests:** `crates/ferrocut-engine/tests/perceive.rs` and the MCP stdio test use a fake checker that prints the
   real checker's output shapes. SeePlus's crate tests the real checker through `interpret()`.
+
+### Delivery (`render --deliver mp4`)
+
+`ferrocut_engine::deliver` wraps SeePlus's `ferrocut-deliver`: H.264 (Cisco's OpenH264, loaded at run time,
+constant QP, BT.709 limited range) + AAC in a faststart MP4, encoded from the finished FFV1 master.
+
+- **IDRs on render chunk boundaries:** the delivery chunk plan is the render report's chunk starts, so every
+  delivery chunk starts at a master keyframe and could later be cached per render chunk.
+- **Deterministic:** the MP4 is bit-identical for any number of encoder jobs. Encoders are CPU-only; `-j` is
+  reused if given, else min(cores, 12).
+- **The codec is never fetched implicitly.** It is used only if the user already enabled it (or
+  `FERROCUT_OPENH264_LIB` points at a copy). Otherwise delivery fails `Permanent` with instructions. Fetching
+  Cisco's binary takes an explicit act: `ferrocut-deliver openh264 enable`, `ferrocut render ...
+  --download-openh264`, or the MCP `openh264` tool's `enable`. The library is never vendored or shipped; only
+  its license files are (`crates/ferrocut-deliver/OPENH264_BINARY_LICENSE.txt`).
+- **CLI:** `ferrocut render tl.json -o out.mkv --deliver mp4 [--deliver-qp 20] [--deliver-output F]
+  [--deliver-no-audio] [--download-openh264]` writes `out.mp4`, `out.deliver.json` and a `deliver` section in
+  `out.report.json` (`output`, `output_sha256`, `output_bytes`, `frames`, `idr_frames`, `qp`, `jobs`, `encoder`,
+  timings). With `--check`, delivery runs only if the check passes. Exit 1 on a permanent delivery error, 75 on
+  a retryable one (retried once first). The master is always kept.
+- **MCP:** `render` with `deliver`; the result's `deliver` carries Cisco's notice. Cancelling stops before the
+  encode starts; a delivery cancelled mid-encode removes its MP4 (the encoder has no cancel hook yet).
+- **Tests:** `crates/ferrocut-engine/tests/deliver.rs` and `crates/ferrocut-mcp/tests/deliver.rs`. Without the
+  codec they check the clean refusal (nothing downloaded or recorded), cancellation and the sandbox; the encode
+  tests (bit-identical across jobs, IDRs at the render chunk starts via ffprobe, progress order) run only with a
+  codec the user provided and otherwise print `SKIP`. Nothing in the tests or CI can download OpenH264.
 
 ### Keyframes and the layer transform
 

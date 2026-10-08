@@ -292,9 +292,45 @@ pub fn render() -> Value {
             "cpu": { "type": "boolean", "default": false, "description": "render on the software (CPU) Vulkan adapter (Mesa lavapipe)" },
             "timeout_s": { "type": "number", "exclusiveMinimum": 0, "description": "cancel the render after this many seconds" },
             "check": { "type": "boolean", "default": false, "description": "run the perceptual quality check (ferrocut-perceive) on the result; skipped if the checker isn't installed" },
-            "check_args": check_args()
+            "check_args": check_args(),
+            "deliver": deliver()
         }),
         &["timeline", "output"],
+    )
+}
+
+/// `render.deliver`: "mp4" or an object with options.
+fn deliver() -> Value {
+    json!({
+        "description": "after rendering (and after check passes, if check=true), also encode a delivery file from the master: \"mp4\" = H.264 + AAC via Cisco's OpenH264. Uses the codec only if the user already enabled it (see the openh264 tool); never downloads it. IDRs land on render chunk boundaries; the summary gains a `deliver` section and <output>.deliver.json is written.",
+        "oneOf": [
+            { "type": "string", "enum": ["mp4"] },
+            {
+                "type": "object",
+                "properties": {
+                    "format": { "type": "string", "enum": ["mp4"], "default": "mp4" },
+                    "output": path("delivery file (default: the render output with a .mp4 extension)"),
+                    "qp": { "type": "integer", "minimum": 0, "maximum": 51, "default": 20, "description": "constant QP (lower = better quality, bigger file)" },
+                    "audio": { "type": "boolean", "default": true, "description": "include the master's audio as AAC" },
+                    "jobs": { "type": "integer", "minimum": 1, "maximum": 32, "description": "parallel CPU encoders (default: the render's jobs)" }
+                },
+                "additionalProperties": false
+            }
+        ]
+    })
+}
+
+pub fn openh264() -> Value {
+    object(
+        json!({
+            "action": {
+                "type": "string",
+                "enum": ["status", "enable", "disable", "license"],
+                "description": "status: installed/enabled state (no network). enable: DOWNLOADS Cisco's OpenH264 binary from Cisco and records the user's consent; call only when the user explicitly asks to enable H.264 export. disable: stop using it (remove=true also deletes the cached binary). license: Cisco's binary license text."
+            },
+            "remove": { "type": "boolean", "default": false, "description": "with disable: also delete the cached library" }
+        }),
+        &["action"],
     )
 }
 

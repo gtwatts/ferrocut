@@ -101,7 +101,8 @@ fn every_tool_schema_is_a_strict_object() {
             "quality_check",
             "log",
             "undo",
-            "branch"
+            "branch",
+            "openh264"
         ]
     );
     for t in &tools {

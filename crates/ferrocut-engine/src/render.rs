@@ -154,6 +154,9 @@ pub struct RenderReport {
     pub video_blake3: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioReport>,
+    /// The delivery file made from this master (`render --deliver`), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deliver: Option<crate::deliver::DeliverSummary>,
 }
 
 /// Output frames in flight per chunk worker in the readback ring.
@@ -167,6 +170,9 @@ pub enum RenderStage {
     Render,
     Audio,
     Concat,
+    /// Encoding the delivery file (emitted by callers that deliver, after the
+    /// render's own stages; the render itself never emits it).
+    Deliver,
     Done,
 }
 
@@ -943,6 +949,7 @@ pub fn render(
             }
             _ => None,
         },
+        deliver: None,
     })
 }
 
