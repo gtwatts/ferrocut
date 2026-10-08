@@ -1,38 +1,52 @@
 //! Eval grader hook: run SeePlus's perceptual quality check on a render.
 //!
-//! Interface (owned by `ferrocut-perceive`, SeePlus):
+//! Interface (owned by `ferrocut-perceive`, SeePlus; JSON Schema in
+//! `crates/ferrocut-perceive/schema/perceive-check.schema.json`):
 //! `ferrocut-perceive check <render> --timeline <timeline> --json [threshold flags...]`
-//! exits 0 (pass), 1 (fail) or 2 (error) and prints a JSON report: a schema
-//! version, an overall pass flag, and one entry per problem with a fixed
-//! reason code ([`Reason`]), a timecode range in rational time, the measured
-//! value and the threshold. Defaults: loudness -14 LUFS ±1 LU, true peak
-//! ≤ -1 dBTP; other thresholds via flags or a config file (passed through
-//! verbatim in `extra_args`).
+//! exits 0 (pass), 1 (fail) or 2 (error) and prints a `ferrocut.perceive.check/1`
+//! report:
+//!
+//! ```json
+//! {"schema_version": "ferrocut.perceive.check/1", "pass": false,
+//!  "problems": [{"reason": "true_peak_over", "range": ["1", "25/24"],
+//!                "measured": -0.4, "threshold": -1.0, "unit": "dBTP", ...}],
+//!  "warnings": [ ...same shape, non-failing... ], ...}
+//! ```
+//!
+//! `problems` holds failures only (`pass == problems.is_empty()`); `warnings`
+//! are non-failing findings and are kept. Every problem has a [`Reason`] code,
+//! a `range` `[start, end)` of RationalTime strings, and `measured` /
+//! `threshold` (number or null). Further fields (severity, unit, tolerance,
+//! timecode, frames, message, ...) are additive and kept verbatim in
+//! [`Problem::extra`]; unknown reason codes are kept as [`Reason::Other`].
+//! Anything else (another schema version, a missing field, a pass flag that
+//! contradicts the problems or the exit code) is reported as an error, never
+//! as a pass. Defaults: loudness -14 LUFS ±1 LU, true peak ≤ -1 dBTP; other
+//! thresholds via flags or a config file (passed through verbatim in
+//! `extra_args`).
 //!
 //! The binary is optional: if it can't be found, [`check`] returns
-//! [`CheckStatus::Skipped`] instead of failing, so graders and renders keep
-//! working before it lands. Lookup order: explicit path, `FERROCUT_PERCEIVE`,
-//! next to the running executable (and its parent dir, for test binaries in
-//! `target/<profile>/deps`), then `PATH`.
-//!
-//! Field names are read tolerantly (`pass`/`passed`/`ok`,
-//! `problems`/`issues`/`findings`, `reason`/`code`, `range: [start, end]` or
-//! `start`/`end`, `measured`/`value`, `threshold`/`limit`) until the schema is
-//! fixed; the raw report is always kept, and an exit code that contradicts
-//! the pass flag is reported as an error.
+//! [`CheckStatus::Skipped`] instead of failing (graders pass `--require` to make
+//! that an error). Lookup order: explicit path, `FERROCUT_PERCEIVE`, next to the
+//! running executable (and its parent dir, for test binaries in
+//! `target/<profile>/deps`), then `PATH`. `cargo build --release` builds it
+//! into `target/release/` next to `ferrocut`.
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use ferrocut_core::RationalTime;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 pub const BINARY: &str = "ferrocut-perceive";
 pub const ENV: &str = "FERROCUT_PERCEIVE";
+/// The check report schema this engine reads.
+pub const SCHEMA_VERSION: &str = "ferrocut.perceive.check/1";
 
-/// Fixed problem reason codes; anything else is kept as `Other`.
+/// Problem reason codes; codes added later are kept as `Other`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
@@ -43,6 +57,10 @@ pub enum Reason {
     Flash,
     LoudnessOffTarget,
     TruePeakOver,
+    /// The timeline has audio but the render has none (or vice versa).
+    MissingAudio,
+    /// The master's audio doesn't match the render report's audio hash.
+    AudioJoinMismatch,
     #[serde(untagged)]
     Other(String),
 }
@@ -50,15 +68,16 @@ pub enum Reason {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Problem {
     pub reason: Reason,
-    /// `[start, end)` as the checker wrote it (rational time strings).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub start: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub end: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub measured: Option<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub threshold: Option<Value>,
+    /// `[start, end)` in timeline seconds, RationalTime strings (`"1"`, `"25/24"`).
+    pub range: [String; 2],
+    /// Measured value (in `extra["unit"]`), null when there is none.
+    pub measured: Option<f64>,
+    /// Threshold (for loudness_off_target: the target; see `extra["tolerance"]`).
+    pub threshold: Option<f64>,
+    /// Additive fields as the checker wrote them (severity, unit, tolerance,
+    /// timecode, frames, message, ...).
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -80,8 +99,11 @@ pub struct CheckOutcome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema_version: Option<Value>,
+    pub schema_version: Option<String>,
+    /// Failures (empty on pass).
     pub problems: Vec<Problem>,
+    /// Non-failing findings (also on pass).
+    pub warnings: Vec<Problem>,
     /// Why it was skipped or errored.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -99,6 +121,7 @@ impl CheckOutcome {
             exit_code: None,
             schema_version: None,
             problems: vec![],
+            warnings: vec![],
             message: Some(message.into()),
             report: None,
             elapsed_ms: 0,
@@ -119,6 +142,16 @@ impl CheckOutcome {
                 }
             }
         }
+    }
+
+    /// The reason codes of `problems` (or `warnings`), e.g. for a one-line summary.
+    pub fn codes(list: &[Problem]) -> Vec<String> {
+        list.iter()
+            .map(|p| match serde_json::to_value(&p.reason) {
+                Ok(Value::String(s)) => s,
+                _ => String::new(),
+            })
+            .collect()
     }
 }
 
@@ -164,36 +197,73 @@ pub fn find_binary(explicit: Option<&Path>) -> Option<PathBuf> {
     })
 }
 
-fn first<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a Value> {
-    keys.iter().find_map(|k| v.get(*k)).filter(|x| !x.is_null())
+fn number_or_null(p: &Map<String, Value>, key: &str) -> Result<Option<f64>, String> {
+    match p.get(key) {
+        Some(Value::Null) => Ok(None),
+        Some(Value::Number(n)) => Ok(n.as_f64()),
+        Some(v) => Err(format!(
+            "problem field {key} must be a number or null, got {v}"
+        )),
+        None => Err(format!("problem without {key}")),
+    }
 }
 
 fn parse_problem(p: &Value) -> Result<Problem, String> {
-    let reason = first(p, &["reason", "code", "kind"])
-        .ok_or_else(|| format!("problem without a reason code: {p}"))?;
-    let reason: Reason =
-        serde_json::from_value(reason.clone()).map_err(|e| format!("bad reason {reason}: {e}"))?;
-    let (mut start, mut end) = (
-        first(p, &["start", "from"]).cloned(),
-        first(p, &["end", "to"]).cloned(),
+    let Value::Object(p) = p else {
+        return Err(format!("problem is not an object: {p}"));
+    };
+    let mut extra = p.clone();
+    let reason = match extra.remove("reason") {
+        Some(r @ Value::String(_)) => serde_json::from_value::<Reason>(r.clone())
+            .map_err(|e| format!("bad reason {r}: {e}"))?,
+        Some(r) => return Err(format!("reason must be a string, got {r}")),
+        None => {
+            return Err(format!(
+                "problem without a reason: {}",
+                Value::Object(p.clone())
+            ));
+        }
+    };
+    let range = match extra.remove("range") {
+        Some(Value::Array(r)) if r.len() == 2 => {
+            let mut out: [String; 2] = Default::default();
+            for (o, v) in out.iter_mut().zip(&r) {
+                let Value::String(s) = v else {
+                    return Err(format!(
+                        "range bounds must be RationalTime strings, got {v}"
+                    ));
+                };
+                serde_json::from_value::<RationalTime>(v.clone())
+                    .map_err(|e| format!("bad range bound {v}: {e}"))?;
+                *o = s.clone();
+            }
+            out
+        }
+        Some(r) => return Err(format!("range must be [start, end], got {r}")),
+        None => return Err("problem without a range".into()),
+    };
+    let (measured, threshold) = (
+        number_or_null(p, "measured")?,
+        number_or_null(p, "threshold")?,
     );
-    if let Some(Value::Array(r)) = first(p, &["range", "timecode", "span", "time"])
-        && r.len() == 2
-    {
-        start = start.or(Some(r[0].clone()));
-        end = end.or(Some(r[1].clone()));
-    }
-    if let Some(r @ Value::Object(_)) = first(p, &["range", "timecode", "span", "time"]) {
-        start = start.or(first(r, &["start", "from"]).cloned());
-        end = end.or(first(r, &["end", "to"]).cloned());
-    }
+    extra.remove("measured");
+    extra.remove("threshold");
     Ok(Problem {
         reason,
-        start,
-        end,
-        measured: first(p, &["measured", "value", "actual"]).cloned(),
-        threshold: first(p, &["threshold", "limit", "expected"]).cloned(),
+        range,
+        measured,
+        threshold,
+        extra,
     })
+}
+
+fn parse_list(r: &Value, key: &str, required: bool) -> Result<Vec<Problem>, String> {
+    match r.get(key) {
+        Some(Value::Array(a)) => a.iter().map(parse_problem).collect(),
+        None if !required => Ok(vec![]),
+        Some(v) => Err(format!("{key} must be an array, got {v}")),
+        None => Err(format!("report has no {key} array")),
+    }
 }
 
 /// Interpret the checker's exit code + stdout.
@@ -213,30 +283,51 @@ pub fn interpret(exit: Option<i32>, stdout: &str, stderr: &str) -> CheckOutcome 
     };
     let report: Option<Value> = serde_json::from_str(stdout.trim()).ok();
     o.report = report.clone();
+    o.schema_version = report
+        .as_ref()
+        .and_then(|r| r.get("schema_version"))
+        .and_then(Value::as_str)
+        .map(String::from);
     match exit {
         Some(0) | Some(1) => {}
-        Some(2) => return err(o, "checker reported an error (exit 2)".into()),
+        Some(2) => {
+            let why = report
+                .as_ref()
+                .and_then(|r| r.get("error"))
+                .and_then(Value::as_str)
+                .map(|e| format!(": {e}"))
+                .unwrap_or_default();
+            return err(o, format!("checker reported an error (exit 2){why}"));
+        }
         Some(c) => return err(o, format!("unexpected exit code {c}")),
         None => return err(o, "checker was killed by a signal".into()),
     }
     let Some(r) = report else {
         return err(o, "checker printed no valid JSON".into());
     };
-    o.schema_version = first(&r, &["schema_version", "schema", "version"]).cloned();
-    let Some(pass) = first(&r, &["pass", "passed", "ok"]).and_then(Value::as_bool) else {
+    if o.schema_version.as_deref() != Some(SCHEMA_VERSION) {
+        return err(
+            o,
+            format!(
+                "unsupported check report schema_version {} (this engine reads {SCHEMA_VERSION})",
+                r.get("schema_version").unwrap_or(&Value::Null)
+            ),
+        );
+    }
+    let Some(pass) = r.get("pass").and_then(Value::as_bool) else {
         return err(o, "report has no boolean pass flag".into());
     };
-    let problems = first(&r, &["problems", "issues", "findings"])
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    match problems
-        .iter()
-        .map(parse_problem)
-        .collect::<Result<Vec<_>, _>>()
-    {
+    match parse_list(&r, "problems", true) {
         Ok(p) => o.problems = p,
         Err(e) => return err(o, e),
+    }
+    match parse_list(&r, "warnings", false) {
+        Ok(w) => o.warnings = w,
+        Err(e) => return err(o, e),
+    }
+    if pass != o.problems.is_empty() {
+        let n = o.problems.len();
+        return err(o, format!("pass flag {pass} contradicts {n} problem(s)"));
     }
     if pass != (exit == Some(0)) {
         return err(

@@ -178,7 +178,7 @@ pub fn tools() -> Vec<Tool> {
         tool(
             "quality_check",
             "Quality check a render",
-            "Perceptual quality check of a render (eval grader hook, runs ferrocut-perceive): status pass/fail/error/skipped (skipped = checker not installed, not a verdict), and one problem per issue with a reason code (missed_cut, extra_cut, black_frames, frozen_frames, flash, loudness_off_target, true_peak_over), rational time range, measured value and threshold, plus the raw report.",
+            "Perceptual quality check of a render (eval grader hook, runs ferrocut-perceive): status pass/fail/error/skipped (skipped = checker not installed, not a verdict); problems (failures) and warnings (non-failing findings), each with a reason code (missed_cut, extra_cut, black_frames, frozen_frames, flash, loudness_off_target, true_peak_over, missing_audio, audio_join_mismatch), range [start, end) as rational-time strings, measured value and threshold, plus unit/message/timecode; and the raw ferrocut.perceive.check/1 report.",
             schema::quality_check(),
             ro().idempotent(true),
         ),

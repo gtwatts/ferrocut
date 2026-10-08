@@ -230,7 +230,7 @@ async fn stdio_server_end_to_end() {
         std::fs::write(
             &tmp,
             "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/perceive-args.txt\"\n\
-             echo '{\"schema_version\":1,\"pass\":false,\"problems\":[{\"reason\":\"true_peak_over\",\"range\":[\"2\",\"5/2\"],\"measured\":\"-1.4\",\"threshold\":\"-2\"}]}'\nexit 1\n",
+             echo '{\"schema_version\":\"ferrocut.perceive.check/1\",\"pass\":false,\"problems\":[{\"reason\":\"true_peak_over\",\"range\":[\"2\",\"5/2\"],\"measured\":-1.4,\"threshold\":-2.0,\"unit\":\"dBTP\"}],\"warnings\":[{\"reason\":\"frozen_frames\",\"range\":[\"0\",\"1\"],\"measured\":1.0,\"threshold\":2.0}]}'\nexit 1\n",
         )
         .unwrap();
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -240,7 +240,9 @@ async fn stdio_server_end_to_end() {
     assert!(!err, "{v}");
     assert_eq!(v["status"], "fail", "{v}");
     assert_eq!(v["problems"][0]["reason"], "true_peak_over");
-    assert_eq!(v["problems"][0]["start"], "2");
+    assert_eq!(v["problems"][0]["range"][0], "2");
+    assert_eq!(v["problems"][0]["unit"], "dBTP");
+    assert_eq!(v["warnings"][0]["reason"], "frozen_frames");
     let argv = std::fs::read_to_string(d.join("perceive-args.txt")).unwrap();
     assert!(
         argv.trim_end().ends_with("--json --true-peak-max -2"),

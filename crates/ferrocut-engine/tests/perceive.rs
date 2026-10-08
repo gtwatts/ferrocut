@@ -1,6 +1,7 @@
-//! Eval grader hook against a fake `ferrocut-perceive` (the real one is
-//! SeePlus's and may not be installed): argument passing, exit-code/JSON
-//! interpretation, graceful skip, timeouts, and the `ferrocut check` CLI.
+//! Eval grader hook against a fake `ferrocut-perceive` speaking the exact
+//! `ferrocut.perceive.check/1` format (shapes copied from the real checker's
+//! output): argument passing, strict parsing, warnings, graceful skip,
+//! timeouts, and the `ferrocut check` CLI.
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
@@ -16,11 +17,22 @@ fn fake(dir: &Path, name: &str, body: &str) -> PathBuf {
     p
 }
 
-const FAIL_JSON: &str = r#"{"schema_version":1,"pass":false,"problems":[
- {"reason":"loudness_off_target","range":["0","12"],"measured":"-17.2","threshold":"-14"},
- {"reason":"true_peak_over","start":"5/2","end":"3","measured":-0.3,"threshold":-1},
- {"code":"black_frames","range":{"start":"1001/24000","end":"1/12"},"value":2,"limit":0},
- {"reason":"something_new","range":["1","2"]}]}"#;
+const FAIL_JSON: &str = r#"{"schema_version":"ferrocut.perceive.check/1","pass":false,
+ "perceive_schema_version":"ferrocut.perceive/1","thresholds":{},"measured":{},
+ "problems":[
+  {"reason":"loudness_off_target","range":["0","12"],"measured":-17.2,"threshold":-14.0,
+   "tolerance":1.0,"unit":"LUFS","severity":"error","frames":[0,288],
+   "timecode":["00:00:00:00","00:00:12:00"],"message":"integrated loudness -17.2 LUFS"},
+  {"reason":"true_peak_over","range":["5/2","3"],"measured":-0.3,"threshold":-1.0},
+  {"reason":"black_frames","range":["1001/24000","1/12"],"measured":2,"threshold":0},
+  {"reason":"missing_audio","range":["0","12"],"measured":null,"threshold":null},
+  {"reason":"audio_join_mismatch","range":["1","25/24"],"measured":null,"threshold":null},
+  {"reason":"something_new","range":["1","2"],"measured":null,"threshold":null}],
+ "warnings":[
+  {"reason":"frozen_frames","range":["4","5"],"measured":1.0,"threshold":2.0,"severity":"warning"}]}"#;
+
+const PASS_JSON: &str = r#"{"schema_version":"ferrocut.perceive.check/1","pass":true,"problems":[],
+ "warnings":[{"reason":"flash","range":["2","49/24"],"measured":1,"threshold":0,"severity":"warning"}]}"#;
 
 fn opts(bin: PathBuf) -> CheckOptions {
     CheckOptions {
@@ -56,7 +68,7 @@ fn pass_passes_arguments_through() {
         "pass",
         &format!(
             r#"for a in "$@"; do echo "$a"; done > {}
-echo '{{"schema_version":1,"pass":true,"problems":[]}}'"#,
+echo '{{"schema_version":"ferrocut.perceive.check/1","pass":true,"problems":[],"warnings":[]}}'"#,
             args.display()
         ),
     );
@@ -70,7 +82,10 @@ echo '{{"schema_version":1,"pass":true,"problems":[]}}'"#,
     );
     assert_eq!(o.status, CheckStatus::Pass, "{o:?}");
     assert_eq!(o.exit_code, Some(0));
-    assert_eq!(o.schema_version, Some(serde_json::json!(1)));
+    assert_eq!(
+        o.schema_version.as_deref(),
+        Some("ferrocut.perceive.check/1")
+    );
     assert!(o.problems.is_empty());
     let got = std::fs::read_to_string(&args).unwrap();
     assert_eq!(
@@ -98,32 +113,64 @@ fn fail_lists_problems_with_reason_range_measured_threshold() {
     let o = check(Path::new("r.mkv"), Path::new("t.json"), &opts(bin));
     assert_eq!(o.status, CheckStatus::Fail, "{o:?}");
     assert_eq!(o.exit_code_for(false), 1);
-    assert_eq!(o.problems.len(), 4);
+    assert_eq!(o.problems.len(), 6);
     let p = &o.problems[0];
     assert_eq!(p.reason, Reason::LoudnessOffTarget);
-    assert_eq!(
-        (p.start.clone().unwrap(), p.end.clone().unwrap()),
-        ("0".into(), "12".into())
-    );
-    assert_eq!(p.measured, Some("-17.2".into()));
+    assert_eq!(p.range, ["0".to_string(), "12".to_string()]);
+    assert_eq!((p.measured, p.threshold), (Some(-17.2), Some(-14.0)));
+    assert_eq!(p.extra["unit"], "LUFS");
+    assert_eq!(p.extra["tolerance"], 1.0);
+    assert_eq!(p.extra["timecode"][1], "00:00:12:00");
     assert_eq!(o.problems[1].reason, Reason::TruePeakOver);
-    assert_eq!(o.problems[1].start, Some("5/2".into()));
+    assert_eq!(o.problems[1].range[0], "5/2");
     assert_eq!(o.problems[2].reason, Reason::BlackFrames);
-    assert_eq!(o.problems[2].start, Some("1001/24000".into()));
-    assert_eq!(o.problems[2].threshold, Some(serde_json::json!(0)));
-    assert_eq!(o.problems[3].reason, Reason::Other("something_new".into()));
+    assert_eq!(o.problems[2].range[0], "1001/24000");
+    assert_eq!(o.problems[2].threshold, Some(0.0));
+    assert_eq!(o.problems[3].reason, Reason::MissingAudio);
+    assert_eq!(o.problems[3].measured, None);
+    assert_eq!(o.problems[4].reason, Reason::AudioJoinMismatch);
+    assert_eq!(o.problems[4].range[1], "25/24");
+    assert_eq!(o.problems[5].reason, Reason::Other("something_new".into()));
+    assert_eq!(o.warnings.len(), 1);
+    assert_eq!(o.warnings[0].reason, Reason::FrozenFrames);
     assert!(o.report.is_some());
-    // Codes serialize back to the fixed snake_case strings.
-    assert_eq!(
-        serde_json::to_value(&o.problems[0].reason).unwrap(),
-        "loudness_off_target"
-    );
+    // Serialized back in the same field names, extras flattened, codes snake_case.
+    let v = serde_json::to_value(&o).unwrap();
+    assert_eq!(v["problems"][0]["reason"], "loudness_off_target");
+    assert_eq!(v["problems"][0]["range"], serde_json::json!(["0", "12"]));
+    assert_eq!(v["problems"][0]["severity"], "error");
+    assert_eq!(v["problems"][3]["measured"], serde_json::Value::Null);
+    assert_eq!(v["problems"][5]["reason"], "something_new");
+    assert_eq!(v["warnings"][0]["reason"], "frozen_frames");
+}
+
+#[test]
+fn warnings_are_kept_on_pass() {
+    let o = interpret(Some(0), PASS_JSON, "");
+    assert_eq!(o.status, CheckStatus::Pass, "{o:?}");
+    assert!(o.problems.is_empty());
+    assert_eq!(o.warnings.len(), 1);
+    assert_eq!(o.warnings[0].reason, Reason::Flash);
+    assert_eq!(o.warnings[0].range[1], "49/24");
 }
 
 #[test]
 fn errors_are_errors() {
-    // Exit 2, unknown exit codes, garbage, missing pass flag, contradictions.
+    // Exit 2, unknown exit codes, garbage, wrong schema, missing or loosely
+    // named fields, contradictions: all errors, never a pass.
+    let v = "\"schema_version\":\"ferrocut.perceive.check/1\"";
+    let is_err = |exit: i32, body: String| {
+        let o = interpret(Some(exit), &body, "");
+        assert_eq!(o.status, CheckStatus::Error, "{body}: {o:?}");
+        o.message.unwrap()
+    };
     assert_eq!(interpret(Some(2), "{}", "boom").status, CheckStatus::Error);
+    let o = interpret(
+        Some(2),
+        &format!("{{{v},\"pass\":false,\"problems\":[],\"error\":\"no such file\"}}"),
+        "",
+    );
+    assert!(o.message.unwrap().contains("no such file"));
     assert!(
         interpret(Some(2), "", "boom")
             .message
@@ -139,26 +186,45 @@ fn errors_are_errors() {
         interpret(Some(0), "not json", "").status,
         CheckStatus::Error
     );
-    assert_eq!(
-        interpret(Some(0), r#"{"problems":[]}"#, "").status,
-        CheckStatus::Error
-    );
-    let o = interpret(Some(0), r#"{"pass":false,"problems":[]}"#, "");
-    assert_eq!(o.status, CheckStatus::Error);
-    assert!(o.message.unwrap().contains("contradicts"));
-    assert_eq!(
-        interpret(
-            Some(1),
-            r#"{"pass":false,"problems":[{"range":["0","1"]}]}"#,
-            ""
+    assert!(
+        is_err(
+            0,
+            r#"{"schema_version":1,"pass":true,"problems":[]}"#.into()
         )
-        .status,
-        CheckStatus::Error
+        .contains("schema_version")
     );
-    assert_eq!(
-        interpret(Some(0), r#"{"passed":true}"#, "").status,
-        CheckStatus::Pass
+    assert!(
+        is_err(
+            0,
+            r#"{"schema_version":"ferrocut.perceive.check/2","pass":true,"problems":[]}"#.into()
+        )
+        .contains("schema_version")
     );
+    is_err(0, format!("{{{v},\"problems\":[]}}"));
+    is_err(0, format!("{{{v},\"passed\":true,\"problems\":[]}}"));
+    is_err(0, format!("{{{v},\"pass\":true}}"));
+    is_err(0, format!("{{{v},\"pass\":true,\"issues\":[]}}"));
+    assert!(is_err(0, format!("{{{v},\"pass\":false,\"problems\":[]}}")).contains("contradicts"));
+    let bad = [
+        r#"{"range":["0","1"],"measured":null,"threshold":null}"#,
+        r#"{"code":"flash","range":["0","1"],"measured":null,"threshold":null}"#,
+        r#"{"reason":"flash","start":"0","end":"1","measured":null,"threshold":null}"#,
+        r#"{"reason":"flash","range":{"start":"0","end":"1"},"measured":null,"threshold":null}"#,
+        r#"{"reason":"flash","range":["0"],"measured":null,"threshold":null}"#,
+        r#"{"reason":"flash","range":[0,1],"measured":null,"threshold":null}"#,
+        r#"{"reason":"flash","range":["0","x/y"],"measured":null,"threshold":null}"#,
+        r#"{"reason":"flash","range":["0","1"],"threshold":null}"#,
+        r#"{"reason":"flash","range":["0","1"],"value":1,"measured":null,"limit":0}"#,
+        r#"{"reason":"flash","range":["0","1"],"measured":"1","threshold":0}"#,
+    ];
+    for p in bad {
+        is_err(1, format!("{{{v},\"pass\":false,\"problems\":[{p}]}}"));
+        // The same shapes in warnings are errors too.
+        is_err(
+            0,
+            format!("{{{v},\"pass\":true,\"problems\":[],\"warnings\":[{p}]}}"),
+        );
+    }
 
     let d = tempfile::tempdir().unwrap();
     let slow = fake(d.path(), "slow", "sleep 10");

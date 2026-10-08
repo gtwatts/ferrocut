@@ -613,20 +613,22 @@ fn adapter_pref(cpu: bool) -> AdapterPreference {
 }
 
 fn check_line(o: &ferrocut_engine::perceive::CheckOutcome) -> String {
-    use ferrocut_engine::perceive::CheckStatus;
+    use ferrocut_engine::perceive::{CheckOutcome, CheckStatus};
+    let warnings = if o.warnings.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; {} warning(s): {}",
+            o.warnings.len(),
+            CheckOutcome::codes(&o.warnings).join(", ")
+        )
+    };
     match o.status {
-        CheckStatus::Pass => "quality check: PASS".to_string(),
+        CheckStatus::Pass => format!("quality check: PASS{warnings}"),
         CheckStatus::Fail => format!(
-            "quality check: FAIL ({} problem(s): {})",
+            "quality check: FAIL ({} problem(s): {}{warnings})",
             o.problems.len(),
-            o.problems
-                .iter()
-                .map(|p| serde_json::to_value(&p.reason)
-                    .ok()
-                    .and_then(|v| v.as_str().map(String::from))
-                    .unwrap_or_default())
-                .collect::<Vec<_>>()
-                .join(", ")
+            CheckOutcome::codes(&o.problems).join(", ")
         ),
         CheckStatus::Error => format!(
             "quality check: ERROR ({})",

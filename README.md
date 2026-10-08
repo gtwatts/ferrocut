@@ -195,7 +195,7 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 | `plan` | Chunk plan (index, frame range, content key) without decoding or GPU |
 | `render` | Incremental render (`jobs` (default 4, lowered to fit free VRAM), `force`, `cache_dir`, `cpu`, `timeout_s`); returns `report_path`, hashes, chunk-reuse stats and `oom_backoffs` |
 | `report_read` | Summary (or `full`) of a render report |
-| `quality_check` | Perceptual quality check of a render via `ferrocut-perceive` (below); `render` also takes `check: true` |
+| `quality_check` | Perceptual quality check of a render via `ferrocut-perceive` (below): `status`, `problems`, `warnings`; `render` also takes `check: true` |
 | `log`, `undo`, `branch` | Journal log, undo, and branch `create`/`checkout`/`merge` |
 
 - **Schemas** are hand-written JSON Schema (`crates/ferrocut-mcp/src/schema.rs`), not derived:
@@ -282,23 +282,30 @@ binary over stdio.
 
 ### Quality check hook (`ferrocut check`, eval grader)
 
-`ferrocut_engine::perceive` runs SeePlus's perceptual checker, which isn't landed yet. When the binary is missing,
-the hook **skips gracefully**: the result is `status: "skipped"`, never a failure.
+`ferrocut_engine::perceive` runs SeePlus's perceptual checker, `ferrocut-perceive` (crate `ferrocut-perceive`;
+`cargo build --release` puts it next to `ferrocut`). If the binary is missing, the hook **skips gracefully** with
+`status: "skipped"`, never a failure. Graders pass `--require` so that a missing checker counts as an error.
 
 - **Invocation:** `ferrocut-perceive check <render> --timeline <timeline> --json [extra args]`.
   - Exit codes: 0 pass, 1 fail, 2 error.
-  - The JSON holds a schema version, an overall pass flag, and one problem per issue: a reason code (`missed_cut`,
-    `extra_cut`, `black_frames`, `frozen_frames`, `flash`, `loudness_off_target`, `true_peak_over`), a time range
-    in rational time, the measured value and the threshold.
-  - Checker defaults: -14 LUFS ±1 LU and true peak ≤ -1 dBTP. Other thresholds go through as flags or a config
-    file, passed verbatim.
+  - Output is a `ferrocut.perceive.check/1` report, with its schema in
+    `crates/ferrocut-perceive/schema/perceive-check.schema.json`. The engine reads exactly these fields:
+    - `schema_version`, which must be `ferrocut.perceive.check/1`;
+    - `pass`, where `pass == problems.is_empty()`;
+    - `problems` (failures) and `warnings` (non-failing findings, kept and surfaced). Each entry is
+      `{reason, range: [start, end), measured, threshold}`. `range` holds RationalTime strings such as
+      `["1", "25/24"]`; `measured` and `threshold` are numbers or null.
+  - Reason codes: `missed_cut`, `extra_cut`, `black_frames`, `frozen_frames`, `flash`, `loudness_off_target`,
+    `true_peak_over`, `missing_audio`, `audio_join_mismatch`. Codes added later are kept as-is.
+  - Other fields (`severity`, `unit`, `tolerance`, `timecode`, `frames`, `message`, ...) are additive. They're
+    passed through verbatim in each problem. The raw report is always kept.
+  - Checker defaults: -14 LUFS ±1 LU, true peak ≤ -1 dBTP, and audio required (a render with no audio fails
+    `missing_audio`). Other thresholds go through as flags or a `--config` JSON, passed verbatim.
 - **Binary lookup:** explicit path, then `FERROCUT_PERCEIVE`, then next to `ferrocut`, then `PATH`.
-- **Parsing:** field names are read tolerantly until the schema is final (`pass`/`passed`/`ok`,
-  `problems`/`issues`/`findings`, `range: [start, end]` or `start`/`end`, `measured`/`value`,
-  `threshold`/`limit`). The raw report is always kept.
 - **Errors:** these all give `status: "error"`:
-  - an exit code that contradicts the pass flag;
-  - exit 2, or any other unexpected exit code;
+  - a different `schema_version`, a missing or mistyped field, or a pass flag that contradicts the problems or
+    the exit code;
+  - exit 2 (the checker's `error` message is reported), or any other unexpected exit code;
   - malformed JSON;
   - a timeout, which kills the checker's whole process group.
 - **Entry points:**
@@ -308,7 +315,8 @@ the hook **skips gracefully**: the result is `status: "skipped"`, never a failur
   - `ferrocut render ... --check [--check-arg X]...` also writes `<output>.check.json` and exits 1 or 2 on
     fail or error.
   - The MCP tools: `quality_check`, and `render` with `check: true`.
-- **Tests:** `crates/ferrocut-engine/tests/perceive.rs` and the MCP stdio test use a fake checker.
+- **Tests:** `crates/ferrocut-engine/tests/perceive.rs` and the MCP stdio test use a fake checker that prints the
+  real checker's output shapes. SeePlus's crate tests the real checker through `interpret()`.
 
 ### Keyframes and the layer transform
 
