@@ -553,7 +553,6 @@ dependencies = [
  "ferrocut-core",
  "half",
  "naga",
- "pollster",
  "thiserror",
  "wgpu",
 ]

@@ -12,7 +12,6 @@ ferrocut-core = { workspace = true }
 bytemuck = "1"
 half = { version = "2.7", features = ["bytemuck"] }
 naga = { version = "30", features = ["glsl-in", "wgsl-out"] }
-pollster = "1"
 thiserror = "2"
 wgpu = "30"
 

@@ -90,6 +90,10 @@ pub struct GpuScopes {
 impl GpuScopes {
     pub fn new(gpu: &GpuContext, width: u32, height: u32) -> anyhow::Result<Self> {
         anyhow::ensure!(width > 0 && height > 0, "empty frame");
+        // Core's OutOfMemory + Validation scopes: a failed allocation becomes an
+        // Err (the analyzer then counts on the CPU, same results) instead of
+        // invalid buffers used later.
+        let scope = gpu.error_scope();
         let d = &gpu.device;
         let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ferrocut.perceive.scopes"),
@@ -144,7 +148,7 @@ impl GpuScopes {
             })
         };
         use wgpu::BufferUsages as U;
-        Ok(GpuScopes {
+        let scopes = GpuScopes {
             pipeline,
             layout,
             params: buf("ferrocut.perceive.params", 16, U::UNIFORM | U::COPY_DST),
@@ -165,7 +169,11 @@ impl GpuScopes {
             ),
             width,
             height,
-        })
+        };
+        if let Some(e) = scope.finish() {
+            anyhow::bail!("perceive GPU setup: {e}");
+        }
+        Ok(scopes)
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -181,6 +189,7 @@ impl GpuScopes {
         p[0..4].copy_from_slice(&w.to_le_bytes());
         p[4..8].copy_from_slice(&h.to_le_bytes());
         p[8..12].copy_from_slice(&(full as u32).to_le_bytes());
+        let scope = gpu.error_scope();
         gpu.queue.write_buffer(&self.params, 0, &p);
         gpu.queue.write_buffer(&self.frame, 0, px);
         let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -214,6 +223,9 @@ impl GpuScopes {
         }
         enc.copy_buffer_to_buffer(&self.counts, 0, &self.readback, 0, len);
         let idx = gpu.queue.submit([enc.finish()]);
+        if let Some(e) = scope.finish() {
+            anyhow::bail!("perceive GPU dispatch: {e}");
+        }
         let slice = self.readback.slice(..len);
         let (tx, rx) = mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {

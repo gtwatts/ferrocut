@@ -17,6 +17,22 @@ pub struct GpuTransform {
     _luts: Vec<wgpu::Texture>,
 }
 
+/// Classify an error captured by core's GPU error scope
+/// ([`GpuContext::error_scope`], the mechanism behind
+/// [`ferrocut_core::with_alloc_scope`]). GPU faults (out of memory, device lost)
+/// keep core's `Retryable` kind and [`ferrocut_core::GpuFault`] so the render
+/// scheduler can back off and restart the chunk; any other wgpu error is a
+/// translation/pipeline bug and stays `Permanent`.
+fn scoped_error(e: NodeError, fault_ctx: &str, bug_ctx: &str) -> NodeError {
+    if e.gpu_fault.is_some() {
+        let mut e = e;
+        e.message = format!("ocio: {fault_ctx}: {}", e.message);
+        e
+    } else {
+        NodeError::permanent(format!("ocio: {bug_ctx}: {}", e.message))
+    }
+}
+
 fn lut_format(t: &LutTexture, f32_ok: bool) -> (wgpu::TextureFormat, u32) {
     match (t.channels, f32_ok) {
         (1, true) => (wgpu::TextureFormat::R32Float, 4),
@@ -45,7 +61,9 @@ impl GpuTransform {
     pub fn new(gpu: &GpuContext, shader: &GpuShader, translated: &TranslatedShader) -> Result<Self, NodeError> {
         let device = &gpu.device;
         let f32_ok = device.features().contains(wgpu::Features::FLOAT32_FILTERABLE);
-        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        // OutOfMemory + Validation scopes around every allocation (LUT textures,
+        // pipeline) on this thread.
+        let scope = gpu.error_scope();
 
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ferrocut.ocio"),
@@ -179,14 +197,21 @@ impl GpuTransform {
         });
         let src_sampler = device.create_sampler(&wgpu::SamplerDescriptor { label: Some("ferrocut.ocio.src"), ..Default::default() });
 
-        if let Some(e) = pollster::block_on(scope.pop()) {
-            return Err(NodeError::new(format!("ocio: wgpu rejected translated shader/pipeline: {e}")));
+        if let Some(e) = scope.finish() {
+            return Err(scoped_error(e, "pipeline/LUT setup", "wgpu rejected translated shader/pipeline"));
         }
         Ok(GpuTransform { pipeline, io_layout, lut_group, src_sampler, luts_f32: f32_ok, _luts: luts })
     }
 
     /// Transform `input` (premultiplied, on GPU or CPU) into a new GPU frame tagged `out_space`.
+    ///
+    /// A failed GPU allocation (staging upload, output frame, bind group) is a
+    /// `Retryable` [`NodeError`] with [`ferrocut_core::GpuFault::OutOfMemory`];
+    /// the half-built output is dropped, never returned.
     pub fn run(&self, gpu: &GpuContext, input: &Frame, out_space: ColorSpace) -> Result<Frame, NodeError> {
+        // Opened before any allocation: the upload and the output texture are
+        // the big ones.
+        let scope = gpu.error_scope();
         let staged;
         let src = match input.gpu() {
             Some(g) => g,
@@ -198,7 +223,6 @@ impl GpuTransform {
         // Same geometry as the input (pixel aspect included); the transform is per pixel.
         let out = Frame::new_gpu_window(gpu, input.width, input.height, input.data_window, input.pixel_aspect, out_space);
         let dst = out.gpu().expect("new_gpu");
-        let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let io = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ferrocut.ocio.io"),
             layout: &self.io_layout,
@@ -219,8 +243,8 @@ impl GpuTransform {
             pass.dispatch_workgroups(input.width.div_ceil(WORKGROUP), input.height.div_ceil(WORKGROUP), 1);
         }
         gpu.queue.submit([enc.finish()]);
-        if let Some(e) = pollster::block_on(scope.pop()) {
-            return Err(NodeError::new(format!("ocio: dispatch failed: {e}")));
+        if let Some(e) = scope.finish() {
+            return Err(scoped_error(e, "dispatch", "dispatch failed"));
         }
         Ok(out)
     }

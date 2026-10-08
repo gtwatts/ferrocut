@@ -8,7 +8,7 @@
 use std::sync::{Arc, OnceLock};
 
 use ferrocut_color::{Config, GpuShaderOptions, OcioTransformNode};
-use ferrocut_core::{AdapterPreference, CancelToken, ColorSpace, ErrorKind, CpuImage, Frame, FrameStorage, GpuContext, GpuRequirements, PixelRect, Rational, RenderCtx, RenderNode, RationalTime, WorkerState};
+use ferrocut_core::{AdapterPreference, CancelToken, ColorSpace, ErrorKind, CpuImage, GpuFault, NodeError, Frame, FrameStorage, GpuContext, GpuRequirements, PixelRect, Rational, RenderCtx, RenderNode, RationalTime, WorkerState};
 use half::f16;
 
 fn gpu() -> &'static GpuContext {
@@ -259,4 +259,50 @@ fn pipeline_is_rebuilt_for_a_recreated_device() {
     // Again on the old one: still cached, no rebuild.
     assert!(Arc::ptr_eq(&node.prepare(a).unwrap(), &node.prepare(a).unwrap()));
     assert_eq!(node.cached_devices(), 2);
+}
+
+#[test]
+fn gpu_out_of_memory_is_retryable_and_recovers() {
+    // Own device: the VRAM budget is per context and must not leak into the
+    // other tests. Core's simulated budget makes the output allocation fail
+    // without allocating anything large (ComfyUI holds most of the real VRAM).
+    let g = GpuContext::with_requirements(
+        AdapterPreference::default(),
+        &GpuRequirements::optional(wgpu::Features::FLOAT32_FILTERABLE),
+    )
+    .expect("a wgpu adapter is required for these tests");
+    let cfg = Config::builtin_default().unwrap();
+    let node = OcioTransformNode::colorspace(&cfg, "ACEScg", "sRGB - Texture").unwrap();
+    let read = |f: &Frame| -> Vec<u16> {
+        match &f.to_cpu(&g).expect("readback").storage {
+            FrameStorage::Cpu(img) => img.pixels.iter().map(|v| v.to_bits()).collect(),
+            FrameStorage::Gpu(_) => unreachable!(),
+        }
+    };
+    let src = cpu_frame(test_pattern(), "ACEScg");
+    let first = node.apply(&g, &src).unwrap(); // builds the pipeline; output stays leased
+    let want = read(&first);
+
+    // Room for the frame already held only: the next output texture is an OOM.
+    g.set_memory_budget(Some(g.pool_live_bytes()));
+    let check = |e: NodeError| {
+        assert_eq!(e.kind, ErrorKind::Retryable, "{e}");
+        assert_eq!(e.gpu_fault, Some(GpuFault::OutOfMemory), "{e}");
+        assert!(e.message.starts_with("ocio: dispatch: "), "{e}");
+    };
+    check(node.apply(&g, &src).unwrap_err());
+    // Same through the RenderNode entry point the engine uses.
+    let mut worker = WorkerState::default();
+    let cancel = CancelToken::new();
+    let mut ctx = RenderCtx::new(&g, &mut worker, &cancel, None);
+    let input = [Arc::new(src.clone())];
+    let t = RationalTime::new(0, 1);
+    check(node.render(&mut ctx, t, &input).unwrap_err());
+    assert_eq!(g.out_of_memory_events(), 2);
+
+    // Memory back: the same node and device render the same bytes again.
+    drop(first);
+    g.set_memory_budget(None);
+    let again = read(&node.apply(&g, &src).unwrap());
+    assert!(again == want, "output after recovering from OOM differs");
 }

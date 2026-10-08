@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use ferrocut_core::{
     AccessPattern, CancelToken, ColorSpace, CpuFrame, Frame, FrameRate, NodeError, NodeHash, Pull, RationalTime,
-    RenderCtx, RenderNode,
+    RenderCtx, RenderNode, with_alloc_scope,
 };
 
 use crate::color::{OutputEncoding, convert_bgra};
@@ -195,7 +195,12 @@ impl RenderNode for HtmlNode {
         let (cancel, deadline) = (ctx.cancel, ctx.deadline);
         let session = ctx.worker.slot(self.hash, || Ok(self.new_session()))?;
         let cpu = self.render_cpu(session, t, cancel, deadline)?;
-        Ok(Arc::new(Frame::from_cpu(&cpu).to_gpu(ctx.gpu)))
+        // Upload inside core's OutOfMemory + Validation scopes: a failed
+        // allocation is a Retryable NodeError with GpuFault::OutOfMemory (the
+        // scheduler backs off and restarts the chunk), never an invalid texture
+        // handed downstream.
+        let frame = with_alloc_scope(ctx.gpu, || Frame::from_cpu(&cpu).to_gpu(ctx.gpu))?;
+        Ok(Arc::new(frame))
     }
 }
 

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use ferrocut_core::{
     ColorSpace, CpuFrame, Frame, NodeError, NodeHash, Pull, RationalTime, RenderCtx, RenderNode,
+    with_alloc_scope,
 };
 
 use crate::renderer::{LottieDoc, LottieParams, LottieRenderer};
@@ -97,6 +98,11 @@ impl RenderNode for LottieNode {
         ctx.check()?;
         let renderer = ctx.worker.slot(self.hash, || self.new_renderer())?;
         let cpu = self.render_cpu(renderer, t)?;
-        Ok(Arc::new(Frame::from_cpu(&cpu).to_gpu(ctx.gpu)))
+        // Upload inside core's OutOfMemory + Validation scopes: a failed
+        // allocation is a Retryable NodeError with GpuFault::OutOfMemory (the
+        // scheduler backs off and restarts the chunk), never an invalid texture
+        // handed downstream.
+        let frame = with_alloc_scope(ctx.gpu, || Frame::from_cpu(&cpu).to_gpu(ctx.gpu))?;
+        Ok(Arc::new(frame))
     }
 }

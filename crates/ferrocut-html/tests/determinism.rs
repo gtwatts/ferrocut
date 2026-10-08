@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use ferrocut_core::{
-    AdapterPreference, CancelToken, ErrorKind, GpuContext, Rational, RationalTime, RenderCtx, RenderNode, WorkerState,
+    AdapterPreference, CancelToken, ColorSpace, ErrorKind, Frame, GpuContext, GpuFault, PixelRect,
+    Rational, RationalTime, RenderCtx, RenderNode, WorkerState,
 };
 use ferrocut_html::{HostConfig, HtmlNode, HtmlParams, HtmlSession, HtmlSource, OutputEncoding};
 
@@ -179,4 +180,36 @@ fn render_node_through_core_on_gpu() {
     cancel.cancel();
     let mut ctx = RenderCtx::new(&gpu, &mut worker, &cancel, None);
     assert_eq!(n.render(&mut ctx, t, &[]).err().map(|e| e.kind), Some(ErrorKind::Cancelled));
+}
+
+#[test]
+fn gpu_upload_failure_is_a_retryable_oom() {
+    let gpu = match GpuContext::new(AdapterPreference::default()) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("skipping: no GPU adapter ({e})");
+            return;
+        }
+    };
+    let n = node();
+    let t = RationalTime::new(1, 2);
+    let mut worker = WorkerState::default();
+    let cancel = CancelToken::new();
+    // Core's `Frame::to_gpu` is not pool-backed, so the VRAM budget cannot make
+    // the upload itself fail. Leave a simulated OOM pending instead (one pooled
+    // allocation over a 1-byte budget, outside any scope): it is reported by the
+    // next error scope on this device, which must be the node's upload scope.
+    gpu.set_memory_budget(Some(1));
+    let full = PixelRect::full(8, 8);
+    drop(Frame::new_gpu_window(&gpu, 8, 8, full, Rational::ONE, ColorSpace::new("ACEScg")));
+    gpu.set_memory_budget(None);
+    let e = {
+        let mut ctx = RenderCtx::new(&gpu, &mut worker, &cancel, None);
+        n.render(&mut ctx, t, &[]).unwrap_err()
+    };
+    assert_eq!(e.kind, ErrorKind::Retryable, "{e}");
+    assert_eq!(e.gpu_fault, Some(GpuFault::OutOfMemory), "{e}");
+    // The retry on the same worker succeeds.
+    let mut ctx = RenderCtx::new(&gpu, &mut worker, &cancel, None);
+    assert!(n.render(&mut ctx, t, &[]).unwrap().gpu().is_some());
 }
