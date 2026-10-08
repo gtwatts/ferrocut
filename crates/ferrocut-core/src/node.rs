@@ -88,6 +88,7 @@ impl WorkerState {
     /// The worker's batched command encoder (created on demand).
     pub fn encoder(&mut self, gpu: &GpuContext) -> &mut wgpu::CommandEncoder {
         self.encoder.get_or_insert_with(|| {
+            gpu.note_encoder_opened();
             gpu.device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("ferrocut.worker"),
@@ -99,7 +100,9 @@ impl WorkerState {
     pub fn flush(&mut self, gpu: &GpuContext) -> Option<wgpu::SubmissionIndex> {
         let enc = self.encoder.take()?;
         self.submissions += 1;
-        Some(gpu.queue.submit([enc.finish()]))
+        let idx = gpu.queue.submit([enc.finish()]);
+        gpu.note_encoder_submitted();
+        Some(idx)
     }
 
     /// Record that sequential node `node` is about to render at `t` on this

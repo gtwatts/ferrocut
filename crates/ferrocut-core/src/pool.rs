@@ -9,6 +9,15 @@
 //! recording order is submission order, so reuse is always ordered after the
 //! last use.
 //!
+//! Uploads ([`PoolInner::acquire_for_upload`], used by `Frame::to_gpu`) are
+//! filled with `queue.write_texture`, which runs at the *start* of the next
+//! `queue.submit`, i.e. before any still-unsubmitted encoder. So an idle
+//! texture is only handed out for an upload once every encoder that could
+//! still use it has been submitted: when a texture comes back while its home
+//! thread (or the thread dropping it) has a batched encoder open, it carries a
+//! fence on that thread's recording epoch, which [`PoolInner::encoder_submitted`]
+//! advances. Render targets (recorded into the encoder) don't need the fence.
+//!
 //! Out of memory: a failed allocation still returns a (wgpu-invalid) texture,
 //! and any bind group built from it is invalid too. [`PoolInner::poison`]
 //! (called on every OOM, see `GpuContext::note_out_of_memory`) bumps the pool
@@ -46,9 +55,28 @@ impl TexKey {
     }
 }
 
+/// "Not safe to overwrite with `queue.write_texture` until `thread` has
+/// submitted past `epoch`."
+type Fence = (ThreadId, u64);
+
+struct Idle {
+    texture: wgpu::Texture,
+    fences: [Option<Fence>; 2],
+}
+
+/// Per-thread batched-encoder state (see the module docs on uploads).
+#[derive(Clone, Copy, Default)]
+struct Recording {
+    /// Submissions of this thread's batched encoder so far.
+    epoch: u64,
+    /// A batched encoder is open (may hold unsubmitted uses of textures).
+    open: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct PoolInner {
-    idle: Mutex<HashMap<(ThreadId, TexKey), Vec<wgpu::Texture>>>,
+    idle: Mutex<HashMap<(ThreadId, TexKey), Vec<Idle>>>,
+    recording: Mutex<HashMap<ThreadId, Recording>>,
     pub allocated: AtomicU64,
     pub reused: AtomicU64,
     /// Bumped by [`Self::poison`]; leases of older generations are not re-pooled.
@@ -75,13 +103,19 @@ impl Drop for Lease {
             return;
         };
         let mut pooled = false;
-        if pool.generation.load(Ordering::Acquire) == self.generation
-            && let Ok(mut idle) = pool.idle.lock()
-        {
-            let v = idle.entry(self.home).or_default();
-            if v.len() < MAX_IDLE_PER_KEY {
-                v.push(self.texture.clone());
-                pooled = true;
+        if pool.generation.load(Ordering::Acquire) == self.generation {
+            let here = std::thread::current().id();
+            let fences = [Some(self.home.0), (here != self.home.0).then_some(here)]
+                .map(|t| t.and_then(|t| pool.fence(t)));
+            if let Ok(mut idle) = pool.idle.lock() {
+                let v = idle.entry(self.home).or_default();
+                if v.len() < MAX_IDLE_PER_KEY {
+                    v.push(Idle {
+                        texture: self.texture.clone(),
+                        fences,
+                    });
+                    pooled = true;
+                }
             }
         }
         if !pooled {
@@ -98,6 +132,8 @@ impl std::fmt::Debug for Lease {
 }
 
 impl PoolInner {
+    /// A texture for GPU work recorded on this thread (render target, compute
+    /// output): any idle one of this thread's shard will do.
     pub fn acquire(
         self: &Arc<Self>,
         device: &wgpu::Device,
@@ -109,7 +145,40 @@ impl PoolInner {
             .idle
             .lock()
             .ok()
-            .and_then(|mut m| m.get_mut(&home).and_then(Vec::pop));
+            .and_then(|mut m| m.get_mut(&home).and_then(Vec::pop))
+            .map(|i| i.texture);
+        self.lease(device, home, reused, label)
+    }
+
+    /// A texture about to be filled with `queue.write_texture`: only an idle
+    /// one whose earlier uses have all been submitted (see the module docs).
+    pub fn acquire_for_upload(
+        self: &Arc<Self>,
+        device: &wgpu::Device,
+        key: TexKey,
+        label: &str,
+    ) -> (wgpu::Texture, Arc<Lease>) {
+        let home = (std::thread::current().id(), key);
+        let recording = self.recording.lock().map(|m| m.clone()).unwrap_or_default();
+        let passed = |f: &Option<Fence>| {
+            f.is_none_or(|(t, e)| recording.get(&t).is_some_and(|r| r.epoch > e))
+        };
+        let reused = self.idle.lock().ok().and_then(|mut m| {
+            let v = m.get_mut(&home)?;
+            let i = v.iter().rposition(|i| i.fences.iter().all(passed))?;
+            Some(v.remove(i).texture)
+        });
+        self.lease(device, home, reused, label)
+    }
+
+    fn lease(
+        self: &Arc<Self>,
+        device: &wgpu::Device,
+        home: (ThreadId, TexKey),
+        reused: Option<wgpu::Texture>,
+        label: &str,
+    ) -> (wgpu::Texture, Arc<Lease>) {
+        let key = home.1;
         let texture = match reused {
             Some(t) => {
                 self.reused.fetch_add(1, Ordering::Relaxed);
@@ -146,6 +215,27 @@ impl PoolInner {
             pool: Arc::downgrade(self),
         });
         (texture, lease)
+    }
+
+    /// This thread opened a batched command encoder.
+    pub fn encoder_opened(&self) {
+        if let Ok(mut m) = self.recording.lock() {
+            m.entry(std::thread::current().id()).or_default().open = true;
+        }
+    }
+
+    /// This thread submitted (or discarded) its batched command encoder.
+    pub fn encoder_submitted(&self) {
+        if let Ok(mut m) = self.recording.lock() {
+            let r = m.entry(std::thread::current().id()).or_default();
+            r.epoch += 1;
+            r.open = false;
+        }
+    }
+
+    fn fence(&self, thread: ThreadId) -> Option<Fence> {
+        let m = self.recording.lock().ok()?;
+        m.get(&thread).filter(|r| r.open).map(|r| (thread, r.epoch))
     }
 
     pub fn trim(&self) {

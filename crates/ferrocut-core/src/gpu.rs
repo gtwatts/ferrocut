@@ -439,6 +439,39 @@ impl GpuContext {
         GpuImage::from_lease(texture, lease)
     }
 
+    /// A pooled 2D texture that is safe to fill right away with
+    /// `queue.write_texture` (e.g. [`Self::write_texture`]): it is only reused
+    /// from the pool once nothing unsubmitted can still touch it. Counts
+    /// against the pool's memory budget like any pooled texture.
+    pub fn upload_texture(
+        &self,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        usage: wgpu::TextureUsages,
+        label: &str,
+    ) -> GpuImage {
+        let key = TexKey {
+            width,
+            height,
+            format,
+            usage,
+        };
+        let (texture, lease) = self.pool.acquire_for_upload(&self.device, key, label);
+        GpuImage::from_lease(texture, lease)
+    }
+
+    /// The calling thread opened a batched encoder whose recorded work is
+    /// submitted later ([`crate::WorkerState`] calls this).
+    pub(crate) fn note_encoder_opened(&self) {
+        self.pool.encoder_opened();
+    }
+
+    /// The calling thread submitted or dropped its batched encoder.
+    pub(crate) fn note_encoder_submitted(&self) {
+        self.pool.encoder_submitted();
+    }
+
     pub fn pool_stats(&self) -> PoolStats {
         PoolStats {
             allocated: self.pool.allocated.load(Ordering::Relaxed),

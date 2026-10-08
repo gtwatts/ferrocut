@@ -191,29 +191,19 @@ impl Frame {
         })
     }
 
-    /// Upload to the GPU (no-op clone if already there). Uses a fresh, unpooled
-    /// texture so the upload can't race unsubmitted reads of a pooled one.
+    /// Upload to the GPU (no-op clone if already there). The texture comes from
+    /// the pool ([`GpuContext::upload_texture`]): it counts against the memory
+    /// budget, is reused across uploads, and is never one that unsubmitted
+    /// batched work still reads (the upload runs at the next submit, ahead of
+    /// that work). Wrap in [`crate::with_alloc_scope`] to catch out of memory.
     pub fn to_gpu(&self, gpu: &GpuContext) -> Frame {
         let img = match &self.storage {
             FrameStorage::Gpu(_) => return self.clone(),
             FrameStorage::Cpu(c) => c,
         };
         let (w, h) = (self.data_window.width, self.data_window.height);
-        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ferrocut.frame.upload"),
-            size: wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: WORKING_FORMAT,
-            usage: WORKING_USAGE,
-            view_formats: &[],
-        });
-        gpu.write_texture(&texture, WORKING_BPP, bytemuck::cast_slice(&img.pixels));
-        self.with_storage(FrameStorage::Gpu(GpuImage::unpooled(texture)))
+        let up = gpu.upload_texture(w, h, WORKING_FORMAT, WORKING_USAGE, "ferrocut.frame.upload");
+        gpu.write_texture(&up.texture, WORKING_BPP, bytemuck::cast_slice(&img.pixels));
+        self.with_storage(FrameStorage::Gpu(up))
     }
 }
