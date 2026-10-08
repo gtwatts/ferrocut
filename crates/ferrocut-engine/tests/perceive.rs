@@ -275,3 +275,72 @@ fn cli_check_exit_codes() {
     let out = run(&["--perceive", missing.to_str().unwrap(), "--require"]);
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn expect_audio_is_passed_through_or_falls_back_to_allow_no_audio() {
+    use ferrocut_engine::perceive::ExpectAudio;
+    let d = tempfile::tempdir().unwrap();
+    // A silent timeline (an empty track: nothing to probe).
+    let tl = d.path().join("tl.json");
+    std::fs::write(
+        &tl,
+        r#"{"output":{"width":16,"height":16,"fps":"24"},"tracks":[{"name":"V1","clips":[]}]}"#,
+    )
+    .unwrap();
+    let pass =
+        r#"{"schema_version":"ferrocut.perceive.check/1","pass":true,"problems":[],"warnings":[]}"#;
+    let mk = |name: &str, help: &str| {
+        let args = d.path().join(format!("{name}.args"));
+        let bin = fake(
+            d.path(),
+            name,
+            &format!(
+                r#"if [ "$2" = "--help" ]; then echo '{help}'; exit 0; fi
+for a in "$@"; do echo "$a"; done > {}
+echo '{pass}'"#,
+                args.display()
+            ),
+        );
+        (bin, args)
+    };
+    let run = |bin: &PathBuf, args: &Path, expect: ExpectAudio, extra: Vec<String>| {
+        let o = check(
+            Path::new("/x/out.mkv"),
+            &tl,
+            &CheckOptions {
+                expect_audio: expect,
+                extra_args: extra,
+                ..opts(bin.clone())
+            },
+        );
+        assert_eq!(o.status, CheckStatus::Pass, "{o:?}");
+        let got = std::fs::read_to_string(args).unwrap();
+        (
+            o.added_args,
+            got.lines().skip(5).map(String::from).collect::<Vec<_>>(),
+        )
+    };
+    // New checker: the expectation goes through verbatim.
+    let (new, new_args) = mk("new", "  --expect-audio <auto|yes|no>  ...");
+    let (added, rest) = run(&new, &new_args, ExpectAudio::Auto, vec![]);
+    assert_eq!(added, ["--expect-audio", "auto"]);
+    assert_eq!(rest, ["--expect-audio", "auto"]);
+    let (added, _) = run(&new, &new_args, ExpectAudio::Yes, vec![]);
+    assert_eq!(added, ["--expect-audio", "yes"]);
+    // Old checker: auto on a silent timeline -> --allow-no-audio; yes -> nothing.
+    let (old, old_args) = mk("old", "  --allow-no-audio  timeline may be silent");
+    let (added, rest) = run(&old, &old_args, ExpectAudio::Auto, vec![]);
+    assert_eq!(added, ["--allow-no-audio"]);
+    assert_eq!(rest, ["--allow-no-audio"]);
+    let (added, rest) = run(&old, &old_args, ExpectAudio::Yes, vec![]);
+    assert!(added.is_empty() && rest.is_empty(), "{added:?} {rest:?}");
+    // Explicit flags in extra_args win.
+    let (added, rest) = run(
+        &new,
+        &new_args,
+        ExpectAudio::Auto,
+        vec!["--expect-audio".into(), "no".into()],
+    );
+    assert!(added.is_empty());
+    assert_eq!(rest, ["--expect-audio", "no"]);
+}

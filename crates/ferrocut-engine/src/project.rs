@@ -400,6 +400,9 @@ pub struct EditOptions {
     pub journal: bool,
     /// Compute which output chunks would re-render (hashes source media).
     pub plan: bool,
+    /// Structure-only dry run that opens no media (sandbox pre-checks):
+    /// unknown lengths, placeholder durations for `add_clip`.
+    pub sources_only: bool,
 }
 
 impl Default for EditOptions {
@@ -410,6 +413,7 @@ impl Default for EditOptions {
             probe: true,
             journal: true,
             plan: false,
+            sources_only: false,
         }
     }
 }
@@ -458,8 +462,19 @@ fn edit_impl(
 ) -> anyhow::Result<EditOutcome> {
     let mut before_tl = read_timeline(timeline)?;
     let base = dir_of(timeline);
-    let mut media = if opts.probe {
-        MediaLengths::new(&base, |p| crate::media::media_duration(p).ok().flatten())
+    let mut media = if opts.sources_only {
+        MediaLengths::placeholder()
+    } else if opts.probe {
+        MediaLengths::new(&base, |p| crate::media::media_duration(p).ok().flatten()).with_info(
+            |p| {
+                let i = crate::media::probe(p)?;
+                Ok(crate::edit::MediaFacts {
+                    duration: i.duration,
+                    has_video: i.has_video,
+                    has_audio: i.has_audio,
+                })
+            },
+        )
     } else {
         MediaLengths::unbounded()
     };

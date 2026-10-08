@@ -82,6 +82,8 @@ async fn stdio_server_end_to_end() {
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     for want in [
         "timeline_get",
+        "timeline_schema",
+        "media_probe",
         "edit_apply",
         "diff",
         "plan",
@@ -100,7 +102,7 @@ async fn stdio_server_end_to_end() {
             .as_array()
             .unwrap()
             .len(),
-        9
+        14
     );
 
     // Read (relative path: resolved against the server's cwd).
@@ -251,5 +253,43 @@ async fn stdio_server_end_to_end() {
 
     let (err, v) = call(&client, "report_read", json!({ "report": p("tl.json") })).await;
     assert!(err, "{v}");
+    client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn docs_resources_over_stdio() {
+    use rmcp::model::{ReadResourceRequestParams, ResourceContents};
+    let dir = tempfile::tempdir().unwrap();
+    let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_ferrocut-mcp"));
+    cmd.current_dir(dir.path());
+    let client = ().serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap();
+    let list = client.list_all_resources().await.unwrap();
+    let uris: Vec<&str> = list.iter().map(|r| r.uri.as_str()).collect();
+    for u in [
+        "docs://timeline/guide.md",
+        "docs://timeline/schema.json",
+        "docs://timeline/params.json",
+    ] {
+        assert!(uris.contains(&u), "{uris:?}");
+    }
+    let r = client
+        .read_resource(ReadResourceRequestParams::new(
+            "docs://timeline/schema.json",
+        ))
+        .await
+        .unwrap();
+    let ResourceContents::TextResourceContents { text, .. } = &r.contents[0] else {
+        panic!("text expected");
+    };
+    let v: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(v["title"], "Ferrocut timeline");
+    assert!(
+        client
+            .read_resource(ReadResourceRequestParams::new("docs://nope"))
+            .await
+            .is_err()
+    );
+    let (err, v) = call(&client, "timeline_schema", json!({"part": "params"})).await;
+    assert!(!err && v["params"]["track"].is_array());
     client.cancel().await.unwrap();
 }

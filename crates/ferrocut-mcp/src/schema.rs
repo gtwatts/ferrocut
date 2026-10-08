@@ -230,8 +230,101 @@ pub fn edit_op() -> Value {
             &["clip"],
             json!({ "op": "jl_cut", "clip": "cam_b", "in_offset": "-1", "out_offset": "1/2" }),
         ),
+        op(
+            "add_track",
+            "Add an empty track: kind video (index 0 = bottom layer; default: on top) or audio (default: last). Names must be unique across all tracks.",
+            json!({
+                "kind": { "enum": ["video", "audio"] },
+                "name": { "type": "string", "minLength": 1 },
+                "index": { "type": "integer", "minimum": 0, "description": "position among tracks of that kind" }
+            }),
+            &["kind", "name"],
+            json!({ "op": "add_track", "kind": "audio", "name": "Music" }),
+        ),
+        op(
+            "add_clip",
+            "Add a clip from a media file to a track. The file is probed: it must have a video stream for a video track (its audio, if any, plays as linked audio) or an audio stream for an audio track. Defaults: source_in 0, duration = the rest of the media after source_in, start = the end of the track, id = the file stem (made unique). The range must be free (use ripple_insert to push clips right).",
+            json!({
+                "track": { "type": "string", "minLength": 1, "description": "track name" },
+                "source": path("media path, relative to the timeline file's directory (or absolute, inside the project root)"),
+                "id": { "type": "string", "minLength": 1, "description": "clip id (unique)" },
+                "start": rational("timeline time of the clip's first frame"),
+                "source_in": rational("source time of the clip's first frame"),
+                "duration": rational("clip length in seconds")
+            }),
+            &["track", "source"],
+            json!({ "op": "add_clip", "track": "V1", "source": "media/s1.mkv", "source_in": "1", "duration": "4" }),
+        ),
+        op(
+            "add_transition",
+            "Add a dissolve into `clip` from the clip before it on its video track. For clips that meet at a cut the overlap comes from source handles, nothing else moves: align center (default; half before, half after the cut), start (begins at the cut: the previous clip runs longer) or end (ends at the cut: `clip` starts earlier). Clips that already overlap by >= duration just get the transition. Linked audio gets a matching crossfade when its offsets are zero.",
+            json!({
+                "clip": clip_id(),
+                "duration": rational("dissolve length in seconds"),
+                "kind": { "const": "dissolve", "default": "dissolve" },
+                "align": { "enum": ["center", "start", "end"], "default": "center" }
+            }),
+            &["clip", "duration"],
+            json!({ "op": "add_transition", "clip": "b", "duration": "1" }),
+        ),
+        op(
+            "set_param",
+            "Set one parameter by name on a clip (`clip`), a track's audio bus (`track`) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant or {keyframes}; objects take an object, or null to remove.",
+            json!({
+                "clip": clip_id(),
+                "track": { "type": "string", "minLength": 1, "description": "track name (its audio bus)" },
+                "param": { "type": "string", "minLength": 1, "description": "parameter name" },
+                "value": param_value()
+            }),
+            &["param", "value"],
+            json!({ "op": "set_param", "clip": "a", "param": "opacity", "value": "1/2" }),
+        ),
+        op(
+            "set_keyframes",
+            "Keyframe an animatable parameter (see set_param for targets/names). mode replace (default) sets exactly these keys; merge keeps existing keys at other times. Key times are in the parameter's time base (clip-local for clip parameters: 0 = clip start; timeline time for bus/master) unless timeline_time=true, which converts timeline times for you.",
+            json!({
+                "clip": clip_id(),
+                "track": { "type": "string", "minLength": 1 },
+                "param": { "type": "string", "minLength": 1 },
+                "keyframes": keyframes(),
+                "mode": { "enum": ["replace", "merge"], "default": "replace" },
+                "timeline_time": { "type": "boolean", "default": false }
+            }),
+            &["param", "keyframes"],
+            json!({ "op": "set_keyframes", "clip": "a", "param": "opacity", "keyframes": [{ "t": "0", "v": "0" }, { "t": "1", "v": "1" }] }),
+        ),
     ];
     json!({ "oneOf": ops })
+}
+
+/// A keyframe list: `[{t, v, interp?}, ...]`.
+pub fn keyframes() -> Value {
+    json!({
+        "type": "array", "minItems": 1,
+        "items": {
+            "type": "object",
+            "properties": {
+                "t": rational("key time in seconds"),
+                "v": rational("value"),
+                "interp": interp()
+            },
+            "required": ["t", "v"], "additionalProperties": false
+        }
+    })
+}
+
+/// `set_param.value`: a number/keyframes, `[x, y]`, a bool, an object, or null.
+fn param_value() -> Value {
+    json!({
+        "description": "constant rational or {keyframes} (numeric), [x, y] (vectors), true/false, an object (fades, duck, loudness) or null (remove)",
+        "anyOf": [
+            animatable("numeric value"),
+            { "type": "array", "minItems": 2, "maxItems": 2, "items": animatable("component") },
+            { "type": "boolean" },
+            { "type": "object" },
+            { "type": "null" }
+        ]
+    })
 }
 
 fn path(desc: &str) -> Value {
@@ -293,6 +386,7 @@ pub fn render() -> Value {
             "timeout_s": { "type": "number", "exclusiveMinimum": 0, "description": "cancel the render after this many seconds" },
             "check": { "type": "boolean", "default": false, "description": "run the perceptual quality check (ferrocut-perceive) on the result; skipped if the checker isn't installed" },
             "check_args": check_args(),
+            "expect_audio": expect_audio(),
             "deliver": deliver()
         }),
         &["timeline", "output"],
@@ -387,8 +481,208 @@ pub fn quality_check() -> Value {
             "render": path("rendered file to check"),
             "timeline": path("the timeline it was rendered from"),
             "args": check_args(),
+            "expect_audio": expect_audio(),
             "timeout_s": { "type": "number", "exclusiveMinimum": 0, "description": "kill the checker after this many seconds" }
         }),
         &["render", "timeline"],
     )
+}
+
+// ---------------------------------------------------------------------------
+// The timeline file format (docs://timeline/schema.json, timeline_schema).
+
+fn transform() -> Value {
+    let pair =
+        |d: &str| json!({ "type": "array", "minItems": 2, "maxItems": 2, "items": animatable(d) });
+    json!({
+        "description": "2D layer transform (After Effects convention); key times clip-local. Defaults are the identity: position and anchor at the frame center, scale 1, rotation 0.",
+        "type": "object",
+        "properties": {
+            "position": pair("output pixels [x, y] where the anchor lands"),
+            "anchor": pair("source pixels [x, y] of the pivot"),
+            "scale": { "anyOf": [ animatable("uniform scale factor (1 = 100 %)"), pair("per-axis scale [x, y]") ] },
+            "rotation": animatable("degrees, clockwise")
+        },
+        "additionalProperties": false
+    })
+}
+
+fn duck() -> Value {
+    json!({
+        "description": "Sidechain ducking: this bus is turned down while the key tracks are loud. Numeric fields may be keyframed (timeline time).",
+        "type": "object",
+        "properties": {
+            "key": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "names of the key tracks (not this one, not ducked themselves)" },
+            "threshold_db": animatable("dB, default -30"),
+            "ratio": animatable(">= 1, default 4"),
+            "attack_ms": animatable("> 0, default 10"),
+            "release_ms": animatable("> 0, default 250"),
+            "range_db": animatable("maximum reduction, >= 0, default 12")
+        },
+        "required": ["key"], "additionalProperties": false
+    })
+}
+
+fn bus() -> Value {
+    json!({
+        "description": "A track's audio bus. gain/pan keyframes are in timeline time.",
+        "type": "object",
+        "properties": {
+            "gain_db": animatable("bus gain, dB"),
+            "pan": animatable("balance -1..1"),
+            "mute": { "type": "boolean" },
+            "duck": duck()
+        },
+        "additionalProperties": false
+    })
+}
+
+fn video_clip() -> Value {
+    json!({
+        "description": "A clip on a video track. Its source's audio (if any) plays as linked audio on the track's bus.",
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "minLength": 1, "description": "unique across the timeline; edit ops refer to it" },
+            "source": { "type": "string", "minLength": 1, "description": "media path, relative to the timeline file's directory (or absolute)" },
+            "start": rational("timeline time of the first frame, >= 0"),
+            "source_in": rational("source time of the first frame, >= 0 (default 0)"),
+            "duration": rational("length in seconds, > 0; source_in + duration must not exceed the media"),
+            "opacity": animatable("0..1, default 1; keyframes clip-local"),
+            "transform": transform(),
+            "transition_in": {
+                "description": "Dissolve from the previous clip on this track. The previous clip must overlap this one by at least `duration` (use the add_transition op, which makes the overlap from handles).",
+                "anyOf": [
+                    { "type": "null" },
+                    {
+                        "type": "object",
+                        "properties": { "kind": { "const": "dissolve" }, "duration": rational("seconds, > 0, <= this clip's duration") },
+                        "required": ["kind", "duration"], "additionalProperties": false
+                    }
+                ]
+            },
+            "audio": clip_audio()
+        },
+        "required": ["id", "source", "start", "duration"],
+        "additionalProperties": false
+    })
+}
+
+fn audio_clip() -> Value {
+    json!({
+        "description": "An audio-only clip (music, dialogue, effects).",
+        "type": "object",
+        "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "source": { "type": "string", "minLength": 1 },
+            "start": rational("timeline time, >= 0"),
+            "source_in": rational("source time, >= 0 (default 0)"),
+            "duration": rational("seconds, > 0"),
+            "audio": clip_audio()
+        },
+        "required": ["id", "source", "start", "duration"],
+        "additionalProperties": false
+    })
+}
+
+/// JSON Schema (draft 2020-12) of a whole timeline file.
+pub fn timeline() -> Value {
+    json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "docs://timeline/schema.json",
+        "title": "Ferrocut timeline",
+        "description": "Times and numeric values are exact rationals: integers or strings \"n\", \"n/d\", \"0.5\" (JSON floats are rejected). Track 0 is the bottom video layer. Clips on a track may not overlap except by a dissolve's duration. Build and change timelines with edit_apply ops rather than editing this JSON by hand.",
+        "type": "object",
+        "properties": {
+            "name": { "type": "string" },
+            "output": {
+                "type": "object",
+                "properties": {
+                    "width": { "type": "integer", "minimum": 1 },
+                    "height": { "type": "integer", "minimum": 1 },
+                    "fps": rational("frames per second, e.g. 24 or \"30000/1001\""),
+                    "gop": { "type": "integer", "minimum": 1, "default": 24, "description": "frames per closed GOP" },
+                    "gops_per_chunk": { "type": "integer", "minimum": 1, "default": 1, "description": "render chunk size in GOPs" },
+                    "duration": { "anyOf": [ { "type": "null" }, rational("explicit output length (default: end of the last clip)") ] }
+                },
+                "required": ["width", "height", "fps"], "additionalProperties": false
+            },
+            "tracks": {
+                "type": "array", "minItems": 1,
+                "description": "video tracks, bottom (0) to top",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "unique (edit ops and duck keys refer to it)" },
+                        "audio": bus(),
+                        "clips": { "type": "array", "items": video_clip() }
+                    },
+                    "required": ["clips"], "additionalProperties": false
+                }
+            },
+            "audio_tracks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "bus": bus(),
+                        "clips": { "type": "array", "items": audio_clip() }
+                    },
+                    "required": ["clips"], "additionalProperties": false
+                }
+            },
+            "audio": {
+                "type": "object",
+                "properties": {
+                    "sample_rate": { "type": "integer", "minimum": 8000, "maximum": 192000, "default": 48000 },
+                    "master_gain_db": animatable("master gain, dB (timeline time)"),
+                    "loudness": {
+                        "anyOf": [
+                            { "type": "null" },
+                            {
+                                "type": "object",
+                                "description": "two-pass loudness normalization + true-peak limiter",
+                                "properties": {
+                                    "target_lufs": rational("integrated loudness target, [-70, 0): -23 broadcast (EBU R128), -14 streaming"),
+                                    "true_peak_dbtp": rational("true-peak ceiling, [-20, 0], default -1")
+                                },
+                                "required": ["target_lufs"], "additionalProperties": false
+                            }
+                        ]
+                    }
+                },
+                "additionalProperties": false
+            }
+        },
+        "required": ["output", "tracks"],
+        "additionalProperties": false
+    })
+}
+
+pub fn timeline_schema() -> Value {
+    object(
+        json!({
+            "part": {
+                "enum": ["all", "timeline", "edit_ops", "params", "guide"],
+                "default": "all",
+                "description": "timeline: JSON Schema of the file; edit_ops: schema of edit_apply ops; params: every settable parameter (name, kind, unit, range, default, time base); guide: concise authoring guide (markdown)"
+            }
+        }),
+        &[],
+    )
+}
+
+pub fn media_probe() -> Value {
+    object(
+        json!({ "path": path("media file (absolute, or relative to the server's working directory)") }),
+        &["path"],
+    )
+}
+
+/// `expect_audio` for render(check) / quality_check.
+pub fn expect_audio() -> Value {
+    json!({
+        "enum": ["auto", "yes", "no"], "default": "auto",
+        "description": "audio expectation for the check: auto = audio iff the timeline has any (a silent timeline doesn't fail missing_audio)"
+    })
 }

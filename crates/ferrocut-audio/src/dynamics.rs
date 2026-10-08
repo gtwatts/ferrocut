@@ -1,28 +1,72 @@
 //! Sidechain ducking and the true-peak limiter (sequential, whole-program).
 
+use ferrocut_types::{Animatable, Rational, RationalTime};
+
 use crate::program::Duck;
 
-/// Per-sample linear gains for a ducked track from its key signal.
+/// Per-sample linear gains for a ducked track from its key signal (sample 0
+/// = timeline time 0).
 ///
 /// Peak detector on `max(|L|, |R|)` with one-pole attack/release smoothing,
 /// then a hard-knee gain computer: above `threshold_db` the level is reduced
-/// by `over · (1 - 1/ratio)` dB, at most `range_db`.
+/// by `over · (1 - 1/ratio)` dB, at most `range_db`. Keyframed parameters are
+/// evaluated per sample; all-constant parameters take the original fast path
+/// (same arithmetic, same bits).
 pub fn duck_gains(key_l: &[f32], key_r: &[f32], d: &Duck, rate: u32) -> Vec<f32> {
     let fs = rate as f64;
-    let a_att = (-1.0 / (d.attack_s * fs)).exp();
-    let a_rel = (-1.0 / (d.release_s * fs)).exp();
-    let slope = 1.0 - 1.0 / d.ratio;
+    let c = |a: &Animatable| a.as_constant().map(|v| v.to_f64());
+    if let (Some(thr), Some(ratio), Some(att), Some(rel), Some(range)) = (
+        c(&d.threshold_db),
+        c(&d.ratio),
+        c(&d.attack_ms),
+        c(&d.release_ms),
+        c(&d.range_db),
+    ) {
+        let a_att = (-1.0 / (att / 1000.0 * fs)).exp();
+        let a_rel = (-1.0 / (rel / 1000.0 * fs)).exp();
+        let slope = 1.0 - 1.0 / ratio;
+        let mut env = 0.0f64;
+        return key_l
+            .iter()
+            .zip(key_r)
+            .map(|(&l, &r)| {
+                let x = (l.abs().max(r.abs())) as f64;
+                let c = if x > env { a_att } else { a_rel };
+                env = x + (env - x) * c;
+                let over = 20.0 * env.max(1e-10).log10() - thr;
+                if over > 0.0 {
+                    let red = (over * slope).min(range);
+                    10f64.powf(-red / 20.0) as f32
+                } else {
+                    1.0
+                }
+            })
+            .collect();
+    }
+    let at = |a: &Animatable, n: usize| match a.as_constant() {
+        Some(v) => v.to_f64(),
+        None => a.eval(RationalTime(Rational::new(n as i64, rate as i64))),
+    };
     let mut env = 0.0f64;
     key_l
         .iter()
         .zip(key_r)
-        .map(|(&l, &r)| {
+        .enumerate()
+        .map(|(n, (&l, &r))| {
             let x = (l.abs().max(r.abs())) as f64;
-            let c = if x > env { a_att } else { a_rel };
-            env = x + (env - x) * c;
-            let over = 20.0 * env.max(1e-10).log10() - d.threshold_db;
+            // Clamp to the ranges validation enforces on the keys (bezier
+            // segments can overshoot between keys).
+            let ms = |a: &Animatable| at(a, n).max(1e-3);
+            let a = if x > env {
+                (-1.0 / (ms(&d.attack_ms) / 1000.0 * fs)).exp()
+            } else {
+                (-1.0 / (ms(&d.release_ms) / 1000.0 * fs)).exp()
+            };
+            env = x + (env - x) * a;
+            let over = 20.0 * env.max(1e-10).log10() - at(&d.threshold_db, n);
             if over > 0.0 {
-                let red = (over * slope).min(d.range_db);
+                let slope = 1.0 - 1.0 / at(&d.ratio, n).max(1.0);
+                let red = (over * slope).min(at(&d.range_db, n).max(0.0));
                 10f64.powf(-red / 20.0) as f32
             } else {
                 1.0
@@ -127,4 +171,44 @@ pub fn limiter_gains(l: &[f32], r: &[f32], ceiling: f64, rate: u32) -> (Vec<f32>
         out.push(env as f32);
     }
     (out, min_g)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ferrocut_types::{Interp, Keyframe, KeyframeTrack};
+
+    fn c(v: i64) -> Animatable {
+        Animatable::Constant(Rational::from_int(v))
+    }
+
+    #[test]
+    fn keyframed_duck_range_follows_its_curve() {
+        let rate = 1000;
+        let key = vec![0.5f32; 4000]; // -6 dBFS, far above the threshold
+        let mut d = Duck {
+            keys: vec![0],
+            threshold_db: c(-30),
+            ratio: c(1000),
+            attack_ms: c(1),
+            release_ms: c(100),
+            range_db: c(12),
+        };
+        let flat = duck_gains(&key, &key, &d, rate);
+        d.range_db = Animatable::Keyframes(KeyframeTrack {
+            keyframes: [(0, 0), (4, 20)]
+                .iter()
+                .map(|&(t, v)| Keyframe {
+                    t: RationalTime(Rational::from_int(t)),
+                    v: Rational::from_int(v),
+                    interp: Interp::Linear,
+                })
+                .collect(),
+        });
+        let ramp = duck_gains(&key, &key, &d, rate);
+        let db = |g: f32| -20.0 * (g as f64).log10();
+        assert!((db(flat[2000]) - 12.0).abs() < 1e-3);
+        assert!((db(ramp[1000]) - 5.0).abs() < 1e-3, "{}", db(ramp[1000]));
+        assert!((db(ramp[3000]) - 15.0).abs() < 1e-3, "{}", db(ramp[3000]));
+    }
 }

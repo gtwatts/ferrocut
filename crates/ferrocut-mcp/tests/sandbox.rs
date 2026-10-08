@@ -246,6 +246,19 @@ fn tools_refuse_paths_outside_the_root() {
             json!({ "timeline": "tl.json", "ops": insert }),
         );
         assert!(e.contains("clip source"), "{e}");
+        // add_clip probes its file: the root check must come first.
+        let add = json!([{ "op": "add_clip", "track": "V1", "source": src }]);
+        let e = rejected(
+            &cx,
+            "edit_apply",
+            json!({ "timeline": "tl.json", "ops": add }),
+        );
+        assert!(e.contains("clip source"), "add_clip {src}: {e}");
+        let e = rejected(&cx, "media_probe", json!({ "path": src }));
+        assert!(
+            e.contains("root") || e.contains("outside") || e.contains("dangling"),
+            "media_probe {src}: {e}"
+        );
     }
     assert_eq!(std::fs::read(f.proj.join("tl.json")).unwrap(), before);
     assert!(

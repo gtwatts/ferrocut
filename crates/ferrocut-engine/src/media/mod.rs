@@ -4,6 +4,9 @@ pub mod audio;
 pub mod concat;
 pub mod decode;
 pub mod encode;
+pub mod probe;
+
+pub use probe::{MediaInfo, StreamInfo, probe};
 
 use ferrocut_core::Rational;
 

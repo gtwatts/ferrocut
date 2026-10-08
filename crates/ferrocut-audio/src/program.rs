@@ -93,15 +93,16 @@ pub struct ClipProg {
 }
 
 /// Sidechain ducking of a track by the sum of `keys` (other tracks' buses).
+/// Every parameter may be keyframed (timeline time).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Duck {
     pub keys: Vec<usize>,
-    pub threshold_db: f64,
-    pub ratio: f64,
-    pub attack_s: f64,
-    pub release_s: f64,
+    pub threshold_db: Animatable,
+    pub ratio: Animatable,
+    pub attack_ms: Animatable,
+    pub release_ms: Animatable,
     /// Maximum gain reduction in dB (positive).
-    pub range_db: f64,
+    pub range_db: Animatable,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -160,7 +161,22 @@ impl Program {
                         ));
                     }
                 }
-                if !(d.ratio >= 1.0 && d.attack_s > 0.0 && d.release_s > 0.0 && d.range_db >= 0.0) {
+                let lo = |a: &Animatable| a.key_range().0;
+                let keys_ok = [
+                    &d.threshold_db,
+                    &d.ratio,
+                    &d.attack_ms,
+                    &d.release_ms,
+                    &d.range_db,
+                ]
+                .iter()
+                .all(|a| a.validate().is_ok());
+                if !(keys_ok
+                    && lo(&d.ratio) >= Rational::ONE
+                    && lo(&d.attack_ms) > Rational::ZERO
+                    && lo(&d.release_ms) > Rational::ZERO
+                    && lo(&d.range_db) >= Rational::ZERO)
+                {
                     return Err(format!(
                         "track {:?}: duck needs ratio >= 1, attack/release > 0, range >= 0",
                         t.name

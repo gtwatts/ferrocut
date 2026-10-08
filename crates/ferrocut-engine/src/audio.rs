@@ -239,11 +239,11 @@ pub fn resolve(
             .collect::<anyhow::Result<Vec<_>>>()?;
         tracks[ti].duck = Some(Duck {
             keys,
-            threshold_db: rat(d.threshold_db),
-            ratio: rat(d.ratio),
-            attack_s: rat(d.attack_ms) / 1000.0,
-            release_s: rat(d.release_ms) / 1000.0,
-            range_db: rat(d.range_db),
+            threshold_db: d.threshold_db.clone(),
+            ratio: d.ratio.clone(),
+            attack_ms: d.attack_ms.clone(),
+            release_ms: d.release_ms.clone(),
+            range_db: d.range_db.clone(),
         });
     }
     let program = Program {

@@ -94,38 +94,42 @@ fn is_false(b: &bool) -> bool {
 }
 
 /// Sidechain ducking: this bus is turned down while the `key` buses are loud.
+/// Every numeric parameter may be keyframed (timeline time).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DuckSpec {
     /// Names of the key tracks (video or audio tracks).
     pub key: Vec<String>,
     #[serde(default = "default_threshold")]
-    pub threshold_db: Rational,
+    pub threshold_db: Animatable,
     #[serde(default = "default_ratio")]
-    pub ratio: Rational,
+    pub ratio: Animatable,
     #[serde(default = "default_attack")]
-    pub attack_ms: Rational,
+    pub attack_ms: Animatable,
     #[serde(default = "default_release")]
-    pub release_ms: Rational,
+    pub release_ms: Animatable,
     /// Maximum reduction, dB (positive).
     #[serde(default = "default_range")]
-    pub range_db: Rational,
+    pub range_db: Animatable,
 }
 
-fn default_threshold() -> Rational {
-    Rational::from_int(-30)
+fn anim(v: i64) -> Animatable {
+    Animatable::constant(Rational::from_int(v))
 }
-fn default_ratio() -> Rational {
-    Rational::from_int(4)
+fn default_threshold() -> Animatable {
+    anim(-30)
 }
-fn default_attack() -> Rational {
-    Rational::from_int(10)
+fn default_ratio() -> Animatable {
+    anim(4)
 }
-fn default_release() -> Rational {
-    Rational::from_int(250)
+fn default_attack() -> Animatable {
+    anim(10)
 }
-fn default_range() -> Rational {
-    Rational::from_int(12)
+fn default_release() -> Animatable {
+    anim(250)
+}
+fn default_range() -> Animatable {
+    anim(12)
 }
 
 /// A track's audio bus.
@@ -519,16 +523,23 @@ impl Timeline {
                         "track {name:?}: duck key {k:?} must be another track that is not itself ducked"
                     );
                 }
+                let what = |p: &str| format!("track {name:?}: duck {p}");
+                check_anim(&d.threshold_db, &what("threshold_db"), None)?;
+                check_anim(&d.ratio, &what("ratio"), None)?;
+                check_anim(&d.attack_ms, &what("attack_ms"), None)?;
+                check_anim(&d.release_ms, &what("release_ms"), None)?;
+                check_anim(&d.range_db, &what("range_db"), None)?;
                 ensure!(
-                    d.ratio >= Rational::ONE,
+                    d.ratio.key_range().0 >= Rational::ONE,
                     "track {name:?}: duck ratio must be >= 1"
                 );
                 ensure!(
-                    d.attack_ms > Rational::ZERO && d.release_ms > Rational::ZERO,
+                    d.attack_ms.key_range().0 > Rational::ZERO
+                        && d.release_ms.key_range().0 > Rational::ZERO,
                     "track {name:?}: duck attack/release must be > 0"
                 );
                 ensure!(
-                    d.range_db >= Rational::ZERO,
+                    d.range_db.key_range().0 >= Rational::ZERO,
                     "track {name:?}: duck range_db must be >= 0"
                 );
             }

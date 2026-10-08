@@ -1,8 +1,11 @@
 //! Ferrocut MCP server: timeline inspection, journaled edits (with dry run),
 //! structured diffs, chunk plans, renders and render reports, over stdio.
 //!
-//! Tools: `timeline_get`, `edit_apply`, `diff`, `plan`, `render`,
-//! `report_read`, `quality_check`, `log`, `undo`, `branch`, `openh264`. Every input schema is hand-written
+//! Tools: `timeline_get`, `timeline_schema`, `media_probe`, `edit_apply`,
+//! `diff`, `plan`, `render`, `report_read`, `quality_check`, `log`, `undo`,
+//! `branch`, `openh264`. Resources: `docs://` documents (timeline JSON
+//! Schema, authoring guide, edit-op schema, parameter registry, the
+//! checker's report schema), see [`resources`]. Every input schema is hand-written
 //! JSON Schema ([`schema`]); every result is structured JSON (also sent as
 //! text). Tool failures (bad op, missing file, render error) come back as
 //! `isError` results with `{"error": "..."}` so agents can read and react.
@@ -42,8 +45,9 @@ use ferrocut_engine::render::RenderOptions;
 use ferrocut_engine::{ProgressFn, RenderProgress, RenderStage, Timeline, compile, plan, render};
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ErrorData, Implementation, JsonObject,
-    ListToolsResult, PaginatedRequestParams, ProgressNotificationParam, ServerCapabilities,
-    ServerConfig, Tool, ToolAnnotations,
+    ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProgressNotificationParam,
+    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
+    ResourceContents, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler};
@@ -169,9 +173,23 @@ pub fn tools() -> Vec<Tool> {
             ro().idempotent(true),
         ),
         tool(
+            "timeline_schema",
+            "Timeline format and authoring guide",
+            "How to author timelines: the exact JSON Schema of the timeline file, the schema of every edit_apply op, every settable parameter (name, kind, unit, range, default, key-time base) and a concise authoring guide (markdown). part=all|timeline|edit_ops|params|guide. Also available as docs:// resources.",
+            schema::timeline_schema(),
+            ro().idempotent(true),
+        ),
+        tool(
+            "media_probe",
+            "Probe a media file",
+            "Probe a media file (no decoding): exact duration (the longest source_in + duration a clip can use), frame rate, size, whether it has video and audio, sample rate/channels, and every stream (kind, codec, duration).",
+            schema::media_probe(),
+            ro().idempotent(true),
+        ),
+        tool(
             "edit_apply",
             "Apply edit ops",
-            "Apply edit ops (split, trim, ripple_delete, ripple_insert, roll, slip, slide, move, jl_cut) atomically. Writes the timeline (in place, or to `output`) and appends the ops with before/after hashes to the journal, unless dry_run. Returns per-op change summaries and affected spans, before/after hashes, the journal seq, and with plan=true the output chunks that would re-render. A failing op changes nothing and names the op and reason.",
+            "Apply edit ops atomically: build (add_track, add_clip, add_transition, set_param, set_keyframes) and edit (split, trim, ripple_delete, ripple_insert, roll, slip, slide, move, jl_cut). Writes the timeline (in place, or to `output`) and appends the ops with before/after hashes to the journal, unless dry_run. Returns per-op change summaries and affected spans, before/after hashes, the journal seq, and with plan=true the output chunks that would re-render. A failing op changes nothing and names the op and reason.",
             schema::edit_apply(),
             rw(false),
         ),
@@ -301,6 +319,8 @@ struct RenderArgs {
     check: bool,
     #[serde(default)]
     check_args: Vec<String>,
+    #[serde(default)]
+    expect_audio: perceive::ExpectAudio,
     deliver: Option<DeliverArg>,
 }
 
@@ -367,7 +387,33 @@ struct CheckArgs {
     timeline: PathBuf,
     #[serde(default)]
     args: Vec<String>,
+    #[serde(default)]
+    expect_audio: perceive::ExpectAudio,
     timeout_s: Option<f64>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+enum SchemaPart {
+    #[default]
+    All,
+    Timeline,
+    EditOps,
+    Params,
+    Guide,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SchemaArgs {
+    #[serde(default)]
+    part: SchemaPart,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProbeArgs {
+    path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -480,6 +526,7 @@ fn edit_apply(cx: &Ctx, a: EditArgs) -> anyhow::Result<Value> {
         probe: a.probe,
         journal: true,
         plan: a.plan,
+        sources_only: false,
     };
     precheck_edit(cx, &timeline, || {
         project::edit_file(
@@ -489,6 +536,7 @@ fn edit_apply(cx: &Ctx, a: EditArgs) -> anyhow::Result<Value> {
                 dry_run: true,
                 probe: false,
                 plan: false,
+                sources_only: true,
                 ..opts.clone()
             },
         )
@@ -639,6 +687,7 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
             &timeline,
             &perceive::CheckOptions {
                 extra_args: a.check_args,
+                expect_audio: a.expect_audio,
                 ..Default::default()
             },
         );
@@ -745,6 +794,7 @@ fn branch_tool(cx: &Ctx, a: BranchArgs) -> anyhow::Result<Value> {
                     &EditOptions {
                         dry_run: true,
                         probe: false,
+                        sources_only: true,
                         ..EditOptions::default()
                     },
                 )
@@ -768,6 +818,87 @@ fn diff_tool(cx: &Ctx, a: DiffArgs) -> anyhow::Result<Value> {
     )?)?)
 }
 
+/// The authoring guide (markdown), also `docs://timeline/guide.md`.
+pub const GUIDE: &str = include_str!("../docs/timeline-guide.md");
+/// SeePlus's published check-report schema (ferrocut-perceive).
+const CHECK_SCHEMA: &str =
+    include_str!("../../ferrocut-perceive/schema/perceive-check.schema.json");
+
+fn timeline_schema(part: SchemaPart) -> Value {
+    let ops = || json!({ "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "array", "items": schema::edit_op() });
+    match part {
+        SchemaPart::All => json!({
+            "timeline": schema::timeline(),
+            "edit_ops": ops(),
+            "params": ferrocut_engine::params::registry_json(),
+            "guide": GUIDE,
+            "resources": resources().iter().map(|r| json!({"uri": r.uri, "name": r.name})).collect::<Vec<_>>(),
+        }),
+        SchemaPart::Timeline => json!({ "timeline": schema::timeline() }),
+        SchemaPart::EditOps => json!({ "edit_ops": ops() }),
+        SchemaPart::Params => json!({ "params": ferrocut_engine::params::registry_json() }),
+        SchemaPart::Guide => json!({ "guide": GUIDE }),
+    }
+}
+
+/// The `docs://` resources.
+pub struct DocResource {
+    pub uri: &'static str,
+    pub name: &'static str,
+    pub description: &'static str,
+    pub mime: &'static str,
+}
+
+pub fn resources() -> Vec<DocResource> {
+    vec![
+        DocResource {
+            uri: "docs://timeline/guide.md",
+            name: "timeline-guide",
+            description: "Concise timeline authoring guide: values, structure, rules, ops, parameter names, recipes.",
+            mime: "text/markdown",
+        },
+        DocResource {
+            uri: "docs://timeline/schema.json",
+            name: "timeline-schema",
+            description: "JSON Schema (2020-12) of the timeline file.",
+            mime: "application/schema+json",
+        },
+        DocResource {
+            uri: "docs://timeline/edit-ops.schema.json",
+            name: "edit-ops-schema",
+            description: "JSON Schema of the edit_apply ops list.",
+            mime: "application/schema+json",
+        },
+        DocResource {
+            uri: "docs://timeline/params.json",
+            name: "params",
+            description: "Every settable parameter by target (video clip, audio clip, track, timeline): name, kind, unit, range, default, key-time base.",
+            mime: "application/json",
+        },
+        DocResource {
+            uri: "docs://perceive/check.schema.json",
+            name: "check-report-schema",
+            description: "JSON Schema of the quality checker's report (ferrocut.perceive.check/1, by SeePlus).",
+            mime: "application/schema+json",
+        },
+    ]
+}
+
+/// Contents of a `docs://` resource.
+pub fn read_doc(uri: &str) -> Option<String> {
+    let pretty = |v: Value| serde_json::to_string_pretty(&v).unwrap_or_default();
+    Some(match uri {
+        "docs://timeline/guide.md" => GUIDE.to_string(),
+        "docs://timeline/schema.json" => pretty(schema::timeline()),
+        "docs://timeline/edit-ops.schema.json" => {
+            pretty(timeline_schema(SchemaPart::EditOps)["edit_ops"].clone())
+        }
+        "docs://timeline/params.json" => pretty(ferrocut_engine::params::registry_json()),
+        "docs://perceive/check.schema.json" => CHECK_SCHEMA.to_string(),
+        _ => return None,
+    })
+}
+
 /// Run one tool. `None`: no such tool.
 pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
     let with_timeline = |a: TimelineArgs| -> anyhow::Result<TimelineArgs> {
@@ -777,6 +908,13 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
     };
     Some(match name {
         "timeline_get" => args(name, a).and_then(|a| timeline_get(cx, a)),
+        "timeline_schema" => args::<SchemaArgs>(name, a).map(|a| timeline_schema(a.part)),
+        "media_probe" => args::<ProbeArgs>(name, a).and_then(|a| {
+            let p = cx.root.check(&a.path)?;
+            let mut v = serde_json::to_value(ferrocut_engine::media::probe(&p)?)?;
+            v["path"] = json!(a.path);
+            Ok(v)
+        }),
         "edit_apply" => args(name, a).and_then(|a| edit_apply(cx, a)),
         "diff" => args(name, a).and_then(|a| diff_tool(cx, a)),
         "plan" => args(name, a).and_then(|a| plan_tool(cx, a)),
@@ -792,6 +930,7 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
                     binary: None,
                     extra_args: a.args,
                     timeout: a.timeout_s.map(std::time::Duration::from_secs_f64),
+                    expect_audio: a.expect_audio,
                 },
             ))?)
         }),
@@ -810,13 +949,22 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
 
 impl ServerHandler for FerrocutServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+        )
             .with_server_info(Implementation::new("ferrocut-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Ferrocut: agent-native video editing. Inspect with timeline_get, preview edits with \
-                 edit_apply dry_run=true (plan=true shows chunks that would re-render), apply with \
-                 edit_apply, compare with diff, render (incremental: unchanged chunks are reused) \
-                 and read results with report_read; log/undo/branch work on the per-timeline journal. \
+                "Ferrocut: agent-native video editing. Learn the timeline format with timeline_schema \
+                 (or the docs:// resources), probe media with media_probe, inspect with timeline_get. \
+                 Build and change timelines only with edit_apply ops (add_track, add_clip, \
+                 add_transition, set_param, set_keyframes, split, trim, ripple_delete, ...), never by \
+                 editing the JSON file: ops are validated, atomic and journaled. Preview with \
+                 dry_run=true (plan=true shows chunks that would re-render), compare with diff, render \
+                 (incremental: unchanged chunks are reused), verify with quality_check and read results \
+                 with report_read; log/undo/branch work on the per-timeline journal. \
                  Times are exact rationals: integers or strings like \"5/2\" or \"0.5\" (seconds). \
                  All paths must be inside the project root; relative paths are relative to it.",
             )
@@ -831,6 +979,47 @@ impl ServerHandler for FerrocutServer {
             tools: tools(),
             ..Default::default()
         })
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult {
+            resources: resources()
+                .into_iter()
+                .map(|r| {
+                    Resource::new(r.uri, r.name)
+                        .with_description(r.description)
+                        .with_mime_type(r.mime)
+                })
+                .collect(),
+            ..Default::default()
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let uri = request.uri.to_string();
+        let Some(text) = read_doc(&uri) else {
+            return Err(ErrorData::resource_not_found(
+                format!("no resource {uri:?}"),
+                None,
+            ));
+        };
+        let mime = resources()
+            .into_iter()
+            .find(|r| r.uri == uri)
+            .map(|r| r.mime)
+            .unwrap_or("text/plain");
+        Ok(
+            ReadResourceResult::new(vec![ResourceContents::text(text, uri).with_mime_type(mime)])
+                .into(),
+        )
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {

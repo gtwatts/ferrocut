@@ -25,6 +25,14 @@
 //! thresholds via flags or a config file (passed through verbatim in
 //! `extra_args`).
 //!
+//! Audio expectation ([`ExpectAudio`], default `auto`): a timeline with no
+//! audio (no audio-track clips, and no video clip whose source has an audio
+//! stream) shouldn't fail `missing_audio`. If the checker supports
+//! `--expect-audio auto|yes|no` the engine passes the expectation through;
+//! with an older checker it falls back to `--allow-no-audio` when the
+//! expectation resolves to "no audio" (resolving `auto` by probing the
+//! timeline's sources). Explicit flags in `extra_args` win: nothing is added.
+//!
 //! The binary is optional: if it can't be found, [`check`] returns
 //! [`CheckStatus::Skipped`] instead of failing (graders pass `--require` to make
 //! that an error). Lookup order: explicit path, `FERROCUT_PERCEIVE`, next to the
@@ -110,6 +118,9 @@ pub struct CheckOutcome {
     /// The checker's JSON as printed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub report: Option<Value>,
+    /// Arguments the engine added for the audio expectation (see the module docs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub added_args: Vec<String>,
     pub elapsed_ms: u128,
 }
 
@@ -124,6 +135,7 @@ impl CheckOutcome {
             warnings: vec![],
             message: Some(message.into()),
             report: None,
+            added_args: vec![],
             elapsed_ms: 0,
         }
     }
@@ -155,6 +167,40 @@ impl CheckOutcome {
     }
 }
 
+/// Whether the render should have audio.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpectAudio {
+    /// Audio iff the timeline has any (the checker decides, or the engine
+    /// resolves it for an older checker).
+    #[default]
+    Auto,
+    Yes,
+    No,
+}
+
+impl ExpectAudio {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExpectAudio::Auto => "auto",
+            ExpectAudio::Yes => "yes",
+            ExpectAudio::No => "no",
+        }
+    }
+}
+
+impl std::str::FromStr for ExpectAudio {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "auto" => Ok(ExpectAudio::Auto),
+            "yes" => Ok(ExpectAudio::Yes),
+            "no" => Ok(ExpectAudio::No),
+            _ => Err(format!("expected auto, yes or no, got {s:?}")),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CheckOptions {
     /// Use this binary instead of searching.
@@ -163,6 +209,97 @@ pub struct CheckOptions {
     pub extra_args: Vec<String>,
     /// Kill the checker after this long (reported as an error).
     pub timeout: Option<Duration>,
+    /// Audio expectation (see the module docs).
+    pub expect_audio: ExpectAudio,
+}
+
+/// Does the timeline at `path` have any audio? (Audio-track clips, or video
+/// clips whose source has an audio stream; probes sources.) `None` if it
+/// can't be read.
+pub fn timeline_has_audio(path: &Path) -> Option<bool> {
+    let tl = crate::Timeline::load(path).ok()?;
+    if tl.audio_tracks.iter().any(|t| !t.clips.is_empty()) {
+        return Some(true);
+    }
+    let mut seen = std::collections::HashSet::new();
+    for c in tl.tracks.iter().flat_map(|t| &t.clips) {
+        if c.audio.mute || !seen.insert(c.source.clone()) {
+            continue;
+        }
+        match crate::media::probe(&c.source) {
+            Ok(i) if i.has_audio => return Some(true),
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+    }
+    Some(false)
+}
+
+/// Longest wait for `ferrocut-perceive check --help` (flag detection).
+const HELP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `<bin> check --help` output (empty if it fails or takes longer than `limit`).
+fn check_help(bin: &Path, limit: Duration) -> String {
+    let mut cmd = Command::new(bin);
+    cmd.args(["check", "--help"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let Ok(mut child) = cmd.spawn() else {
+        return String::new();
+    };
+    let mut so = child.stdout.take().expect("piped");
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = so.read_to_string(&mut s);
+        s
+    });
+    let t0 = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if t0.elapsed() < limit => std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                #[cfg(unix)]
+                // SAFETY: plain syscall on the child's own process group.
+                unsafe {
+                    libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return String::new();
+            }
+        }
+    }
+    reader.join().unwrap_or_default()
+}
+
+/// The audio-expectation flags to add for `bin` (see the module docs).
+fn audio_args(bin: &Path, timeline: &Path, opts: &CheckOptions) -> Vec<String> {
+    let given = |f: &str| {
+        opts.extra_args
+            .iter()
+            .any(|a| a == f || a.starts_with(&format!("{f}=")))
+    };
+    if given("--expect-audio") || given("--allow-no-audio") {
+        return vec![];
+    }
+    let limit = opts.timeout.unwrap_or(HELP_TIMEOUT).min(HELP_TIMEOUT);
+    let help = check_help(bin, limit);
+    if help.contains("--expect-audio") {
+        return vec!["--expect-audio".into(), opts.expect_audio.as_str().into()];
+    }
+    let no_audio = match opts.expect_audio {
+        ExpectAudio::No => true,
+        ExpectAudio::Yes => false,
+        ExpectAudio::Auto => timeline_has_audio(timeline) == Some(false),
+    };
+    if no_audio && help.contains("--allow-no-audio") {
+        return vec!["--allow-no-audio".into()];
+    }
+    vec![]
 }
 
 fn is_file(p: &Path) -> bool {
@@ -358,12 +495,14 @@ pub fn check(render: &Path, timeline: &Path, opts: &CheckOptions) -> CheckOutcom
             },
         );
     };
+    let added = audio_args(&bin, timeline, opts);
     let mut cmd = Command::new(&bin);
     cmd.arg("check")
         .arg(render)
         .arg("--timeline")
         .arg(timeline)
         .arg("--json")
+        .args(&added)
         .args(&opts.extra_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -435,6 +574,7 @@ pub fn check(render: &Path, timeline: &Path, opts: &CheckOptions) -> CheckOutcom
         Err(m) => CheckOutcome::new(CheckStatus::Error, m),
     };
     o.binary = Some(bin);
+    o.added_args = added;
     o.elapsed_ms = t0.elapsed().as_millis();
     o
 }

@@ -55,6 +55,9 @@ enum Cmd {
         /// Extra argument for the checker (threshold flags, config file); repeatable.
         #[arg(long = "check-arg", allow_hyphen_values = true)]
         check_args: Vec<String>,
+        /// Audio expectation for --check: auto (audio iff the timeline has any), yes, no.
+        #[arg(long, default_value = "auto")]
+        expect_audio: ferrocut_engine::perceive::ExpectAudio,
         /// Also encode a delivery file from the master (after --check passes):
         /// `mp4` = H.264 + AAC with Cisco's OpenH264, loaded at run time. The codec
         /// must be enabled first (`ferrocut-deliver openh264 enable`, or pass
@@ -92,12 +95,19 @@ enum Cmd {
         /// Kill the checker after this many seconds.
         #[arg(long)]
         timeout: Option<f64>,
+        /// Audio expectation: auto (audio iff the timeline has any: a silent timeline
+        /// doesn't fail missing_audio), yes, no. Passed as --expect-audio when the
+        /// checker supports it, else as --allow-no-audio when it resolves to no.
+        #[arg(long, default_value = "auto")]
+        expect_audio: ferrocut_engine::perceive::ExpectAudio,
         /// Passed to the checker verbatim (after `--`), e.g. threshold flags or a config file.
         #[arg(last = true)]
         args: Vec<String>,
     },
     /// Print the chunk plan (frame/chunk keys) without decoding or touching the GPU.
     Plan { timeline: PathBuf },
+    /// Probe a media file: duration, frame rate, size, streams, audio presence (JSON).
+    Probe { media: PathBuf },
     /// Apply a JSON list of edit operations (split, trim, ripple_delete,
     /// ripple_insert, roll, slip, slide, move, jl_cut) to a timeline, in place
     /// or to `-o`, and append them to the output's journal
@@ -220,6 +230,7 @@ fn main() -> anyhow::Result<()> {
                     probe: !no_probe,
                     journal: !no_journal,
                     plan: show_plan,
+                    ..Default::default()
                 },
             )?;
             if json {
@@ -322,6 +333,7 @@ fn main() -> anyhow::Result<()> {
             perceive,
             require,
             timeout,
+            expect_audio,
             args,
         } => {
             use ferrocut_engine::perceive;
@@ -332,11 +344,16 @@ fn main() -> anyhow::Result<()> {
                     binary: perceive,
                     extra_args: args,
                     timeout: timeout.map(std::time::Duration::from_secs_f64),
+                    expect_audio,
                 },
             );
             println!("{}", serde_json::to_string_pretty(&o)?);
             eprintln!("{}", check_line(&o));
             std::process::exit(o.exit_code_for(require));
+        }
+        Cmd::Probe { media } => {
+            let info = ferrocut_engine::media::probe(&media)?;
+            println!("{}", serde_json::to_string_pretty(&info)?);
         }
         Cmd::Plan { timeline } => {
             let tl = Timeline::load(&timeline)?;
@@ -363,6 +380,7 @@ fn main() -> anyhow::Result<()> {
             cpu,
             check,
             check_args,
+            expect_audio,
             deliver,
             deliver_output,
             deliver_qp,
@@ -522,6 +540,7 @@ fn main() -> anyhow::Result<()> {
                     &timeline,
                     &perceive::CheckOptions {
                         extra_args: check_args,
+                        expect_audio,
                         ..Default::default()
                     },
                 );

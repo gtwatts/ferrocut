@@ -36,6 +36,27 @@
 //! - `jl_cut`: set the clip's audio `in_offset` / `out_offset` (J-cut:
 //!   negative in-offset; L-cut: positive out-offset).
 //!
+//! Building ops (so agents never hand-edit the JSON):
+//! - `add_track`: a new empty video track (`index` 0 = bottom; default on
+//!   top) or audio track (default last).
+//! - `add_clip`: a clip from a media file on a track. The file is probed: it
+//!   must have the stream the track needs (video/audio); `duration` defaults
+//!   to the rest of the media after `source_in`, `start` to the end of the
+//!   track, `id` to the file stem (made unique). The range must be free.
+//! - `add_transition`: a dissolve into `clip` from the clip before it.
+//!   Clips that meet at a cut get the overlap from source handles, `align`ed
+//!   `center` (default: half before, half after the cut), `start` (the
+//!   dissolve starts at the cut: the previous clip runs longer) or `end` (it
+//!   ends at the cut: `clip` starts earlier); nothing else moves. Clips that
+//!   already overlap by at least `duration` just get the transition. With
+//!   zero audio offsets the linked audio gets a matching crossfade.
+//! - `set_param`: set any parameter of a clip, a track (its audio bus) or
+//!   the timeline by name (see [`crate::params`]); `null` removes an
+//!   optional object.
+//! - `set_keyframes`: keyframe an animatable parameter (`replace`, or
+//!   `merge` with the existing keys); `timeline_time` takes key times in
+//!   timeline seconds and converts them to the parameter's time base.
+//!
 //! Clip-local keyframes (audio gain/pan, opacity, transform) keep their
 //! timeline position when an op moves a clip's start without moving its
 //! content (trim-in, roll, slide's right neighbor, split's right part).
@@ -44,7 +65,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail, ensure};
-use ferrocut_core::{Rational, RationalTime};
+use ferrocut_core::{Animatable, Rational, RationalTime};
 use serde::{Deserialize, Serialize};
 
 use crate::timeline::{AudioClip, Clip, ClipAudio, Timeline};
@@ -109,6 +130,84 @@ pub enum EditOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         out_offset: Option<RationalTime>,
     },
+    AddTrack {
+        kind: TrackKind,
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<usize>,
+    },
+    AddClip {
+        track: String,
+        source: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start: Option<RationalTime>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_in: Option<RationalTime>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration: Option<RationalTime>,
+    },
+    AddTransition {
+        clip: String,
+        duration: RationalTime,
+        #[serde(default)]
+        kind: TransitionKind,
+        #[serde(default)]
+        align: Align,
+    },
+    SetParam {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<String>,
+        param: String,
+        value: serde_json::Value,
+    },
+    SetKeyframes {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<String>,
+        param: String,
+        keyframes: Vec<serde_json::Value>,
+        #[serde(default)]
+        mode: KeyMode,
+        #[serde(default)]
+        timeline_time: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackKind {
+    Video,
+    Audio,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionKind {
+    #[default]
+    Dissolve,
+}
+
+/// Where a new dissolve sits relative to the cut.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Align {
+    #[default]
+    Center,
+    Start,
+    End,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyMode {
+    #[default]
+    Replace,
+    Merge,
 }
 
 impl EditOp {
@@ -123,11 +222,28 @@ impl EditOp {
             EditOp::Slide { .. } => "slide",
             EditOp::Move { .. } => "move",
             EditOp::JlCut { .. } => "jl_cut",
+            EditOp::AddTrack { .. } => "add_track",
+            EditOp::AddClip { .. } => "add_clip",
+            EditOp::AddTransition { .. } => "add_transition",
+            EditOp::SetParam { .. } => "set_param",
+            EditOp::SetKeyframes { .. } => "set_keyframes",
         }
     }
     fn target(&self) -> String {
         match self {
-            EditOp::RippleInsert { track, .. } => format!("track {track:?}"),
+            EditOp::RippleInsert { track, .. }
+            | EditOp::AddClip { track, .. }
+            | EditOp::AddTrack { name: track, .. } => format!("track {track:?}"),
+            EditOp::SetParam {
+                clip, track, param, ..
+            }
+            | EditOp::SetKeyframes {
+                clip, track, param, ..
+            } => match (clip, track) {
+                (Some(c), _) => format!("{c}.{param}"),
+                (None, Some(t)) => format!("track {t:?} {param}"),
+                (None, None) => format!("timeline {param}"),
+            },
             EditOp::Split { clip, .. }
             | EditOp::Trim { clip, .. }
             | EditOp::RippleDelete { clip, .. }
@@ -135,7 +251,8 @@ impl EditOp {
             | EditOp::Slip { clip, .. }
             | EditOp::Slide { clip, .. }
             | EditOp::Move { clip, .. }
-            | EditOp::JlCut { clip, .. } => clip.clone(),
+            | EditOp::JlCut { clip, .. }
+            | EditOp::AddTransition { clip, .. } => clip.clone(),
         }
     }
 }
@@ -576,12 +693,23 @@ fn check_bounds<T: Item>(c: &T, media_len: Option<RationalTime>) -> anyhow::Resu
 }
 
 type Probe<'a> = Box<dyn FnMut(&Path) -> Option<RationalTime> + 'a>;
+type InfoProbe<'a> = Box<dyn FnMut(&Path) -> anyhow::Result<MediaFacts> + 'a>;
+
+/// What `add_clip` needs to know about a media file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MediaFacts {
+    pub duration: Option<RationalTime>,
+    pub has_video: bool,
+    pub has_audio: bool,
+}
 
 /// Media length lookup with a cache; `probe` returns `None` if unknown.
 pub struct MediaLengths<'a> {
     probe: Probe<'a>,
+    info: Option<InfoProbe<'a>>,
     cache: HashMap<PathBuf, Option<RationalTime>>,
     base: PathBuf,
+    placeholder: bool,
 }
 
 impl<'a> MediaLengths<'a> {
@@ -592,26 +720,52 @@ impl<'a> MediaLengths<'a> {
     ) -> Self {
         MediaLengths {
             probe: Box::new(probe),
+            info: None,
             cache: HashMap::new(),
             base: base.into(),
+            placeholder: false,
         }
+    }
+    /// Also probe streams for `add_clip` (missing file / missing stream errors,
+    /// default durations).
+    pub fn with_info(mut self, info: impl FnMut(&Path) -> anyhow::Result<MediaFacts> + 'a) -> Self {
+        self.info = Some(Box::new(info));
+        self
     }
     /// No media bounds (unknown lengths).
     pub fn unbounded() -> MediaLengths<'static> {
         MediaLengths::new(".", |_| None)
     }
-    fn get(&mut self, p: &Path) -> Option<RationalTime> {
-        let full = if p.is_relative() {
+    /// Structure only, for pre-checks that must not open media: unknown
+    /// lengths, and `add_clip` without a duration uses a 1 s placeholder.
+    pub fn placeholder() -> MediaLengths<'static> {
+        let mut m = MediaLengths::unbounded();
+        m.placeholder = true;
+        m
+    }
+    fn full(&self, p: &Path) -> PathBuf {
+        if p.is_relative() {
             self.base.join(p)
         } else {
             p.to_path_buf()
-        };
+        }
+    }
+    fn get(&mut self, p: &Path) -> Option<RationalTime> {
+        let full = self.full(p);
         if let Some(v) = self.cache.get(&full) {
             return *v;
         }
         let v = (self.probe)(&full);
         self.cache.insert(full, v);
         v
+    }
+    /// Stream facts, if this lookup probes streams (`Ok(None)`: it doesn't).
+    fn facts(&mut self, p: &Path) -> anyhow::Result<Option<MediaFacts>> {
+        let full = self.full(p);
+        match &mut self.info {
+            Some(f) => f(&full).map(Some),
+            None => Ok(None),
+        }
     }
 }
 
@@ -633,7 +787,11 @@ fn check_track_bounds(
 }
 
 /// Apply one op (without re-validating the whole timeline).
-fn apply_one(tl: &mut Timeline, op: &EditOp) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+fn apply_one(
+    tl: &mut Timeline,
+    op: &EditOp,
+    media: &mut MediaLengths<'_>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
     let sorted = |tl: &mut Timeline, tr: TrackRef, id: &str| {
         on_track!(tl, tr, |clips| sort_track(clips, id))
     };
@@ -865,7 +1023,461 @@ fn apply_one(tl: &mut Timeline, op: &EditOp) -> anyhow::Result<(Change, Vec<Trac
             };
             (change, targets)
         }
+        EditOp::AddTrack { kind, name, index } => add_track(tl, *kind, name, *index)?,
+        EditOp::AddClip {
+            track,
+            source,
+            id,
+            start,
+            source_in,
+            duration,
+        } => add_clip(
+            tl,
+            media,
+            track,
+            source,
+            id.as_deref(),
+            *start,
+            *source_in,
+            *duration,
+        )?,
+        EditOp::AddTransition {
+            clip,
+            duration,
+            kind: TransitionKind::Dissolve,
+            align,
+        } => add_transition(tl, clip, *duration, *align)?,
+        EditOp::SetParam {
+            clip,
+            track,
+            param,
+            value,
+        } => set_param(
+            tl,
+            "set_param",
+            clip.as_deref(),
+            track.as_deref(),
+            param,
+            |_, _| Ok(value.clone()),
+        )?,
+        EditOp::SetKeyframes {
+            clip,
+            track,
+            param,
+            keyframes,
+            mode,
+            timeline_time,
+        } => {
+            let clip_start = match clip {
+                Some(c) => {
+                    let (tr, ci) = locate(tl, c)?;
+                    Some(on_track!(tl, tr, |clips| clips[ci].start()))
+                }
+                None => None,
+            };
+            set_param(
+                tl,
+                "set_keyframes",
+                clip.as_deref(),
+                track.as_deref(),
+                param,
+                |spec, cur| {
+                    crate::params::ensure_animatable(spec)?;
+                    let shift = match (timeline_time, spec.time, clip_start) {
+                        (true, ferrocut_core::TimeBase::ClipLocal, Some(s)) => s.0,
+                        _ => Rational::ZERO,
+                    };
+                    crate::params::keyframes_value(cur, keyframes, shift, *mode == KeyMode::Merge)
+                },
+            )?
+        }
     })
+}
+
+fn add_track(
+    tl: &mut Timeline,
+    kind: TrackKind,
+    name: &str,
+    index: Option<usize>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    ensure!(!name.is_empty(), "add_track: name must not be empty");
+    ensure!(
+        !tl.track_names().any(|n| n == name),
+        "add_track: a track named {name:?} already exists"
+    );
+    let (len, what) = match kind {
+        TrackKind::Video => (tl.tracks.len(), "video"),
+        TrackKind::Audio => (tl.audio_tracks.len(), "audio"),
+    };
+    let i = index.unwrap_or(len);
+    ensure!(
+        i <= len,
+        "add_track: index {i} is past the end ({len} {what} tracks)"
+    );
+    match kind {
+        TrackKind::Video => tl.tracks.insert(
+            i,
+            crate::timeline::Track {
+                name: name.into(),
+                audio: Default::default(),
+                clips: vec![],
+            },
+        ),
+        TrackKind::Audio => tl.audio_tracks.insert(
+            i,
+            crate::timeline::AudioTrack {
+                name: name.into(),
+                bus: Default::default(),
+                clips: vec![],
+            },
+        ),
+    }
+    Ok((
+        Change {
+            op: 0,
+            kind: "add_track",
+            summary: format!("add {what} track {name:?} at index {i}"),
+            span: (z(), z()),
+        },
+        vec![],
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_clip(
+    tl: &mut Timeline,
+    media: &mut MediaLengths<'_>,
+    track: &str,
+    source: &Path,
+    id: Option<&str>,
+    start: Option<RationalTime>,
+    source_in: Option<RationalTime>,
+    duration: Option<RationalTime>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    let tr = track_by_name(tl, track).map_err(|e| {
+        let names: Vec<&str> = tl.track_names().collect();
+        anyhow!("{e} (tracks: {names:?}; add one with add_track)")
+    })?;
+    let facts = media.facts(source)?;
+    if let Some(f) = facts {
+        match tr {
+            TrackRef::Video(_) => ensure!(
+                f.has_video,
+                "{} has no video stream; put it on an audio track",
+                source.display()
+            ),
+            TrackRef::Audio(_) => ensure!(f.has_audio, "{} has no audio stream", source.display()),
+        }
+    }
+    let source_in = source_in.unwrap_or(z());
+    ensure!(source_in >= z(), "add_clip: source_in must be >= 0");
+    let len = facts.and_then(|f| f.duration).or_else(|| media.get(source));
+    let duration = match (duration, len) {
+        (Some(d), _) => d,
+        (None, Some(l)) => {
+            ensure!(
+                l > source_in,
+                "add_clip: source_in {source_in} is past the end of {} ({l})",
+                source.display()
+            );
+            l - source_in
+        }
+        (None, None) if media.placeholder => RationalTime(Rational::ONE),
+        (None, None) => bail!(
+            "add_clip: {} has no known duration; pass `duration`",
+            source.display()
+        ),
+    };
+    ensure!(duration > z(), "add_clip: duration must be positive");
+    let start = match start {
+        Some(s) => s,
+        None => on_track!(tl, tr, |clips| clips
+            .iter()
+            .map(|c| c.end())
+            .max()
+            .unwrap_or(z())),
+    };
+    ensure!(start >= z(), "add_clip: start must be >= 0");
+    let end = start + duration;
+    on_track!(tl, tr, |clips| {
+        if let Some(c) = clips.iter().find(|c| c.start() < end && c.end() > start) {
+            bail!(
+                "add_clip: {start}..{end} overlaps clip {} ({}..{}) on track {track:?}; pick a free range, or use ripple_insert to push clips right",
+                c.id(),
+                c.start(),
+                c.end()
+            );
+        }
+        Ok::<(), anyhow::Error>(())
+    })?;
+    let id = match id {
+        Some(i) => {
+            ensure!(!i.is_empty(), "add_clip: id must not be empty");
+            ensure!(
+                !tl.clip_ids().any(|x| x == i),
+                "add_clip: clip id {i:?} is already used"
+            );
+            i.to_string()
+        }
+        None => {
+            let stem = source
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "clip".into());
+            if tl.clip_ids().any(|x| x == stem) {
+                unique_id(tl, &stem)
+            } else {
+                stem
+            }
+        }
+    };
+    match tr {
+        TrackRef::Video(i) => tl.tracks[i].clips.push(Clip {
+            id: id.clone(),
+            source: source.to_path_buf(),
+            start,
+            source_in,
+            duration,
+            opacity: Animatable::constant(Rational::ONE),
+            transform: None,
+            transition_in: None,
+            audio: ClipAudio::default(),
+        }),
+        TrackRef::Audio(i) => tl.audio_tracks[i].clips.push(AudioClip {
+            id: id.clone(),
+            source: source.to_path_buf(),
+            start,
+            source_in,
+            duration,
+            audio: ClipAudio::default(),
+        }),
+    }
+    Ok((
+        Change {
+            op: 0,
+            kind: "add_clip",
+            summary: format!(
+                "add clip {id} ({}, source {}..{}) at {start}..{end} on {track:?}",
+                source.display(),
+                source_in,
+                source_in + duration
+            ),
+            span: (start, end),
+        },
+        vec![tr],
+    ))
+}
+
+fn add_transition(
+    tl: &mut Timeline,
+    clip: &str,
+    d: RationalTime,
+    align: Align,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    let (tr, _) = locate(tl, clip)?;
+    let TrackRef::Video(ti) = tr else {
+        bail!("add_transition: {clip} is on an audio track (use set_param audio.crossfade_in)");
+    };
+    ensure!(d > z(), "add_transition: duration must be positive");
+    let clips = &mut tl.tracks[ti].clips;
+    clips.sort_by_key(|c| c.start);
+    let ci = clips.iter().position(|c| c.id == clip).expect("located");
+    ensure!(
+        ci > 0,
+        "add_transition: {clip} is the first clip on its track; a dissolve needs a clip before it"
+    );
+    let (a, b) = (clips[ci - 1].clone(), clips[ci].clone());
+    ensure!(
+        b.transition_in.is_none(),
+        "add_transition: {clip} already has a transition_in (set_param transition_in null to remove it)"
+    );
+    let overlap = a.end() - b.start;
+    let half = RationalTime(d.0 / Rational::from_int(2));
+    let (region, how) = if overlap > z() {
+        ensure!(
+            overlap >= d,
+            "add_transition: {} and {clip} overlap by {overlap}, less than the {d} dissolve",
+            a.id
+        );
+        ((b.start, b.start + d), "existing overlap".to_string())
+    } else {
+        ensure!(
+            overlap == z(),
+            "add_transition: there is a gap of {} between {} (ends {}) and {clip} (starts {}); the clips must meet",
+            z() - overlap,
+            a.id,
+            a.end(),
+            b.start
+        );
+        let cut = b.start;
+        let (ext_a, ext_b) = match align {
+            Align::Center => (half, d - half),
+            Align::Start => (d, z()),
+            Align::End => (z(), d),
+        };
+        ensure!(
+            ext_a < b.duration && ext_b < a.duration,
+            "add_transition: a {d} dissolve doesn't fit between {} and {clip}",
+            a.id
+        );
+        // `a` runs longer (source handle after its out point); `b` starts
+        // earlier (handle before its in point), content staying in place.
+        let pa = &mut clips[ci - 1];
+        pa.duration = pa.duration + ext_a;
+        let pb = &mut clips[ci];
+        pb.start = pb.start - ext_b;
+        pb.source_in = pb.source_in - ext_b;
+        pb.duration = pb.duration + ext_b;
+        pb.shift_local_keys(ext_b.0);
+        (
+            (cut - ext_b, cut + ext_a),
+            format!(
+                "{} extended by {ext_a}, {clip} starts {ext_b} earlier",
+                a.id
+            ),
+        )
+    };
+    let pb = &mut clips[ci];
+    pb.transition_in = Some(crate::timeline::Transition::Dissolve { duration: d });
+    let a_audio = &clips[ci - 1].audio;
+    let xfade = a_audio.out_offset == z()
+        && clips[ci].audio.in_offset == z()
+        && clips[ci].audio.crossfade_in.is_none()
+        && clips[ci - 1].end() == clips[ci].start + d;
+    if xfade {
+        clips[ci].audio.crossfade_in = Some(crate::timeline::FadeSpec {
+            duration: d,
+            curve: Default::default(),
+        });
+    }
+    Ok((
+        Change {
+            op: 0,
+            kind: "add_transition",
+            summary: format!(
+                "dissolve {} -> {clip} over {}..{} ({how}{})",
+                a.id,
+                region.0,
+                region.1,
+                if xfade { "; audio crossfade" } else { "" }
+            ),
+            span: region,
+        },
+        vec![tr],
+    ))
+}
+
+/// Shared by set_param / set_keyframes: `make(spec, current)` builds the new value.
+fn set_param(
+    tl: &mut Timeline,
+    kind: &'static str,
+    clip: Option<&str>,
+    track: Option<&str>,
+    name: &str,
+    make: impl FnOnce(
+        &ferrocut_core::ParamSpec,
+        Option<&serde_json::Value>,
+    ) -> anyhow::Result<serde_json::Value>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    use crate::params::{self, Scope};
+    let frame = (tl.output.width, tl.output.height);
+    ensure!(
+        !(clip.is_some() && track.is_some()),
+        "give clip or track, not both (neither = the timeline)"
+    );
+    let (scope, tr) = match (clip, track) {
+        (Some(c), _) => {
+            let (tr, ci) = locate(tl, c)?;
+            (
+                match tr {
+                    TrackRef::Video(_) => Scope::VideoClip,
+                    TrackRef::Audio(_) => Scope::AudioClip,
+                },
+                Some((tr, Some(ci))),
+            )
+        }
+        (None, Some(t)) => {
+            let tr = track_by_name(tl, t)?;
+            (
+                Scope::Track {
+                    audio_track: matches!(tr, TrackRef::Audio(_)),
+                },
+                Some((tr, None)),
+            )
+        }
+        (None, None) => (Scope::Timeline, None),
+    };
+    let (spec, comp) = params::lookup(scope, name)?;
+    let mut obj = match tr {
+        Some((TrackRef::Video(i), Some(ci))) => serde_json::to_value(&tl.tracks[i].clips[ci])?,
+        Some((TrackRef::Audio(i), Some(ci))) => {
+            serde_json::to_value(&tl.audio_tracks[i].clips[ci])?
+        }
+        Some((TrackRef::Video(i), None)) => serde_json::to_value(&tl.tracks[i])?,
+        Some((TrackRef::Audio(i), None)) => serde_json::to_value(&tl.audio_tracks[i])?,
+        None => serde_json::to_value(&*tl)?,
+    };
+    let cur = params::get(&obj, scope, spec, comp);
+    let before = cur.clone().unwrap_or(serde_json::Value::Null);
+    let value = make(spec, cur.as_ref())?;
+    params::set(&mut obj, scope, spec, comp, value.clone(), frame)?;
+    params::check_range(&obj, scope, spec)?;
+    let bad = |e: serde_json::Error| anyhow!("{name}: invalid value {value}: {e}");
+    let span = match tr {
+        Some((TrackRef::Video(i), Some(ci))) => {
+            let c: Clip = serde_json::from_value(obj).map_err(bad)?;
+            tl.tracks[i].clips[ci] = c;
+            let c = &tl.tracks[i].clips[ci];
+            let (a0, a1) = c.audio_region();
+            (c.start.min(a0), c.end().max(a1))
+        }
+        Some((TrackRef::Audio(i), Some(ci))) => {
+            let c: AudioClip = serde_json::from_value(obj).map_err(bad)?;
+            tl.audio_tracks[i].clips[ci] = c;
+            tl.audio_tracks[i].clips[ci].audio_region()
+        }
+        Some((TrackRef::Video(i), None)) => {
+            tl.tracks[i] = serde_json::from_value(obj).map_err(bad)?;
+            (z(), tl.duration())
+        }
+        Some((TrackRef::Audio(i), None)) => {
+            tl.audio_tracks[i] = serde_json::from_value(obj).map_err(bad)?;
+            (z(), tl.duration())
+        }
+        None => {
+            let old_end = tl.duration();
+            let new: Timeline = serde_json::from_value(obj).map_err(bad)?;
+            *tl = new;
+            (z(), old_end.max(tl.duration()))
+        }
+    };
+    let after = {
+        let obj = match tr {
+            Some((TrackRef::Video(i), Some(ci))) => serde_json::to_value(&tl.tracks[i].clips[ci])?,
+            Some((TrackRef::Audio(i), Some(ci))) => {
+                serde_json::to_value(&tl.audio_tracks[i].clips[ci])?
+            }
+            Some((TrackRef::Video(i), None)) => serde_json::to_value(&tl.tracks[i])?,
+            Some((TrackRef::Audio(i), None)) => serde_json::to_value(&tl.audio_tracks[i])?,
+            None => serde_json::to_value(&*tl)?,
+        };
+        params::get(&obj, scope, spec, comp).unwrap_or(serde_json::Value::Null)
+    };
+    let target = match (clip, track) {
+        (Some(c), _) => c.to_string(),
+        (None, Some(t)) => format!("track {t:?}"),
+        (None, None) => "timeline".into(),
+    };
+    Ok((
+        Change {
+            op: 0,
+            kind,
+            summary: format!("{target} {name}: {before} -> {after}"),
+            span,
+        },
+        tr.map(|(t, _)| vec![t]).unwrap_or_default(),
+    ))
 }
 
 /// Apply `ops` in order. On error nothing is returned (the input is untouched).
@@ -878,7 +1490,7 @@ pub fn apply(
     let mut changes = Vec::new();
     for (i, op) in ops.iter().enumerate() {
         let ctx = || format!("op {i} ({} {})", op.kind(), op.target());
-        let (mut ch, touched) = apply_one(&mut out, op).with_context(ctx)?;
+        let (mut ch, touched) = apply_one(&mut out, op, media).with_context(ctx)?;
         for tr in touched {
             on_track!(out, tr, |clips| clips.sort_by_key(|c| c.start()));
             check_track_bounds(&out, tr, media).with_context(ctx)?;

@@ -123,11 +123,11 @@ fn demo_program(target: Option<f64>) -> (Program, Vec<SourceAudio>) {
     let mut music_t = track("music", vec![m1, m2]);
     music_t.duck = Some(Duck {
         keys: vec![1],
-        threshold_db: -30.0,
-        ratio: 8.0,
-        attack_s: 0.01,
-        release_s: 0.25,
-        range_db: 15.0,
+        threshold_db: Animatable::Constant(Rational::from_int(-30)),
+        ratio: Animatable::Constant(Rational::from_int(8)),
+        attack_ms: Animatable::Constant(Rational::from_int(10)),
+        release_ms: Animatable::Constant(Rational::from_int(250)),
+        range_db: Animatable::Constant(Rational::from_int(15)),
     });
     let mut d = clip("d", 1, RATE as i64 / 2, 9 * RATE as i64, -(RATE as i64) / 2);
     d.pan = keys(&[("0", "-1/2", Interp::Linear), ("8", "1/2", Interp::Linear)]);

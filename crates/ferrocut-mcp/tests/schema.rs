@@ -51,6 +51,11 @@ fn every_edit_op_has_a_strict_schema_whose_example_parses() {
         "slide",
         "move",
         "jl_cut",
+        "add_track",
+        "add_clip",
+        "add_transition",
+        "set_param",
+        "set_keyframes",
     ]
     .into_iter()
     .map(String::from)
@@ -62,6 +67,18 @@ fn every_edit_op_has_a_strict_schema_whose_example_parses() {
 }
 
 fn sample(p: &Value) -> Value {
+    if let Some(e) = p.get("enum") {
+        return e[0].clone();
+    }
+    if let Some(c) = p.get("const") {
+        return c.clone();
+    }
+    if p.get("type") == Some(&Value::from("integer")) {
+        return Value::from(0);
+    }
+    if p.get("type") == Some(&Value::from("array")) {
+        return serde_json::json!([{ "t": "0", "v": "1" }]);
+    }
     if p.get("type") == Some(&Value::from("boolean")) {
         return Value::Bool(true);
     }
@@ -93,6 +110,8 @@ fn every_tool_schema_is_a_strict_object() {
         names,
         [
             "timeline_get",
+            "timeline_schema",
+            "media_probe",
             "edit_apply",
             "diff",
             "plan",
