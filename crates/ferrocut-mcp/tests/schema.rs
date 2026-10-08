@@ -158,7 +158,12 @@ fn every_tool_schema_is_a_strict_object() {
             "log",
             "undo",
             "branch",
-            "openh264"
+            "openh264",
+            "capabilities",
+            "effects_catalog",
+            "scopes_read",
+            "timeline_import",
+            "timeline_export"
         ]
     );
     for t in &tools {

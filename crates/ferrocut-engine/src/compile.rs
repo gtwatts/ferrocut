@@ -95,7 +95,8 @@ fn build(
                         end: c.end(),
                         dissolve_in: None,
                     },
-                    stack: EffectStack::new(format!("clip {}", c.id), &c.effects, c.start)?,
+                    stack: EffectStack::new(format!("clip {}", c.id), &c.effects, c.start)?
+                        .with_frame_rate(tl.output.fps),
                     opacity: c.opacity.clone(),
                 });
             }
@@ -160,7 +161,8 @@ fn build(
             let mut top = g.add(Arc::new(clip), vec![src]);
             if has_fx {
                 let node = EffectNode {
-                    stack: EffectStack::new(format!("clip {}", c.id), &c.effects, c.start)?,
+                    stack: EffectStack::new(format!("clip {}", c.id), &c.effects, c.start)?
+                        .with_frame_rate(tl.output.fps),
                     opacity: Some((c.opacity.clone(), c.start)),
                 };
                 top = g.add(Arc::new(node), vec![top]);
@@ -211,7 +213,8 @@ fn build(
         if !track.effects.is_empty() {
             let owner = format!("track {:?}", track.name);
             let node = EffectNode {
-                stack: EffectStack::new(owner, &track.effects, RationalTime::ZERO)?,
+                stack: EffectStack::new(owner, &track.effects, RationalTime::ZERO)?
+                    .with_frame_rate(tl.output.fps),
                 opacity: None,
             };
             layer = g.add(Arc::new(node), vec![layer]);

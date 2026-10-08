@@ -1,0 +1,37 @@
+{
+  "name": "Storytold interchange render proof",
+  "output": {
+    "width": 640,
+    "height": 360,
+    "fps": 24,
+    "duration": "3/2",
+    "gop": 12
+  },
+  "tracks": [
+    {
+      "name": "Picture",
+      "clips": [
+        {
+          "id": "a",
+          "source": "/tmp/ferrocut-storytold-showcase.mkv",
+          "start": 0,
+          "source_in": 0,
+          "duration": "3/4",
+          "audio": {
+            "mute": true
+          }
+        },
+        {
+          "id": "b",
+          "source": "/tmp/ferrocut-storytold-showcase.mkv",
+          "start": "3/4",
+          "source_in": 1,
+          "duration": "3/4",
+          "audio": {
+            "mute": true
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -10,12 +10,15 @@
 //! linear working space. tiny-skia supplies antialiased 8-bit geometric coverage;
 //! color/gradient evaluation remains floating point through ACEScg half-float
 //! output. Gradient offsets are clamped, then stably sorted at each sample;
-//! coincident stops form hard edges. Nonnegative geometry/style values are
-//! clamped at evaluation to handle easing overshoot. A zero-width stroke is
+//! coincident stops form hard edges. Legacy dimensions and stroke/style values
+//! are clamped at evaluation to handle easing overshoot. New polystar/operator
+//! values have explicit bounds, checked at keys and evaluated samples.
+//! A zero-width stroke is
 //! invisible (not a device-dependent hairline).
 
 use std::sync::Arc;
 
+use effectcraft_path::{BezPath, PathEl, ops};
 use ferrocut_colorspace::{Transfer, named};
 use ferrocut_core::{
     Animatable, ColorSpace, CpuFrame, Frame, NodeError, NodeHash, Pull, Rational, RationalTime,
@@ -30,9 +33,14 @@ use tiny_skia::{
 
 use crate::generator::{Color, GradientSpace};
 
-pub const VECTOR_VERSION: &[u8] = b"vector.v1";
+pub const VECTOR_VERSION: &[u8] = b"vector.v2.effectcraft-path.6943872";
 /// Bounds temporary CPU raster storage to roughly 1.6 GiB at the upper limit.
 pub const MAX_VECTOR_PIXELS: usize = 64 * 1024 * 1024;
+/// Operator stacks and expanded paths have separate limits from legacy paths.
+pub const MAX_VECTOR_OPERATORS: usize = 32;
+pub const MAX_OPERATOR_ELEMENTS: usize = 32_768;
+const MAX_BOOLEAN_ELEMENTS: usize = 512;
+const MAX_OPERATOR_COORDINATE: f64 = 1_000_000.0;
 
 fn zero() -> Animatable {
     Animatable::constant(Rational::ZERO)
@@ -42,6 +50,24 @@ fn one() -> Animatable {
 }
 fn four() -> Animatable {
     Animatable::constant(Rational::from_int(4))
+}
+fn ten() -> Animatable {
+    Animatable::constant(Rational::from_int(10))
+}
+fn two() -> Animatable {
+    Animatable::constant(Rational::from_int(2))
+}
+fn fifty() -> Animatable {
+    Animatable::constant(Rational::from_int(50))
+}
+fn hundred() -> Animatable {
+    Animatable::constant(Rational::from_int(100))
+}
+fn origin() -> [Animatable; 2] {
+    [zero(), zero()]
+}
+fn yes() -> bool {
+    true
 }
 fn default_fill() -> Option<VectorPaint> {
     Some(VectorPaint::Solid {
@@ -53,6 +79,9 @@ fn default_fill() -> Option<VectorPaint> {
 #[serde(deny_unknown_fields)]
 pub struct VectorSpec {
     pub geometry: VectorGeometry,
+    /// Applied in order before fill/stroke; omitted is the original renderer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operators: Vec<VectorOperator>,
     #[serde(default = "default_fill")]
     pub fill: Option<VectorPaint>,
     #[serde(default)]
@@ -78,9 +107,115 @@ pub enum VectorGeometry {
         center: [Animatable; 2],
         radius: [Animatable; 2],
     },
+    Polygon {
+        center: [Animatable; 2],
+        points: Animatable,
+        radius: Animatable,
+        #[serde(default = "zero")]
+        rotation: Animatable,
+        #[serde(default = "zero")]
+        roundness: Animatable,
+    },
+    Star {
+        center: [Animatable; 2],
+        points: Animatable,
+        inner_radius: Animatable,
+        outer_radius: Animatable,
+        #[serde(default = "zero")]
+        rotation: Animatable,
+        #[serde(default = "zero")]
+        inner_roundness: Animatable,
+        #[serde(default = "zero")]
+        outer_roundness: Animatable,
+    },
     Path {
         commands: Vec<VectorCommand>,
     },
+}
+
+/// Native, ordered EffectCraft path operations. All numeric leaves use the
+/// generator's source clock, including wiggle's intrinsic time input.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VectorOperator {
+    Trim {
+        #[serde(default = "zero")]
+        start: Animatable,
+        #[serde(default = "hundred")]
+        end: Animatable,
+        #[serde(default = "zero")]
+        offset: Animatable,
+        #[serde(default)]
+        mode: VectorTrimMode,
+    },
+    RoundCorners {
+        radius: Animatable,
+    },
+    Offset {
+        amount: Animatable,
+        #[serde(default)]
+        join: VectorJoin,
+        #[serde(default = "four")]
+        miter_limit: Animatable,
+        #[serde(default = "one")]
+        copies: Animatable,
+        #[serde(default = "zero")]
+        copy_offset: Animatable,
+    },
+    PuckerBloat {
+        amount: Animatable,
+    },
+    Zigzag {
+        size: Animatable,
+        #[serde(default = "one")]
+        ridges: Animatable,
+        #[serde(default)]
+        smooth: bool,
+    },
+    Twist {
+        angle: Animatable,
+        #[serde(default = "origin")]
+        center: [Animatable; 2],
+    },
+    Wiggle {
+        size: Animatable,
+        #[serde(default = "ten")]
+        detail: Animatable,
+        #[serde(default = "yes")]
+        smooth: bool,
+        #[serde(default = "two")]
+        speed: Animatable,
+        #[serde(default = "fifty")]
+        correlation: Animatable,
+        #[serde(default = "zero")]
+        phase: Animatable,
+        #[serde(default = "zero")]
+        seed: Animatable,
+    },
+    Reverse {},
+    Merge {
+        #[serde(default)]
+        mode: VectorMergeMode,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorTrimMode {
+    #[default]
+    Simultaneous,
+    Individual,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorMergeMode {
+    #[default]
+    Merge,
+    Add,
+    Subtract,
+    Intersect,
+    Exclude,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,6 +316,182 @@ fn vec2<'a>(out: &mut Vec<(String, &'a Animatable)>, prefix: &str, p: &'a [Anima
     out.push((format!("{prefix}.x"), &p[0]));
     out.push((format!("{prefix}.y"), &p[1]));
 }
+fn vec2_mut<'a>(
+    out: &mut Vec<(String, &'a mut Animatable)>,
+    prefix: &str,
+    p: &'a mut [Animatable; 2],
+) {
+    for (name, a) in ["x", "y"].into_iter().zip(p) {
+        out.push((format!("{prefix}.{name}"), a));
+    }
+}
+fn color_params_mut<'a>(
+    out: &mut Vec<(String, &'a mut Animatable)>,
+    prefix: &str,
+    c: &'a mut Color,
+) {
+    for (a, name) in c.0.iter_mut().zip(["r", "g", "b", "a"]) {
+        out.push((format!("{prefix}.{name}"), a));
+    }
+}
+
+// One field list supplies both immutable and mutable visitors. Their identical
+// paths are the boundary used by expression baking, editing, and source shifts.
+macro_rules! geometry_params {
+    ($geometry:expr, $out:ident, $vec2:ident, $iter:ident) => {
+        match $geometry {
+            VectorGeometry::Rectangle {
+                x,
+                y,
+                width,
+                height,
+                radius,
+            } => {
+                for (name, a) in [
+                    ("x", x),
+                    ("y", y),
+                    ("width", width),
+                    ("height", height),
+                    ("radius", radius),
+                ] {
+                    $out.push((format!("geometry.{name}"), a));
+                }
+            }
+            VectorGeometry::Ellipse { center, radius } => {
+                $vec2(&mut $out, "geometry.center", center);
+                $vec2(&mut $out, "geometry.radius", radius);
+            }
+            VectorGeometry::Polygon {
+                center,
+                points,
+                radius,
+                rotation,
+                roundness,
+            } => {
+                $vec2(&mut $out, "geometry.center", center);
+                for (name, a) in [
+                    ("points", points),
+                    ("radius", radius),
+                    ("rotation", rotation),
+                    ("roundness", roundness),
+                ] {
+                    $out.push((format!("geometry.{name}"), a));
+                }
+            }
+            VectorGeometry::Star {
+                center,
+                points,
+                inner_radius,
+                outer_radius,
+                rotation,
+                inner_roundness,
+                outer_roundness,
+            } => {
+                $vec2(&mut $out, "geometry.center", center);
+                for (name, a) in [
+                    ("points", points),
+                    ("inner_radius", inner_radius),
+                    ("outer_radius", outer_radius),
+                    ("rotation", rotation),
+                    ("inner_roundness", inner_roundness),
+                    ("outer_roundness", outer_roundness),
+                ] {
+                    $out.push((format!("geometry.{name}"), a));
+                }
+            }
+            VectorGeometry::Path { commands } => {
+                for (i, c) in commands.$iter().enumerate() {
+                    let base = format!("geometry.commands.{i}");
+                    match c {
+                        VectorCommand::MoveTo { point } | VectorCommand::LineTo { point } => {
+                            $vec2(&mut $out, &format!("{base}.point"), point)
+                        }
+                        VectorCommand::QuadTo { control, to } => {
+                            $vec2(&mut $out, &format!("{base}.control"), control);
+                            $vec2(&mut $out, &format!("{base}.to"), to);
+                        }
+                        VectorCommand::CubicTo {
+                            control1,
+                            control2,
+                            to,
+                        } => {
+                            $vec2(&mut $out, &format!("{base}.control1"), control1);
+                            $vec2(&mut $out, &format!("{base}.control2"), control2);
+                            $vec2(&mut $out, &format!("{base}.to"), to);
+                        }
+                        VectorCommand::Close => {}
+                    }
+                }
+            }
+        }
+    };
+}
+
+macro_rules! operator_params {
+    ($op:expr, $prefix:expr, $out:ident, $vec2:ident) => {
+        match $op {
+            VectorOperator::Trim {
+                start, end, offset, ..
+            } => {
+                for (name, a) in [("start", start), ("end", end), ("offset", offset)] {
+                    $out.push((format!("{}.{name}", $prefix), a));
+                }
+            }
+            VectorOperator::RoundCorners { radius } => {
+                $out.push((format!("{}.radius", $prefix), radius))
+            }
+            VectorOperator::Offset {
+                amount,
+                miter_limit,
+                copies,
+                copy_offset,
+                ..
+            } => {
+                for (name, a) in [
+                    ("amount", amount),
+                    ("miter_limit", miter_limit),
+                    ("copies", copies),
+                    ("copy_offset", copy_offset),
+                ] {
+                    $out.push((format!("{}.{name}", $prefix), a));
+                }
+            }
+            VectorOperator::PuckerBloat { amount } => {
+                $out.push((format!("{}.amount", $prefix), amount))
+            }
+            VectorOperator::Zigzag { size, ridges, .. } => {
+                for (name, a) in [("size", size), ("ridges", ridges)] {
+                    $out.push((format!("{}.{name}", $prefix), a));
+                }
+            }
+            VectorOperator::Twist { angle, center } => {
+                $out.push((format!("{}.angle", $prefix), angle));
+                $vec2(&mut $out, &format!("{}.center", $prefix), center);
+            }
+            VectorOperator::Wiggle {
+                size,
+                detail,
+                speed,
+                correlation,
+                phase,
+                seed,
+                ..
+            } => {
+                for (name, a) in [
+                    ("size", size),
+                    ("detail", detail),
+                    ("speed", speed),
+                    ("correlation", correlation),
+                    ("phase", phase),
+                    ("seed", seed),
+                ] {
+                    $out.push((format!("{}.{name}", $prefix), a));
+                }
+            }
+            VectorOperator::Reverse {} | VectorOperator::Merge { .. } => {}
+        }
+    };
+}
 
 fn color_params<'a>(out: &mut Vec<(String, &'a Animatable)>, prefix: &str, c: &'a Color) {
     for (a, n) in c.0.iter().zip(["r", "g", "b", "a"]) {
@@ -189,6 +500,28 @@ fn color_params<'a>(out: &mut Vec<(String, &'a Animatable)>, prefix: &str, c: &'
 }
 
 impl VectorPaint {
+    fn all_mut<'a>(&'a mut self, prefix: &str, out: &mut Vec<(String, &'a mut Animatable)>) {
+        match self {
+            Self::Solid { color } => color_params_mut(out, &format!("{prefix}.color"), color),
+            Self::LinearGradient {
+                start, end, stops, ..
+            } => {
+                vec2_mut(out, &format!("{prefix}.start"), start);
+                vec2_mut(out, &format!("{prefix}.end"), end);
+                stop_params_mut(out, prefix, stops);
+            }
+            Self::RadialGradient {
+                center,
+                radius,
+                stops,
+                ..
+            } => {
+                vec2_mut(out, &format!("{prefix}.center"), center);
+                out.push((format!("{prefix}.radius"), radius));
+                stop_params_mut(out, prefix, stops);
+            }
+        }
+    }
     fn all<'a>(&'a self, prefix: &str, out: &mut Vec<(String, &'a Animatable)>) {
         match self {
             Self::Solid { color } => color_params(out, &format!("{prefix}.color"), color),
@@ -241,58 +574,25 @@ fn stop_params<'a>(out: &mut Vec<(String, &'a Animatable)>, prefix: &str, stops:
         color_params(out, &format!("{prefix}.stops.{i}.color"), &stop.color);
     }
 }
+fn stop_params_mut<'a>(
+    out: &mut Vec<(String, &'a mut Animatable)>,
+    prefix: &str,
+    stops: &'a mut [VectorStop],
+) {
+    for (i, stop) in stops.iter_mut().enumerate() {
+        out.push((format!("{prefix}.stops.{i}.offset"), &mut stop.offset));
+        color_params_mut(out, &format!("{prefix}.stops.{i}.color"), &mut stop.color);
+    }
+}
 
 impl VectorSpec {
     /// Numeric leaves, with paths relative to this shape. Vector/color component
     /// names follow the engine parameter registry's x/y and r/g/b/a convention.
     pub fn all(&self) -> Vec<(String, &Animatable)> {
         let mut out = Vec::new();
-        match &self.geometry {
-            VectorGeometry::Rectangle {
-                x,
-                y,
-                width,
-                height,
-                radius,
-            } => {
-                for (name, a) in [
-                    ("x", x),
-                    ("y", y),
-                    ("width", width),
-                    ("height", height),
-                    ("radius", radius),
-                ] {
-                    out.push((format!("geometry.{name}"), a));
-                }
-            }
-            VectorGeometry::Ellipse { center, radius } => {
-                vec2(&mut out, "geometry.center", center);
-                vec2(&mut out, "geometry.radius", radius);
-            }
-            VectorGeometry::Path { commands } => {
-                for (i, c) in commands.iter().enumerate() {
-                    let base = format!("geometry.commands.{i}");
-                    match c {
-                        VectorCommand::MoveTo { point } | VectorCommand::LineTo { point } => {
-                            vec2(&mut out, &format!("{base}.point"), point);
-                        }
-                        VectorCommand::QuadTo { control, to } => {
-                            vec2(&mut out, &format!("{base}.control"), control);
-                            vec2(&mut out, &format!("{base}.to"), to);
-                        }
-                        VectorCommand::CubicTo {
-                            control1,
-                            control2,
-                            to,
-                        } => {
-                            vec2(&mut out, &format!("{base}.control1"), control1);
-                            vec2(&mut out, &format!("{base}.control2"), control2);
-                            vec2(&mut out, &format!("{base}.to"), to);
-                        }
-                        VectorCommand::Close => {}
-                    }
-                }
-            }
+        geometry_params!(&self.geometry, out, vec2, iter);
+        for (i, op) in self.operators.iter().enumerate() {
+            operator_params!(op, format!("operators.{i}"), out, vec2);
         }
         if let Some(fill) = &self.fill {
             fill.all("fill", &mut out);
@@ -309,10 +609,49 @@ impl VectorSpec {
         out
     }
 
+    pub fn all_mut(&mut self) -> Vec<(String, &mut Animatable)> {
+        let mut out = Vec::new();
+        geometry_params!(&mut self.geometry, out, vec2_mut, iter_mut);
+        for (i, op) in self.operators.iter_mut().enumerate() {
+            operator_params!(op, format!("operators.{i}"), out, vec2_mut);
+        }
+        if let Some(fill) = &mut self.fill {
+            fill.all_mut("fill", &mut out);
+        }
+        if let Some(stroke) = &mut self.stroke {
+            stroke.paint.all_mut("stroke.paint", &mut out);
+            out.push(("stroke.width".into(), &mut stroke.width));
+            out.push(("stroke.miter_limit".into(), &mut stroke.miter_limit));
+            out.push(("stroke.dash_offset".into(), &mut stroke.dash_offset));
+            for (i, dash) in stroke.dashes.iter_mut().enumerate() {
+                out.push((format!("stroke.dashes.{i}"), dash));
+            }
+        }
+        out
+    }
+
+    pub fn animatables(&self) -> Vec<(String, &Animatable)> {
+        self.all()
+    }
+    pub fn animatables_mut(&mut self) -> Vec<(String, &mut Animatable)> {
+        self.all_mut()
+    }
+
     /// Validate structure and animation tracks. Numeric evaluation clamps
     /// color/offset to [0,1] and dimensions/width/dashes to nonnegative values;
     /// this remains safe before expressions have been baked by the engine.
     pub fn validate(&self) -> Result<(), String> {
+        if self.operators.len() > MAX_VECTOR_OPERATORS {
+            return Err(format!(
+                "operators: at most {MAX_VECTOR_OPERATORS} operators are allowed"
+            ));
+        }
+        self.geometry.validate_polystar()?;
+        for (i, operator) in self.operators.iter().enumerate() {
+            operator
+                .validate()
+                .map_err(|e| format!("operators.{i}: {e}"))?;
+        }
         if let VectorGeometry::Path { commands } = &self.geometry {
             if commands.is_empty() || commands.len() > 100_000 {
                 return Err("geometry.commands: expected 1..=100000 path commands".into());
@@ -372,6 +711,10 @@ impl VectorSpec {
 
     pub fn is_animated(&self) -> bool {
         self.all().iter().any(|(_, a)| a.is_animated())
+            || self
+                .operators
+                .iter()
+                .any(VectorOperator::has_intrinsic_animation)
     }
 
     pub fn hash_into(&self, h: &mut blake3::Hasher) {
@@ -407,13 +750,34 @@ impl VectorSpec {
         }
         let mut value = serde_json::to_value(self).expect("vector serializes");
         sample(&mut value, t);
+        // Constant wiggle knobs still produce time-varying geometry. Include
+        // the actual source clock only when that sample's wiggle is active.
+        if self.operators.iter().any(|op| op.wiggles_at(t)) {
+            value.as_object_mut().expect("vector object").insert(
+                "wiggle_source_time".into(),
+                serde_json::Value::String(format!("{:016x}", t.0.to_f64().to_bits())),
+            );
+        }
         serde_json::to_vec(&value).expect("sampled vector serializes")
     }
 
     /// Render a full-window, premultiplied linear ACEScg CPU frame. No GPU or
     /// external renderer is required. Geometry outside the frame is clipped.
     pub fn rasterize(&self, t: RationalTime, width: u32, height: u32) -> Result<CpuFrame, String> {
+        self.rasterize_checked(t, width, height, &|| Ok(()))
+    }
+
+    fn rasterize_checked(
+        &self,
+        t: RationalTime,
+        width: u32,
+        height: u32,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<CpuFrame, String> {
+        check()?;
         self.validate()?;
+        // Build and validate the shape before allocating the frame buffers.
+        let path = self.operated_path(t, check)?;
         let count = (width as usize)
             .checked_mul(height as usize)
             .filter(|n| *n > 0 && *n <= MAX_VECTOR_PIXELS)
@@ -423,7 +787,8 @@ impl VectorSpec {
             .try_reserve_exact(count)
             .map_err(|e| format!("vector frame allocation: {e}"))?;
         pixels.resize(count, [0.0; 4]);
-        if let Some(path) = self.geometry.path(t)? {
+        if let Some(path) = path {
+            check()?;
             if let Some(fill) = &self.fill {
                 let mut mask = Mask::new(width, height).ok_or("invalid vector mask dimensions")?;
                 let rule = match self.fill_rule {
@@ -434,6 +799,7 @@ impl VectorSpec {
                 shade(&mut pixels, &mask, &PaintAt::new(fill, t)?, width);
             }
             if let Some(stroke) = &self.stroke {
+                check()?;
                 let stroke_width = nonnegative(&stroke.width, t)?;
                 if stroke_width > 0.0 {
                     let dashes: Vec<f32> = stroke
@@ -503,8 +869,355 @@ impl VectorSpec {
         for p in pixels {
             output.extend(p.map(f16::from_f32));
         }
+        check()?;
         Ok(CpuFrame::new(width, height, ColorSpace::acescg(), output))
     }
+
+    fn operated_path(
+        &self,
+        t: RationalTime,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<Option<Path>, String> {
+        let Some(path) = self.geometry.path(t)? else {
+            return Ok(None);
+        };
+        if self.operators.is_empty() {
+            return Ok(Some(path));
+        }
+        let mut paths = native_paths(&path);
+        validate_paths(&paths, MAX_OPERATOR_ELEMENTS)?;
+        for (i, operator) in self.operators.iter().enumerate() {
+            check()?;
+            paths = operator
+                .apply(&paths, t)
+                .map_err(|e| format!("operators.{i}: {e}"))?;
+            validate_paths(&paths, MAX_OPERATOR_ELEMENTS)
+                .map_err(|e| format!("operators.{i}: {e}"))?;
+        }
+        skia_paths(&paths)
+    }
+}
+
+fn validate_range(a: &Animatable, min: f64, max: f64, name: &str) -> Result<(), String> {
+    // The engine validates expressions after baking; an unbaked expression
+    // may have an unrelated fallback value (or the implicit zero).
+    if a.is_expression() {
+        return Ok(());
+    }
+    let (lo, hi) = a.key_range();
+    if lo.to_f64() < min || hi.to_f64() > max {
+        Err(format!("{name}: keys must be in {min}..={max}"))
+    } else {
+        Ok(())
+    }
+}
+
+fn bounded(a: &Animatable, t: RationalTime, min: f64, max: f64, name: &str) -> Result<f64, String> {
+    let value = a.eval(t);
+    if value.is_finite() && (min..=max).contains(&value) {
+        Ok(value)
+    } else {
+        Err(format!(
+            "{name}: evaluated value must be finite and in {min}..={max}"
+        ))
+    }
+}
+
+impl VectorOperator {
+    fn bounds(&self) -> Vec<(&'static str, &Animatable, f64, f64)> {
+        match self {
+            Self::Trim {
+                start, end, offset, ..
+            } => vec![
+                ("start", start, 0.0, 100.0),
+                ("end", end, 0.0, 100.0),
+                ("offset", offset, -1e6, 1e6),
+            ],
+            Self::RoundCorners { radius } => vec![("radius", radius, 0.0, 1e4)],
+            Self::Offset {
+                amount,
+                miter_limit,
+                copies,
+                copy_offset,
+                ..
+            } => vec![
+                ("amount", amount, -1e4, 1e4),
+                ("miter_limit", miter_limit, 1.0, 100.0),
+                ("copies", copies, 1.0, 16.0),
+                ("copy_offset", copy_offset, -16.0, 16.0),
+            ],
+            Self::PuckerBloat { amount } => vec![("amount", amount, -100.0, 100.0)],
+            Self::Zigzag { size, ridges, .. } => {
+                vec![("size", size, -1e4, 1e4), ("ridges", ridges, 0.0, 128.0)]
+            }
+            Self::Twist { angle, center } => vec![
+                ("angle", angle, -36000.0, 36000.0),
+                ("center.x", &center[0], -1e6, 1e6),
+                ("center.y", &center[1], -1e6, 1e6),
+            ],
+            Self::Wiggle {
+                size,
+                detail,
+                speed,
+                correlation,
+                phase,
+                seed,
+                ..
+            } => vec![
+                ("size", size, 0.0, 1e4),
+                ("detail", detail, 0.0, 128.0),
+                ("speed", speed, -1000.0, 1000.0),
+                ("correlation", correlation, 0.0, 100.0),
+                ("phase", phase, -1e6, 1e6),
+                ("seed", seed, -2147483648.0, 2147483647.0),
+            ],
+            Self::Reverse {} | Self::Merge { .. } => Vec::new(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        for (name, a, min, max) in self.bounds() {
+            validate_range(a, min, max, name)?;
+        }
+        Ok(())
+    }
+
+    fn has_intrinsic_animation(&self) -> bool {
+        match self {
+            Self::Wiggle { size, speed, .. } => {
+                size.as_constant().is_none_or(|v| !v.is_zero())
+                    && speed.as_constant().is_none_or(|v| !v.is_zero())
+            }
+            _ => false,
+        }
+    }
+
+    fn wiggles_at(&self, t: RationalTime) -> bool {
+        matches!(self, Self::Wiggle { size, speed, .. } if size.eval(t) != 0.0 && speed.eval(t) != 0.0)
+    }
+
+    fn apply(&self, paths: &[BezPath], t: RationalTime) -> Result<Vec<BezPath>, String> {
+        for (name, a, min, max) in self.bounds() {
+            bounded(a, t, min, max, name)?;
+        }
+        let count = paths.iter().map(|p| p.elements().len()).sum::<usize>();
+        let growth = match self {
+            Self::RoundCorners { .. } | Self::PuckerBloat { .. } | Self::Trim { .. } => 3,
+            Self::Twist { angle, .. } if angle.eval(t) != 0.0 => 64,
+            Self::Zigzag { ridges, .. } => ridges.eval(t).round() as usize + 3,
+            Self::Wiggle { detail, size, .. } if size.eval(t) != 0.0 => {
+                detail.eval(t).round() as usize + 3
+            }
+            Self::Offset { copies, .. } => copies.eval(t).round() as usize * 8,
+            _ => 1,
+        };
+        if count.saturating_mul(growth) > MAX_OPERATOR_ELEMENTS {
+            return Err(format!(
+                "expanded path complexity exceeds {MAX_OPERATOR_ELEMENTS} elements"
+            ));
+        }
+        // Offset and booleans perform curve intersection work. Bound them
+        // separately before entering upstream code, not after allocation.
+        if matches!(
+            self,
+            Self::Offset { .. }
+                | Self::Merge {
+                    mode: VectorMergeMode::Add
+                        | VectorMergeMode::Subtract
+                        | VectorMergeMode::Intersect
+                        | VectorMergeMode::Exclude
+                }
+        ) {
+            validate_paths(paths, MAX_BOOLEAN_ELEMENTS)?;
+            if paths.len() > 64 {
+                return Err("boolean/offset operations accept at most 64 contours".into());
+            }
+        }
+        Ok(match self {
+            Self::Trim {
+                start,
+                end,
+                offset,
+                mode,
+            } => match mode {
+                VectorTrimMode::Simultaneous => {
+                    ops::trim(paths, start.eval(t), end.eval(t), offset.eval(t))
+                }
+                VectorTrimMode::Individual => {
+                    ops::trim_individually(paths, start.eval(t), end.eval(t), offset.eval(t))
+                }
+            },
+            Self::RoundCorners { radius } => ops::round_corners(paths, radius.eval(t)),
+            Self::Offset {
+                amount,
+                join,
+                miter_limit,
+                copies,
+                copy_offset,
+            } => ops::offset(
+                paths,
+                amount.eval(t),
+                match join {
+                    VectorJoin::Miter => effectcraft_path::Join::Miter,
+                    VectorJoin::Round => effectcraft_path::Join::Round,
+                    VectorJoin::Bevel => effectcraft_path::Join::Bevel,
+                },
+                miter_limit.eval(t),
+                copies.eval(t),
+                copy_offset.eval(t),
+            ),
+            Self::PuckerBloat { amount } => ops::pucker_bloat(paths, amount.eval(t)),
+            Self::Zigzag {
+                size,
+                ridges,
+                smooth,
+            } => ops::zigzag(paths, size.eval(t), ridges.eval(t), *smooth),
+            Self::Twist { angle, center } => {
+                ops::twist(paths, angle.eval(t), [center[0].eval(t), center[1].eval(t)])
+            }
+            Self::Wiggle {
+                size,
+                detail,
+                smooth,
+                speed,
+                correlation,
+                phase,
+                seed,
+            } => {
+                let clock = t.0.to_f64() * speed.eval(t) + phase.eval(t) / 360.0;
+                // The upstream noise lattice uses i64 indices (+/- neighbours).
+                if size.eval(t) != 0.0 && (!clock.is_finite() || clock.abs() > 1e12) {
+                    return Err(
+                        "wiggle source clock exceeds the safe noise range (+/-1e12 periods)".into(),
+                    );
+                }
+                ops::wiggle(
+                    paths,
+                    &ops::WiggleParams {
+                        size: size.eval(t),
+                        detail: detail.eval(t),
+                        smooth: *smooth,
+                        speed: speed.eval(t),
+                        correlation: correlation.eval(t),
+                        phase_deg: phase.eval(t),
+                        seed: seed.eval(t),
+                    },
+                    t.0.to_f64(),
+                )
+            }
+            Self::Reverse {} => ops::reverse(paths),
+            Self::Merge { mode } => {
+                // Upstream removes empty inputs before boolean evaluation.
+                // Preserve the first operand for subtraction and every
+                // operand for intersection when an earlier trim erased one.
+                let empty = |p: &BezPath| p.segments().next().is_none();
+                if (*mode == VectorMergeMode::Subtract && paths.first().is_none_or(empty))
+                    || (*mode == VectorMergeMode::Intersect && paths.iter().any(empty))
+                {
+                    return Ok(Vec::new());
+                }
+                vec![ops::merge(
+                    paths,
+                    match mode {
+                        VectorMergeMode::Merge => ops::MergeMode::Merge,
+                        VectorMergeMode::Add => ops::MergeMode::Add,
+                        VectorMergeMode::Subtract => ops::MergeMode::Subtract,
+                        VectorMergeMode::Intersect => ops::MergeMode::Intersect,
+                        VectorMergeMode::Exclude => ops::MergeMode::Exclude,
+                    },
+                )]
+            }
+        })
+    }
+}
+
+/// Split only at original contour boundaries. Operators retain their path-list
+/// grouping afterwards: merge produces one compound path for later operations.
+fn native_paths(path: &Path) -> Vec<BezPath> {
+    let mut paths = Vec::new();
+    let mut current = BezPath::new();
+    let p = |p: Point| effectcraft_path::Point::new(p.x as f64, p.y as f64);
+    for segment in path.segments() {
+        match segment {
+            PathSegment::MoveTo(q) => {
+                if !current.elements().is_empty() {
+                    paths.push(std::mem::take(&mut current));
+                }
+                current.move_to(p(q));
+            }
+            PathSegment::LineTo(q) => current.line_to(p(q)),
+            PathSegment::QuadTo(c, q) => current.quad_to(p(c), p(q)),
+            PathSegment::CubicTo(a, b, q) => current.curve_to(p(a), p(b), p(q)),
+            PathSegment::Close => current.close_path(),
+        }
+    }
+    if !current.elements().is_empty() {
+        paths.push(current);
+    }
+    paths
+}
+
+fn validate_paths(paths: &[BezPath], limit: usize) -> Result<(), String> {
+    let count = paths.iter().map(|p| p.elements().len()).sum::<usize>();
+    if count > limit {
+        return Err(format!(
+            "path complexity exceeds the {limit}-element resource limit"
+        ));
+    }
+    for path in paths {
+        for el in path.elements() {
+            let points = match *el {
+                PathEl::MoveTo(p) | PathEl::LineTo(p) => [Some(p), None, None],
+                PathEl::QuadTo(a, b) => [Some(a), Some(b), None],
+                PathEl::CurveTo(a, b, c) => [Some(a), Some(b), Some(c)],
+                PathEl::ClosePath => [None; 3],
+            };
+            for p in points.into_iter().flatten() {
+                if !p.x.is_finite()
+                    || !p.y.is_finite()
+                    || p.x.abs() > MAX_OPERATOR_COORDINATE
+                    || p.y.abs() > MAX_OPERATOR_COORDINATE
+                {
+                    return Err(
+                        "operator path coordinates must be finite and within +/-1000000 pixels"
+                            .into(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn skia_paths(paths: &[BezPath]) -> Result<Option<Path>, String> {
+    validate_paths(paths, MAX_OPERATOR_ELEMENTS)?;
+    if !paths.iter().any(|p| {
+        p.elements().iter().any(|el| {
+            matches!(
+                el,
+                PathEl::LineTo(_) | PathEl::QuadTo(_, _) | PathEl::CurveTo(_, _, _)
+            )
+        })
+    }) {
+        return Ok(None);
+    }
+    let mut out = PathBuilder::new();
+    for path in paths {
+        for el in path.elements() {
+            match *el {
+                PathEl::MoveTo(p) => out.move_to(p.x as f32, p.y as f32),
+                PathEl::LineTo(p) => out.line_to(p.x as f32, p.y as f32),
+                PathEl::QuadTo(a, p) => out.quad_to(a.x as f32, a.y as f32, p.x as f32, p.y as f32),
+                PathEl::CurveTo(a, b, p) => out.cubic_to(
+                    a.x as f32, a.y as f32, b.x as f32, b.y as f32, p.x as f32, p.y as f32,
+                ),
+                PathEl::ClosePath => out.close(),
+            }
+        }
+    }
+    out.finish()
+        .map(Some)
+        .ok_or("operated vector path cannot be represented".into())
 }
 
 fn validate_dash_budget(path: &Path, dashes: &[f32]) -> Result<(), String> {
@@ -566,7 +1279,55 @@ fn point(p: &[Animatable; 2], t: RationalTime) -> Result<[f32; 2], String> {
 }
 
 impl VectorGeometry {
+    fn polystar_bounds(&self) -> Vec<(&'static str, &Animatable, f64, f64)> {
+        match self {
+            Self::Polygon {
+                center,
+                points,
+                radius,
+                rotation,
+                roundness,
+            } => vec![
+                ("center.x", &center[0], -1e6, 1e6),
+                ("center.y", &center[1], -1e6, 1e6),
+                ("points", points, 3.0, 256.0),
+                ("radius", radius, 0.0, 1e6),
+                ("rotation", rotation, -1e6, 1e6),
+                ("roundness", roundness, 0.0, 100.0),
+            ],
+            Self::Star {
+                center,
+                points,
+                inner_radius,
+                outer_radius,
+                rotation,
+                inner_roundness,
+                outer_roundness,
+            } => vec![
+                ("center.x", &center[0], -1e6, 1e6),
+                ("center.y", &center[1], -1e6, 1e6),
+                ("points", points, 3.0, 256.0),
+                ("inner_radius", inner_radius, 0.0, 1e6),
+                ("outer_radius", outer_radius, 0.0, 1e6),
+                ("rotation", rotation, -1e6, 1e6),
+                ("inner_roundness", inner_roundness, 0.0, 100.0),
+                ("outer_roundness", outer_roundness, 0.0, 100.0),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn validate_polystar(&self) -> Result<(), String> {
+        for (name, a, min, max) in self.polystar_bounds() {
+            validate_range(a, min, max, &format!("geometry.{name}"))?;
+        }
+        Ok(())
+    }
+
     fn path(&self, t: RationalTime) -> Result<Option<Path>, String> {
+        for (name, a, min, max) in self.polystar_bounds() {
+            bounded(a, t, min, max, &format!("geometry.{name}"))?;
+        }
         let mut pb = PathBuilder::new();
         match self {
             Self::Rectangle {
@@ -628,6 +1389,50 @@ impl VectorGeometry {
                 pb.cubic_to(cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry);
                 pb.cubic_to(cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy);
                 pb.close();
+            }
+            Self::Polygon {
+                center,
+                points,
+                radius,
+                rotation,
+                roundness,
+            } => {
+                if radius.eval(t) == 0.0 {
+                    return Ok(None);
+                }
+                return skia_paths(&[effectcraft_path::polystar(
+                    false,
+                    points.eval(t),
+                    [center[0].eval(t), center[1].eval(t)],
+                    rotation.eval(t),
+                    0.0,
+                    radius.eval(t),
+                    0.0,
+                    roundness.eval(t),
+                )]);
+            }
+            Self::Star {
+                center,
+                points,
+                inner_radius,
+                outer_radius,
+                rotation,
+                inner_roundness,
+                outer_roundness,
+            } => {
+                if inner_radius.eval(t) == 0.0 && outer_radius.eval(t) == 0.0 {
+                    return Ok(None);
+                }
+                return skia_paths(&[effectcraft_path::polystar(
+                    true,
+                    points.eval(t),
+                    [center[0].eval(t), center[1].eval(t)],
+                    rotation.eval(t),
+                    inner_radius.eval(t),
+                    outer_radius.eval(t),
+                    inner_roundness.eval(t),
+                    outer_roundness.eval(t),
+                )]);
             }
             Self::Path { commands } => {
                 for c in commands {
@@ -858,10 +1663,15 @@ impl RenderNode for VectorNode {
         t: RationalTime,
         _inputs: &[Arc<Frame>],
     ) -> Result<Arc<Frame>, NodeError> {
+        ctx.check()?;
         let frame = self
             .spec
-            .rasterize(t, self.width, self.height)
-            .map_err(NodeError::new)?;
+            .rasterize_checked(t, self.width, self.height, &|| {
+                ctx.check().map_err(|e| e.to_string())
+            });
+        // Retain cancellation/deadline classification across the CPU boundary.
+        ctx.check()?;
+        let frame = frame.map_err(NodeError::new)?;
         Ok(Arc::new(Frame::from_cpu(&frame).to_gpu(ctx.gpu)))
     }
 }

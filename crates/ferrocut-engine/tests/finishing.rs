@@ -122,11 +122,13 @@ fn request(region: PixelRect) -> EffectRequest {
     EffectRequest {
         time: RationalTime::ZERO,
         param_time: RationalTime::ZERO,
+        effect_time: RationalTime::ZERO,
         region,
         canvas: Canvas {
             width: W,
             height: H,
             pixel_aspect: 4.0 / 3.0,
+            frame_rate: 30.0,
         },
         label: "test".into(),
     }

@@ -1,0 +1,15 @@
+   Compiling ferrocut-engine v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.43s
+     Running tests/storytold_controls.rs (target/debug/deps/storytold_controls-4d917f1232f217d5)
+
+running 7 tests
+test anisotropic_scale_arrays_never_deserialize_as_uniform_expressions ... ok
+test indexed_operator_numeric_and_component_edits_use_existing_typed_slots ... ok
+test indexed_set_keyframes_converts_timeline_seconds_to_source_seconds ... ok
+test invalid_operator_edit_is_atomic_and_cannot_create_sparse_or_wrong_fields ... ok
+test native_ffv1_duration_includes_the_last_frame_for_interchange_ranges ... ok
+test operator_expression_value_defaults_and_source_clock_are_preserved ... ok
+test upstream_file_url_unicode_authorities_never_slice_inside_utf8 ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+

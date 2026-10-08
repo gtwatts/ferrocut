@@ -510,7 +510,7 @@ pub trait Item: Clone {
     fn audio(&self) -> &ClipAudio;
     fn audio_mut(&mut self) -> &mut ClipAudio;
     /// Shift clip-local keyframe times by `dt`.
-    fn shift_local_keys(&mut self, dt: Rational);
+    fn shift_local_keys(&mut self, dt: Rational) -> anyhow::Result<()>;
     /// Remove the incoming transition (video dissolve, audio crossfade).
     fn drop_transition_in(&mut self);
     fn speed(&self) -> &Animatable;
@@ -578,10 +578,10 @@ macro_rules! item_common {
 
 impl Item for Clip {
     item_common!();
-    fn shift_local_keys(&mut self, dt: Rational) {
+    fn shift_local_keys(&mut self, dt: Rational) -> anyhow::Result<()> {
         self.audio.gain_db = self.audio.gain_db.shifted(dt);
         self.audio.pan = self.audio.pan.shifted(dt);
-        self.shift_video_keys(dt);
+        self.shift_video_keys(dt)
     }
     fn drop_transition_in(&mut self) {
         self.transition_in = None;
@@ -591,11 +591,12 @@ impl Item for Clip {
 
 impl Item for AudioClip {
     item_common!();
-    fn shift_local_keys(&mut self, dt: Rational) {
+    fn shift_local_keys(&mut self, dt: Rational) -> anyhow::Result<()> {
         self.audio.gain_db = self.audio.gain_db.shifted(dt);
         self.audio.pan = self.audio.pan.shifted(dt);
         self.speed = self.speed.shifted(dt);
         self.time_remap = self.time_remap.as_ref().map(|a| a.shifted(dt));
+        Ok(())
     }
     fn drop_transition_in(&mut self) {
         self.audio.crossfade_in = None;
@@ -707,7 +708,7 @@ fn split<T: Item>(
     right.drop_transition_in();
     right.audio_mut().in_offset = z();
     right.audio_mut().fade_in = None;
-    right.shift_local_keys(-off.0);
+    right.shift_local_keys(-off.0)?;
     clips[ci] = left;
     clips.insert(ci + 1, right);
     Ok(Change {
@@ -737,7 +738,7 @@ fn trim<T: Item>(
             *c.start_mut() = c.start() + d;
             *c.source_in_mut() = c.source_at(d);
             *c.duration_mut() = c.duration() - d;
-            c.shift_local_keys(-d.0);
+            c.shift_local_keys(-d.0)?;
         }
         Edge::Out => {
             ensure!(
@@ -817,7 +818,7 @@ fn roll<T: Item>(clips: &mut [T], ci: usize, d: RationalTime) -> anyhow::Result<
     *r.start_mut() = b.start() + d;
     *r.source_in_mut() = b.source_at(d);
     *r.duration_mut() = b.duration() - d;
-    r.shift_local_keys(-d.0);
+    r.shift_local_keys(-d.0)?;
     let new = old + d;
     Ok(Change {
         op: 0,
@@ -854,7 +855,7 @@ fn slide<T: Item>(clips: &mut [T], ci: usize, d: RationalTime) -> anyhow::Result
         *n.start_mut() = n.start() + d;
         *n.source_in_mut() = n.source_at(d);
         *n.duration_mut() = n.duration() - d;
-        n.shift_local_keys(-d.0);
+        n.shift_local_keys(-d.0)?;
     }
     *clips[ci].start_mut() = c.start() + d;
     let lo = c.start().min(c.start() + d);
@@ -2287,7 +2288,7 @@ fn add_transition(
         pb.start = pb.start - ext_b;
         pb.source_in = pb.source_in - ext_b;
         pb.duration = pb.duration + ext_b;
-        pb.shift_local_keys(ext_b.0);
+        pb.shift_local_keys(ext_b.0)?;
         (
             (cut - ext_b, cut + ext_a),
             format!(
@@ -2564,29 +2565,30 @@ fn freeze_frame(
             None => Ok(unique_id(tl, base)),
         }
     };
-    let make_hold = |c: &Clip, id: String, start: RationalTime, dur: RationalTime| {
-        let mut h = c.clone();
-        h.shift_local_keys(-(start - c.start).0);
-        h.id = id;
-        h.start = start;
-        h.duration = dur;
-        h.source_in = src;
-        h.speed = Animatable::constant(Rational::ZERO);
-        h.time_remap = None;
-        h.sampling = crate::retime::Sampling::Nearest;
-        h.transition_in = None;
-        h.audio = ClipAudio {
-            mute: true,
-            ..ClipAudio::default()
+    let make_hold =
+        |c: &Clip, id: String, start: RationalTime, dur: RationalTime| -> anyhow::Result<Clip> {
+            let mut h = c.clone();
+            h.shift_local_keys(-(start - c.start).0)?;
+            h.id = id;
+            h.start = start;
+            h.duration = dur;
+            h.source_in = src;
+            h.speed = Animatable::constant(Rational::ZERO);
+            h.time_remap = None;
+            h.sampling = crate::retime::Sampling::Nearest;
+            h.transition_in = None;
+            h.audio = ClipAudio {
+                mute: true,
+                ..ClipAudio::default()
+            };
+            Ok(h)
         };
-        h
-    };
     let mut touched = vec![tr];
     let summary;
     match duration {
         None => {
             if at == c.start {
-                let h = make_hold(&c, c.id.clone(), c.start, c.duration);
+                let h = make_hold(&c, c.id.clone(), c.start, c.duration)?;
                 let keep_tx = c.transition_in.clone();
                 tl.tracks[ti].clips[ci] = Clip {
                     transition_in: keep_tx,
@@ -2599,7 +2601,7 @@ fn freeze_frame(
                 on_track!(tl, tr, |clips| split(clips, ci, at, id.clone()))?;
                 let (_, ri) = locate(tl, &id)?;
                 let right = tl.tracks[ti].clips[ri].clone();
-                let mut h = make_hold(&c, id.clone(), at, right.duration);
+                let mut h = make_hold(&c, id.clone(), at, right.duration)?;
                 h.audio.mute = true;
                 tl.tracks[ti].clips[ri] = h;
                 summary = format!(
@@ -2635,7 +2637,7 @@ fn freeze_frame(
             for t in &targets {
                 on_track!(tl, *t, |clips| shift_after(clips, at, d, false));
             }
-            let h = make_hold(&c, hold_id.clone(), at, d);
+            let h = make_hold(&c, hold_id.clone(), at, d)?;
             tl.tracks[ti].clips.push(h);
             touched = targets;
             summary = format!(
@@ -2919,7 +2921,7 @@ fn unnest(
                 n.source_in = ic.source_at(d);
                 n.start = w0;
                 n.duration = n.duration - d;
-                n.shift_local_keys(-d.0);
+                n.shift_local_keys(-d.0)?;
                 n.drop_transition_in();
                 n.audio.in_offset = z();
                 n.audio.fade_in = None;

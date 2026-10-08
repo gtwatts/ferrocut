@@ -259,7 +259,15 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
     ParamSpec::fixed("generator.text.animators", Object, "", "[]", "ordered range animators [{selector:{unit:characters|words|lines,start,end},position?,opacity?,fill?}]; edit the list as a unit"),
     ParamSpec::fixed("generator.text.fallback_fonts", Object, "", "[]", "ordered explicit project fallback font paths; no system-font discovery"),
     ParamSpec::fixed("generator.shape", Object, "", "null", "editable vector payload {geometry,fill?,stroke?,fill_rule?}; numeric keys in source time"),
-    ParamSpec::fixed("generator.shape.geometry", Object, "", "null", "rectangle | ellipse | path with move_to,line_to,quad_to,cubic_to,close commands"),
+    ParamSpec::fixed("generator.shape.geometry", Object, "", "null", "rectangle | ellipse | polygon | star | path with move_to,line_to,quad_to,cubic_to,close commands"),
+    ParamSpec::fixed("generator.shape.operators", Object, "", "[]", "ordered trim, round_corners, offset, pucker_bloat, zigzag, twist, wiggle, reverse, merge operations; numeric animation in source time"),
+    s("generator.shape.geometry.points", Src, "", "5", "polygon/star point count").range(3.0, 256.0),
+    s("generator.shape.geometry.rotation", Src, "deg", "0", "polygon/star rotation"),
+    s("generator.shape.geometry.roundness", Src, "%", "0", "polygon corner rounding").range(0.0, 100.0),
+    s("generator.shape.geometry.inner_radius", Src, "px", "0", "star inner radius").min(0.0),
+    s("generator.shape.geometry.outer_radius", Src, "px", "0", "star outer radius").min(0.0),
+    s("generator.shape.geometry.inner_roundness", Src, "%", "0", "star inner corner rounding").range(0.0, 100.0),
+    s("generator.shape.geometry.outer_roundness", Src, "%", "0", "star outer corner rounding").range(0.0, 100.0),
     s("generator.shape.geometry.x", Src, "px", "0", "rectangle left"),
     s("generator.shape.geometry.y", Src, "px", "0", "rectangle top"),
     s("generator.shape.geometry.width", Src, "px", "0", "rectangle width").min(0.0),
@@ -513,17 +521,96 @@ pub fn registry_json() -> Value {
         "timeline": TIMELINE,
         "video_effects": crate::fx::registry_json(),
         "expressions": crate::expr::language_json(),
+        "shape_operator_parameters": operator_specs().iter().filter(|p| p.name.starts_with("generator.shape.operators.0.")).map(|p| {
+            let mut v = serde_json::to_value(p).unwrap_or(Value::Null);
+            v["name"] = json!(p.name.replacen(".0.", ".<index>.", 1));
+            v
+        }).collect::<Vec<_>>(),
     })
 }
 
 /// Look `name` up in `scope`'s registry (with a helpful error).
 pub fn lookup(scope: Scope, name: &str) -> anyhow::Result<(&'static ParamSpec, Option<usize>)> {
-    param::find(scope.specs(), name).ok_or_else(|| {
-        let names: Vec<&str> = scope.specs().iter().map(|s| s.name).collect();
-        anyhow!(
-            "unknown parameter {name:?} here; valid: {}",
-            names.join(", ")
-        )
+    param::find(scope.specs(), name)
+        .or_else(|| {
+            (scope == Scope::VideoClip)
+                .then(|| param::find(operator_specs(), name))
+                .flatten()
+        })
+        .ok_or_else(|| {
+            let names: Vec<&str> = scope.specs().iter().map(|s| s.name).collect();
+            anyhow!(
+                "unknown parameter {name:?} here; valid: {}",
+                names.join(", ")
+            )
+        })
+}
+
+/// Finite, preallocated metadata for existing shape operator slots. Indexing
+/// never creates sparse arrays; the normal typed shape validation checks which
+/// fields belong to the selected operator and its more specific ranges.
+fn operator_specs() -> &'static [ParamSpec] {
+    static SPECS: std::sync::OnceLock<Vec<ParamSpec>> = std::sync::OnceLock::new();
+    SPECS.get_or_init(|| {
+        let leaves = [
+            s("start", Src, "%", "0", "trim start").range(0.0, 100.0),
+            s("end", Src, "%", "100", "trim end").range(0.0, 100.0),
+            s("offset", Src, "deg", "0", "trim phase").range(-1e6, 1e6),
+            s("radius", Src, "px", "0", "round corners radius").range(0.0, 1e4),
+            s(
+                "amount",
+                Src,
+                "",
+                "0",
+                "offset pixels or pucker/bloat percent",
+            ),
+            s("miter_limit", Src, "", "4", "offset miter limit").range(1.0, 100.0),
+            s("copies", Src, "", "1", "offset copies").range(1.0, 16.0),
+            s("copy_offset", Src, "", "0", "offset copy progression").range(-16.0, 16.0),
+            s("size", Src, "px", "0", "zigzag or wiggle displacement").range(-1e4, 1e4),
+            s("ridges", Src, "", "1", "zigzag ridges").range(0.0, 128.0),
+            s("angle", Src, "deg", "0", "twist angle").range(-36000.0, 36000.0),
+            s("center", Src, "px", "[0,0]", "twist center")
+                .with_kind(Vec2)
+                .range(-1e6, 1e6),
+            s("detail", Src, "", "10", "wiggle detail").range(0.0, 128.0),
+            s("speed", Src, "", "2", "wiggle evolution speed").range(-1000.0, 1000.0),
+            s("correlation", Src, "%", "50", "wiggle correlation").range(0.0, 100.0),
+            s("phase", Src, "deg", "0", "wiggle phase").range(-1e6, 1e6),
+            s("seed", Src, "", "0", "wiggle seed").range(-2147483648.0, 2147483647.0),
+            ParamSpec::fixed("smooth", Bool, "", "false", "zigzag/wiggle smoothness"),
+            ParamSpec::choice(
+                "join",
+                &["miter", "round", "bevel"],
+                "\"miter\"",
+                "offset join",
+            ),
+            ParamSpec::choice(
+                "mode",
+                &[
+                    "simultaneous",
+                    "individual",
+                    "merge",
+                    "add",
+                    "subtract",
+                    "intersect",
+                    "exclude",
+                ],
+                "\"merge\"",
+                "operator mode; subset depends on operator type",
+            ),
+        ];
+        (0..crate::vector::MAX_VECTOR_OPERATORS)
+            .flat_map(|i| {
+                leaves.map(|mut p| {
+                    // Bounded once: callers cannot allocate metadata for arbitrary names.
+                    p.name = Box::leak(
+                        format!("generator.shape.operators.{i}.{}", p.name).into_boxed_str(),
+                    );
+                    p
+                })
+            })
+            .collect()
     })
 }
 
@@ -539,6 +626,20 @@ fn segments(scope: Scope, spec: &ParamSpec) -> Vec<String> {
 
 /// Default for a missing vector parameter (frame center for position/anchor).
 pub(crate) fn vec_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
+    // Effect registries may contain fractional color/point defaults. Preserve
+    // the exact JSON decimal spelling as rational strings, just like constants
+    // in a timeline; symbolic frame-dependent defaults fall through below.
+    if let Ok(Value::Array(values)) = serde_json::from_str(spec.default) {
+        return Value::Array(
+            values
+                .into_iter()
+                .map(|v| match v {
+                    Value::Number(n) => Value::String(n.to_string()),
+                    other => other,
+                })
+                .collect(),
+        );
+    }
     let half = |v: u32| Rational::new(v as i64, 2).to_string();
     let zoom = || Rational::new(frame.0 as i64 * 50, 36);
     match spec.kind {
@@ -547,11 +648,6 @@ pub(crate) fn vec_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
         }
         Vec3 if spec.name == "camera.point_of_interest" => {
             json!([half(frame.0), half(frame.1), "0"])
-        }
-        Color | Vec3 => {
-            // The spec default is a JSON array of integers.
-            let v: Vec<i64> = serde_json::from_str(spec.default).unwrap_or_default();
-            Value::Array(v.into_iter().map(|x| json!(x.to_string())).collect())
         }
         _ if spec.name.ends_with("scale") => json!(["1", "1"]),
         _ if spec.name.starts_with("generator.text.")
@@ -629,7 +725,11 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
 pub fn get(obj: &Value, scope: Scope, spec: &ParamSpec, comp: Option<usize>) -> Option<Value> {
     let mut cur = obj;
     for k in segments(scope, spec) {
-        cur = cur.get(&k)?;
+        cur = if cur.is_array() {
+            cur.get(k.parse::<usize>().ok()?)?
+        } else {
+            cur.get(&k)?
+        };
     }
     match comp {
         None => Some(cur.clone()),
@@ -654,6 +754,15 @@ pub fn set(
     let (last, parents) = segs.split_last().expect("non-empty name");
     let mut cur = obj;
     for k in parents {
+        if cur.is_array() {
+            cur = cur
+                .get_mut(
+                    k.parse::<usize>()
+                        .with_context(|| format!("{}: expected array index", spec.name))?,
+                )
+                .ok_or_else(|| anyhow!("{}: operator index does not exist", spec.name))?;
+            continue;
+        }
         let m = cur
             .as_object_mut()
             .ok_or_else(|| anyhow!("{}: parent is not an object", spec.name))?;

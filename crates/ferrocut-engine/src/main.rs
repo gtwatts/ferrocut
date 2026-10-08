@@ -118,6 +118,33 @@ enum Cmd {
     },
     /// Probe a media file: duration, frame rate, size, streams, audio presence (JSON).
     Probe { media: PathBuf },
+    /// Discover pinned core libraries and features actually connected for agents.
+    Capabilities,
+    /// Discover usable and unsupported effects. Use --details with a narrow query.
+    Effects {
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+        #[arg(long)]
+        details: bool,
+    },
+    /// Numeric FilmCraft scopes for one decoded video/render frame.
+    Scopes {
+        media: PathBuf,
+        #[arg(long, default_value = "0")]
+        at: ferrocut_core::Rational,
+        /// ScopeOptions JSON; defaults to Rec.709, RGB waveform/parade, 16 columns.
+        #[arg(long)]
+        options: Option<PathBuf>,
+    },
+    /// Import/export OTIO or FCP7 XML using pinned FilmCraft core code.
+    Interchange {
+        #[command(subcommand)]
+        command: InterchangeCmd,
+    },
     /// Make half-resolution proxies (DNxHR LB, or FFV1 when tiny or with alpha) of
     /// media files, or of every video source of timelines (nested comps followed),
     /// in `<media dir>/.ferrocut-proxies/`. `render --proxies` reads them for draft
@@ -275,9 +302,111 @@ enum CaptionCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum InterchangeCmd {
+    /// Create a new native .json timeline (and generated nested siblings).
+    Import {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        format: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        sequence: usize,
+        #[arg(long)]
+        allow_loss: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Export to a new OTIO/FCP7 file; refusing known losses is the default.
+    Export {
+        timeline: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        format: Option<String>,
+        #[arg(long)]
+        allow_loss: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     ferrocut_engine::media::init();
     match Cli::parse().cmd {
+        Cmd::Interchange { command } => {
+            use ferrocut_engine::interchange_io as io;
+            let result = match command {
+                InterchangeCmd::Import {
+                    input,
+                    output,
+                    format,
+                    sequence,
+                    allow_loss,
+                    dry_run,
+                } => io::import_file(
+                    &input,
+                    &output,
+                    format.as_deref(),
+                    sequence,
+                    allow_loss,
+                    dry_run,
+                    &mut io::absolute,
+                )?,
+                InterchangeCmd::Export {
+                    timeline,
+                    output,
+                    format,
+                    allow_loss,
+                    dry_run,
+                } => io::export_file(
+                    &timeline,
+                    &output,
+                    format.as_deref(),
+                    allow_loss,
+                    dry_run,
+                    &mut io::absolute,
+                )?,
+            };
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Cmd::Capabilities => println!(
+            "{}",
+            serde_json::to_string_pretty(&ferrocut_engine::storytold::capabilities())?
+        ),
+        Cmd::Effects {
+            query,
+            offset,
+            limit,
+            details,
+        } => println!(
+            "{}",
+            serde_json::to_string_pretty(&ferrocut_engine::storytold::effects_catalog(
+                query.as_deref(),
+                offset,
+                limit,
+                details
+            )?)?
+        ),
+        Cmd::Scopes { media, at, options } => {
+            let options = options
+                .map(
+                    |p| -> anyhow::Result<ferrocut_engine::scopes::ScopeOptions> {
+                        Ok(serde_json::from_str(&std::fs::read_to_string(p)?)?)
+                    },
+                )
+                .transpose()?
+                .unwrap_or_default();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ferrocut_engine::scopes::read(
+                    &media,
+                    ferrocut_core::RationalTime(at),
+                    &options
+                )?)?
+            );
+        }
         Cmd::Captions { command } => {
             use ferrocut_engine::captions::{self, CaptionFormat};
             match command {

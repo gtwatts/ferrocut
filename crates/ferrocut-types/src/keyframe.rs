@@ -44,8 +44,7 @@ pub enum Animatable {
 pub const MAX_EXPRESSION_LEN: usize = 16 * 1024;
 
 /// An expression over a parameter (see the module docs).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Expression {
     /// The script (the engine's expression language: rhai syntax).
     pub expression: String,
@@ -57,6 +56,44 @@ pub struct Expression {
     /// the second half's clip-local origin; this keeps its expression in place).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub time_offset: Rational,
+}
+
+impl<'de> Deserialize<'de> for Expression {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // A derived struct deserializer also accepts positional arrays. In an
+        // untagged Animatable this misread ["1.5","0.75"] scale as a script
+        // with a pre-expression value. The documented expression form is a map.
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            expression: String,
+            #[serde(default)]
+            value: Option<Box<Animatable>>,
+            #[serde(default)]
+            time_offset: Rational,
+        }
+        struct MapOnly;
+        impl<'de> serde::de::Visitor<'de> for MapOnly {
+            type Value = Expression;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(
+                    "an expression object with expression, optional value and time_offset",
+                )
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                map: M,
+            ) -> Result<Expression, M::Error> {
+                let f = Fields::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(Expression {
+                    expression: f.expression,
+                    value: f.value,
+                    time_offset: f.time_offset,
+                })
+            }
+        }
+        deserializer.deserialize_map(MapOnly)
+    }
 }
 
 fn is_zero(r: &Rational) -> bool {

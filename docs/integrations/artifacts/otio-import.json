@@ -1,0 +1,116 @@
+{
+  "dry_run": false,
+  "format": "OpenTimelineIO",
+  "has_losses": false,
+  "input": "/tmp/ferrocut-storytold-interchange.otio",
+  "nested_files": [],
+  "output": "/tmp/ferrocut-storytold-imported.json",
+  "report": {
+    "entries": [
+      {
+        "feature": "native_ids",
+        "location": "document",
+        "message": "clip/marker identifiers are regenerated for the native document",
+        "severity": "info"
+      },
+      {
+        "feature": "project_organization",
+        "location": "document",
+        "message": "foreign project bins, labels and clip display names are outside the native Timeline schema; media paths and sequence/track names are retained where the format carries them",
+        "severity": "info"
+      },
+      {
+        "feature": "source_extent_validation",
+        "location": "document",
+        "message": "upstream normalizes declared media extents to placed clip ranges; actual source duration/stream availability must be checked by the caller's media probe",
+        "severity": "info"
+      },
+      {
+        "feature": "render_settings",
+        "location": "Storytold interchange render proof",
+        "message": "native GOP/cache settings use native defaults; foreign preview/export preferences are not imported",
+        "severity": "info"
+      }
+    ]
+  },
+  "source_probe_issues": [],
+  "timeline": {
+    "audio_tracks": [
+      {
+        "clips": [],
+        "name": "Audio 1 audio 1"
+      }
+    ],
+    "name": "Storytold interchange render proof",
+    "output": {
+      "duration": "3/2",
+      "fps": "24",
+      "gop": 24,
+      "gops_per_chunk": 1,
+      "height": 360,
+      "width": 640
+    },
+    "tracks": [
+      {
+        "clips": [
+          {
+            "audio": {
+              "mute": true
+            },
+            "duration": "3/4",
+            "id": "video-0-4",
+            "opacity": "1",
+            "source": "/tmp/ferrocut-storytold-showcase.mkv",
+            "source_in": "0",
+            "start": "0",
+            "transform": {
+              "anchor": [
+                "320",
+                "180"
+              ],
+              "position": [
+                "320",
+                "180"
+              ],
+              "rotation": "0",
+              "scale": [
+                "1",
+                "1"
+              ]
+            },
+            "transition_in": null
+          },
+          {
+            "audio": {
+              "mute": true
+            },
+            "duration": "3/4",
+            "id": "video-0-5",
+            "opacity": "1",
+            "source": "/tmp/ferrocut-storytold-showcase.mkv",
+            "source_in": "1",
+            "start": "3/4",
+            "transform": {
+              "anchor": [
+                "320",
+                "180"
+              ],
+              "position": [
+                "320",
+                "180"
+              ],
+              "rotation": "0",
+              "scale": [
+                "1",
+                "1"
+              ]
+            },
+            "transition_in": null
+          }
+        ],
+        "name": "Picture"
+      }
+    ]
+  },
+  "written": true
+}

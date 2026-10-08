@@ -1,0 +1,24 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "ferrocut-engine",
+    "-p",
+    "ferrocut-mcp",
+    "-p",
+    "ferrocut-core",
+    "-p",
+    "ferrocut-types",
+    "--",
+    "--test-threads=1"
+  ],
+  "completed": true,
+  "target_reports": 56,
+  "passed": 357,
+  "failed": 0,
+  "ignored": 1,
+  "scope": "Selected four packages; not entire workspace; focused test totals overlap."
+}

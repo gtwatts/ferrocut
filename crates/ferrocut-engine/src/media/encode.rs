@@ -24,7 +24,7 @@ impl EncodeSettings {
     /// Every parameter that affects encoded bytes; part of the chunk cache key.
     pub fn fingerprint(&self) -> String {
         format!(
-            "ffv1 level=3 slices=4 slicecrc=1 threads=1 pix=bgr0 g={} {}x{} fps={} mux=matroska+bitexact",
+            "ffv1 level=3 slices=4 slicecrc=1 threads=1 pix=bgr0 g={} {}x{} fps={} packet-duration=1-frame mux=matroska+bitexact",
             self.gop, self.width, self.height, self.fps
         )
     }
@@ -126,6 +126,12 @@ impl ChunkEncoder {
         let mut pkt = Packet::empty();
         while self.enc.receive_packet(&mut pkt).is_ok() {
             pkt.set_stream(0);
+            // FFV1 can omit packet duration. Our encoder time base is exactly
+            // one frame, so supplying it lets Matroska include the final frame
+            // in the stream duration instead of ending at its starting PTS.
+            if pkt.duration() <= 0 {
+                pkt.set_duration(1);
+            }
             pkt.rescale_ts(self.enc_tb, self.ost_tb);
             pkt.write_interleaved(&mut self.octx)?;
         }

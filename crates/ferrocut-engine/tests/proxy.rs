@@ -60,6 +60,12 @@ fn proxies_are_half_size_cached_by_content_and_codec_by_size() {
     let small = proxy::generate(&d.join("small.mkv"), false).unwrap();
     assert_eq!(small.codec, "ffv1");
     assert_eq!((small.width, small.height), (32, 24));
+    assert_eq!(
+        ferrocut_engine::media::probe(&small.proxy)
+            .unwrap()
+            .duration,
+        Some(RationalTime::new(1, 2))
+    );
 
     // Kept unless forced; found by the source's current content.
     let again = proxy::generate(&d.join("big.mkv"), false).unwrap();

@@ -1,0 +1,474 @@
+{
+  "connected": {
+    "effectcraft_effects": {
+      "catalog": "effects_catalog",
+      "count": 170,
+      "execution": "upstream CPU kernels, GPU readback/upload when needed",
+      "time": "clip-local for clips, timeline for tracks",
+      "timeline_path": "clips/tracks.effects",
+      "working_space": "premultiplied linear ACEScg"
+    },
+    "effectcraft_paths": {
+      "geometry": [
+        "polygon",
+        "star"
+      ],
+      "operators": [
+        "trim",
+        "round_corners",
+        "offset",
+        "pucker_bloat",
+        "zigzag",
+        "twist",
+        "wiggle",
+        "reverse",
+        "merge"
+      ],
+      "time": "source",
+      "timeline_path": "generator.shape"
+    },
+    "filmcraft_interchange": {
+      "formats": [
+        "otio",
+        "fcp7"
+      ],
+      "loss_reporting": true,
+      "lossy_writes_require_allow_loss": true,
+      "tools": [
+        "timeline_import",
+        "timeline_export"
+      ]
+    },
+    "filmcraft_scopes": {
+      "input": "decoded display-encoded RGBA8",
+      "outputs": [
+        "waveform",
+        "parade",
+        "histogram",
+        "vectorscope_yuv",
+        "vectorscope_hls",
+        "channel_statistics"
+      ],
+      "tool": "scopes_read"
+    }
+  },
+  "evidence": "docs/integrations/STORYTOLD.md",
+  "licenses": "vendor/storytold/{filmcraft,effectcraft}/{LICENSE-MIT,LICENSE-APACHE,NOTICE}",
+  "registered_video_effect_count": 185,
+  "repositories": [
+    {
+      "local_patches": [
+        {
+          "local_sha256": "a1d3c9f03cc05a767a52062ec177d39906709baa83cc5e23f680c86a63b509ba",
+          "path": "crates/interchange/src/common.rs",
+          "reason": "Use UTF-8-safe get(..9) for file:// localhost detection; valid Unicode authority strings must not panic.",
+          "regression": "crates/ferrocut-engine/tests/storytold_controls.rs; crates/ferrocut-mcp/tests/storytold.rs",
+          "upstream_sha256": "55402863319604606e76e97b0af24ccf648d39c4ce888cad3bf622c9c9f4f7f0"
+        }
+      ],
+      "modifications": {
+        "Cargo.toml": "Workspace members/default-members narrowed to core crates; original saved as Cargo.upstream.toml.",
+        "Rust source": "One documented UTF-8 path-slicing safety fix; all other upstream source files retained unchanged."
+      },
+      "name": "filmcraft",
+      "omitted": [
+        "desktop ui-egui crate",
+        "apps and xtask",
+        "repository assets and ArtCraft branding",
+        "Tracked generated h264enc target/oracle outputs (14 files); no Rust source omitted"
+      ],
+      "packages": [
+        {
+          "build_dependency": false,
+          "package": "filmcraft-aac",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-ac3",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-apv",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-audio-dsp",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-automation",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-av1",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-bitstream",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-captions",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "filmcraft-cfb",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-codecs",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "filmcraft-color",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-dnx",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-edit",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-engine",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-export",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-format",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "filmcraft-frame",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "filmcraft-geom",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-golden",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-gpu",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-h264",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-h264enc",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-hevc",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "filmcraft-interchange",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-isobmff",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-matroska",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "filmcraft-media",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-mpeg2v",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-mpegts",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-mxf",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-ogg",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-opus",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-platform",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "filmcraft-project",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-prores",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-render",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "filmcraft-scopes",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-speech",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-testkit",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-text",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "filmcraft-time",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "filmcraft-vp9",
+          "source_present": true
+        }
+      ],
+      "revision": "5231852443363f001c3f6b396dd9b1e6461ae2be",
+      "source_package_count": 42,
+      "url": "https://github.com/storytold/filmcraft",
+      "version": "0.4.0"
+    },
+    {
+      "local_patches": null,
+      "modifications": {
+        "Cargo.toml": "Workspace members/default-members narrowed to core crates; original saved as Cargo.upstream.toml. No upstream Rust source changed."
+      },
+      "name": "effectcraft",
+      "omitted": [
+        "desktop ui-egui crate",
+        "apps and xtask",
+        "repository assets and ArtCraft branding"
+      ],
+      "packages": [
+        {
+          "build_dependency": false,
+          "package": "effectcraft-automation",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-av1enc",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-color",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-effects",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-engine",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-export",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-expr",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-geom",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-gpu",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-hevcenc",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-host",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-interchange",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-keyframe",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-lottie",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-media",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-model",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-opusenc",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-path",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-pdf",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-plugin",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-project",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-psd",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-raster",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-render",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-script",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-segment",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-svg",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-text",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-time",
+          "source_present": true
+        },
+        {
+          "build_dependency": true,
+          "package": "effectcraft-track",
+          "source_present": true
+        },
+        {
+          "build_dependency": false,
+          "package": "effectcraft-vp9enc",
+          "source_present": true
+        }
+      ],
+      "revision": "6943872cf65b3da1275f1e0f808b60b2e51d84dc",
+      "source_package_count": 31,
+      "url": "https://github.com/storytold/effectcraft",
+      "version": "0.6.0"
+    }
+  ],
+  "schema": "ferrocut.capabilities/1",
+  "status_meaning": "source_present = retained source; build_dependency = compiled dependency; connected = adapter exposed. None implies Adobe parity, real-time speed, or independently verified visual fidelity.",
+  "unsupported_effectcraft_effect_count": 136
+}

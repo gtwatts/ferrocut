@@ -423,14 +423,20 @@ impl Clip {
         TimeMap::new(self.source_in, &self.speed, self.time_remap.as_ref())
     }
     /// Shift clip-local video keyframes (opacity, transform, speed, remap) by `dt`.
-    pub(crate) fn shift_video_keys(&mut self, dt: Rational) {
+    pub(crate) fn shift_video_keys(&mut self, dt: Rational) -> anyhow::Result<()> {
+        let effects = self
+            .effects
+            .iter()
+            .map(|e| e.shifted(dt))
+            .collect::<anyhow::Result<Vec<_>>>()?;
         self.opacity = self.opacity.shifted(dt);
         self.speed = self.speed.shifted(dt);
         self.time_remap = self.time_remap.as_ref().map(|a| a.shifted(dt));
         if let Some(t) = &self.transform {
             self.transform = Some(t.shifted(dt));
         }
-        self.effects = self.effects.iter().map(|e| e.shifted(dt)).collect();
+        self.effects = effects;
+        Ok(())
     }
     pub fn audio_region(&self) -> (RationalTime, RationalTime) {
         audio_region(self.start, self.duration, &self.audio)

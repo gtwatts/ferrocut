@@ -273,6 +273,7 @@ pub fn video_effect() -> Value {
             props.insert("type".into(), json!({ "const": e.type_name() }));
             props.insert("id".into(), json!({ "type": "string", "minLength": 1, "description": "name, unique in the stack (ops and errors refer to it)" }));
             props.insert("enabled".into(), json!({ "type": "boolean", "default": true }));
+            props.insert("clock_offset".into(), rational("intrinsic procedural phase in seconds; split/trim maintains this automatically, default 0"));
             for p in e.params() {
                 props.insert(p.name.into(), video_param(p));
             }

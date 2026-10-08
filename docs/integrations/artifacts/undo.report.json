@@ -1,0 +1,67 @@
+{
+  "engine": "ferrocut-engine 0.0.1 render.v3",
+  "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+  "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+  "output": "/tmp/ferrocut-storytold-undo.mkv",
+  "total_frames": 48,
+  "chunk_frames": 12,
+  "jobs": 1,
+  "chunks": [
+    {
+      "index": 0,
+      "start_frame": 0,
+      "frames": 12,
+      "key": "c6f96401bb8f013c402e524bb5de149beb52c88e21072b9c7cb62ba6473afef3",
+      "status": "reused",
+      "file_blake3": "78de972d6184ab5f8ce6c2baa28f3c9f2fe19645dada7fd9ba0d3bb86210598b",
+      "render_ms": 0
+    },
+    {
+      "index": 1,
+      "start_frame": 12,
+      "frames": 12,
+      "key": "96d9b66cca54ec2d631e042b92c789923a354708be88f417d9628a4d1af2af86",
+      "status": "reused",
+      "file_blake3": "eea23c1cd1723cb7da449e6fab6459e27865221b66248a18b054f2d6d6a34d6a",
+      "render_ms": 0
+    },
+    {
+      "index": 2,
+      "start_frame": 24,
+      "frames": 12,
+      "key": "2e796438974c16536ed3d795f0737157062a2ad499cf40becddc1afa94bba4f1",
+      "status": "reused",
+      "file_blake3": "dadf15b71b26844cf5223f0b6ef7d8ad30d918d44a50f5cfa6daa04f009a5ac2",
+      "render_ms": 0
+    },
+    {
+      "index": 3,
+      "start_frame": 36,
+      "frames": 12,
+      "key": "de1c42c434ae610b047d6b8073c6c23a6d955d7896a10305b7969de702eec99c",
+      "status": "reused",
+      "file_blake3": "c2c06d5dce193011696c6a4d20c0c5a75cbabb8a62e6466296226671a971475f",
+      "render_ms": 0
+    }
+  ],
+  "rendered_frames": 0,
+  "reused_frames": 48,
+  "render_wall_ms": 0,
+  "concat_ms": 4,
+  "total_ms": 23,
+  "render_fps": 0.0,
+  "retries": 0,
+  "gpu_submissions": 0,
+  "textures_allocated": 0,
+  "textures_reused": 0,
+  "sequential": false,
+  "worker_tasks": 0,
+  "sequential_resets": 0,
+  "chunk_restarts": 0,
+  "gpu_recreations": 0,
+  "oom_backoffs": 0,
+  "min_jobs_in_flight": 1,
+  "chunk_dir": "/tmp/.ferrocut-cache/chunks/f22f3505ddfab3ee",
+  "final_blake3": "b2a54572b8751977939645d2ce711ff482498da88de7c083032e411c7e347b8e",
+  "video_blake3": "c0d88165f28ff9472374916c0d953102ce575a593aa69a0e64e06b1275e334c5"
+}

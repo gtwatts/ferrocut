@@ -33,6 +33,7 @@
 pub mod native_schema;
 pub mod root;
 pub mod schema;
+mod storytold_tools;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -305,7 +306,7 @@ pub fn tools() -> Vec<Tool> {
                 .destructive(true)
                 .open_world(true),
         ),
-    ]
+    ].into_iter().chain(storytold_tools::tools()).collect()
 }
 
 fn d_true() -> bool {
@@ -1191,6 +1192,18 @@ pub struct DocResource {
 pub fn resources() -> Vec<DocResource> {
     vec![
         DocResource {
+            uri: "docs://integrations/storytold.md",
+            name: "storytold-integration",
+            description: "Reused FilmCraft/EffectCraft core engines: discovery, effect/shape clocks, interchange loss reports, scopes, evidence and limits.",
+            mime: "text/markdown",
+        },
+        DocResource {
+            uri: "docs://capabilities.json",
+            name: "capabilities",
+            description: "Pinned upstream packages and actually connected agent features.",
+            mime: "application/json",
+        },
+        DocResource {
             uri: "docs://agent/onboarding.md",
             name: "agent-onboarding",
             description: "Start here: tool discovery, exact clocks, native text/shapes/finishing, explicit fonts, and a reversible render/review/revision workflow.",
@@ -1233,6 +1246,10 @@ pub fn resources() -> Vec<DocResource> {
 pub fn read_doc(uri: &str) -> Option<String> {
     let pretty = |v: Value| serde_json::to_string_pretty(&v).unwrap_or_default();
     Some(match uri {
+        "docs://integrations/storytold.md" => {
+            include_str!("../../../docs/integrations/STORYTOLD.md").to_string()
+        }
+        "docs://capabilities.json" => pretty(ferrocut_engine::storytold::capabilities()),
         "docs://agent/onboarding.md" => AGENT_GUIDE.to_string(),
         "docs://timeline/guide.md" => GUIDE.to_string(),
         "docs://timeline/schema.json" => pretty(schema::timeline()),
@@ -1295,7 +1312,7 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
         }),
         "branch" => args(name, a).and_then(|a| branch_tool(cx, a)),
         "openh264" => args(name, a).and_then(|a| openh264_tool(cx, a)),
-        _ => return None,
+        _ => return storytold_tools::call(cx, name, a),
     })
 }
 

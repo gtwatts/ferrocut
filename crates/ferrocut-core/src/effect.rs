@@ -218,6 +218,8 @@ pub struct Canvas {
     pub height: u32,
     /// Pixel aspect ratio (width / height of one pixel).
     pub pixel_aspect: f64,
+    /// Output frames per second, for frame-based procedural effects.
+    pub frame_rate: f64,
 }
 
 impl Canvas {
@@ -234,6 +236,9 @@ pub struct EffectRequest {
     /// The time the parameters were sampled at (clip-local seconds for a clip
     /// effect, timeline seconds for a track / adjustment effect).
     pub param_time: RationalTime,
+    /// Intrinsic procedural clock, independent of shifted keyframe times.
+    /// Split/trim preserves phase by adding the effect's stored clock offset.
+    pub effect_time: RationalTime,
     /// The data window to return (display-window coordinates).
     pub region: PixelRect,
     /// The display window.
@@ -257,6 +262,22 @@ pub trait VideoEffect: Send + Sync + 'static {
     /// Bump when the output for the same parameters changes (cache keys).
     fn version(&self) -> &str {
         "1"
+    }
+    /// True for effects whose pixels change with time even when all their
+    /// parameters and input pixels are constant. The stack includes the
+    /// parameter clock in each frame's cache key.
+    fn time_dependent(&self) -> bool {
+        false
+    }
+    /// Validate clock domains before caching and rendering. A static effect can
+    /// reject an invalid request without making every valid time a new pixel key.
+    fn validate_clocks(
+        &self,
+        _time: RationalTime,
+        _param_time: RationalTime,
+        _effect_time: RationalTime,
+    ) -> Result<(), String> {
+        Ok(())
     }
     /// The space the input is converted to before [`render`](Self::render)
     /// (default ACEScg linear: no conversion).
@@ -329,7 +350,7 @@ pub fn register(effect: Arc<dyn VideoEffect>) -> Result<(), String> {
     }
     let mut seen = std::collections::BTreeSet::new();
     for p in effect.params() {
-        if ["type", "id", "enabled"].contains(&p.name) {
+        if ["type", "id", "enabled", "clock_offset"].contains(&p.name) {
             return Err(format!(
                 "video effect {name}: parameter name {:?} is reserved",
                 p.name

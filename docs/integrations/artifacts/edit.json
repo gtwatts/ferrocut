@@ -1,0 +1,51 @@
+{
+  "output": "/tmp/ferrocut-storytold-workflow.json",
+  "dry_run": false,
+  "written": true,
+  "changes": [
+    {
+      "op": 0,
+      "kind": "set_param",
+      "summary": "headline generator.text.content: \"CORE ENGINES.\\nONE WORKFLOW.\" -> \"REUSED CORES.\\nEDITABLE RESULTS.\"",
+      "span": [
+        "0",
+        "2"
+      ]
+    },
+    {
+      "op": 1,
+      "kind": "set_param",
+      "summary": "star generator.shape.operators.1.angle: {\"keyframes\":[{\"interp\":\"ease_in_out\",\"t\":\"0\",\"v\":\"0\"},{\"t\":\"2\",\"v\":\"45\"}]} -> {\"keyframes\":[{\"interp\":\"ease_in_out\",\"t\":\"0\",\"v\":\"0\"},{\"t\":\"2\",\"v\":\"85\"}]}",
+      "span": [
+        "0",
+        "2"
+      ]
+    }
+  ],
+  "before": "a37c9320dd4a94846c7920236046e9db2a98313d85e634a7e0059282c3b12c4c",
+  "after": "07b92e03147261e94d669ac190ad52e87f2533cf9360c5b23621774351c0f964",
+  "journal_seq": 2,
+  "sources_absolutized": false,
+  "render": {
+    "total_chunks": 4,
+    "total_frames": 48,
+    "chunk_frames": 12,
+    "dirty_chunks": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "dirty_frames": 48,
+    "reused_chunks": 0,
+    "ranges": [
+      {
+        "start_frame": 0,
+        "end_frame": 48,
+        "start": "0",
+        "end": "2"
+      }
+    ],
+    "audio": "audio is re-mixed on every render (not chunk-cached)"
+  }
+}

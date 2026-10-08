@@ -1,0 +1,21 @@
+{
+  "path": "/tmp/ferrocut-storytold-showcase.mkv",
+  "container": "matroska,webm",
+  "duration": "2",
+  "has_video": true,
+  "has_audio": false,
+  "width": 640,
+  "height": 360,
+  "fps": "24",
+  "streams": [
+    {
+      "index": 0,
+      "kind": "video",
+      "codec": "ffv1",
+      "width": 640,
+      "height": 360,
+      "fps": "24",
+      "default": true
+    }
+  ]
+}

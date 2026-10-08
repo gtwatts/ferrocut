@@ -3872,9 +3872,51 @@
           },
           {
             "stage": "rendered",
-            "path": "docs/parity/artifacts/native-revision-compare.png",
+            "path": "docs/integrations/artifacts/storytold-revision-compare.png",
             "locator": "",
-            "claim": "Actual FFV1 renders at1.5seconds show the original and revised native titles; no title image is baked into either timeline."
+            "claim": "Actual 640x360 FFV1 renders at 1 second show native title content changing from CORE ENGINES. / ONE WORKFLOW. to REUSED CORES. / EDITABLE RESULTS.; neither timeline bakes the title into an image."
+          },
+          {
+            "stage": "integrated",
+            "path": "examples/storytold-showcase.json",
+            "locator": "",
+            "claim": "Editable native text, explicit font assets and reused effect/path controls in the rendered integration example."
+          },
+          {
+            "stage": "integrated",
+            "path": "examples/storytold-revise.ops",
+            "locator": "",
+            "claim": "Ordinary typed edits change native title content and an animated shape operator."
+          },
+          {
+            "stage": "integrated",
+            "path": "crates/ferrocut-mcp/src/native_schema.rs",
+            "locator": "",
+            "claim": "Current strict schemas expose native editable text and shape generator fields."
+          },
+          {
+            "stage": "audit",
+            "path": "crates/ferrocut-engine/src/edit.rs",
+            "locator": "",
+            "claim": "Journaled title edits and split/trim key shifts propagate failures through the current editor."
+          },
+          {
+            "stage": "audit",
+            "path": "crates/ferrocut-engine/src/timeline.rs",
+            "locator": "",
+            "claim": "Native text clip serialization and validated effect-key shifts are part of the current compiler input."
+          },
+          {
+            "stage": "audit",
+            "path": "crates/ferrocut-types/src/keyframe.rs",
+            "locator": "",
+            "claim": "Expression objects and anisotropic control arrays deserialize without ambiguous expression coercion."
+          },
+          {
+            "stage": "audit",
+            "path": "crates/ferrocut-types/src/time.rs",
+            "locator": "",
+            "claim": "Exact rational input parsing accepts representable decimal extremes and rejects overflow without panicking."
           }
         ],
         "limitations": [],
@@ -3900,11 +3942,11 @@
             "result": {
               "executed": true,
               "exit_code": 0,
-              "recorded_at": "2026-10-08T14:32:10.385608+00:00",
+              "recorded_at": "2026-10-08T15:32:47.428593+00:00",
               "revision": "701b88f0991a6f9a5fa7c9123b065c60c6904079",
-              "input_digest": "8fc755a80d54dec510da98664ba9059377419dea62f8ca061fc928635053fb40",
-              "log_path": "docs/parity/artifacts/acceptance/PP-067-native-title-edit-render-20261008T143210385608Z.log",
-              "log_sha256": "9bc1bf821f583d83934e56fdb31975fc79113bfc112021bc4d50898b91ad527e"
+              "input_digest": "27f7b514ff9c0a79d002098a823f972ec48589ce69393038d7cf207bdab5e967",
+              "log_path": "docs/parity/artifacts/acceptance/PP-067-native-title-edit-render-20261008T153247428593Z.log",
+              "log_sha256": "a8b2629cb86b7a2e5ac6b076d64ec0869ba411b6553a62093b46797f7067d93f"
             }
           }
         ],
@@ -3916,14 +3958,14 @@
             "approved": true,
             "reviewed_at": "2026-10-08",
             "reviewer": "Codex root: actual image inspection",
-            "artifact_path": "docs/parity/artifacts/native-revision-compare.png",
-            "artifact_sha256": "bac61a87d4e4f3593b98f7e0666dbd272f698190509ec44b18d947c89f1e5e9b",
-            "findings": "At1.5seconds original CUT. COMPOSE./CREATE. and revised EDIT. ANIMATE./COMPOSE. are legible and remain inside their intended area. Native text content changes while other picture elements retain placement. This approval covers editable title output; the visible green fringe on the separately keyed graphic remains a keyer limitation."
+            "artifact_path": "docs/integrations/artifacts/storytold-revision-compare.png",
+            "artifact_sha256": "942c5377b0d5e61133e039677c44472fb8882c32b09ef349a0e3c60c914c3215",
+            "findings": "At 1 second both native title versions are legible and inside their intended bounds. The star also changes shape through its revised twist keys; background, footer and other text retain placement. This checks editable title output and a revision, not Adobe typography equivalence or overall production quality."
           }
         ],
         "production_reviews": [],
         "notes": [
-          "Narrow acceptance: create, edit and render native title text. The actual4second1280x720sample, typed title revision, repeat-cache and undo artifacts are recorded in EXECUTION.md. Advanced text styles, path text and full Adobe typography compatibility remain separate capabilities."
+          "Narrow acceptance: create, edit and render native title text. The 2-second 640x360 integration sample, ordinary typed title/shape revision, 48-frame cache repeat and exact original-byte undo are recorded in docs/integrations/STORYTOLD.md. Earlier native milestone evidence remains in EXECUTION.md. Advanced typography capabilities are separate rows."
         ],
         "needs_design": false
       }

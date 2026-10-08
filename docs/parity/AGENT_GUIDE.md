@@ -10,6 +10,8 @@ Start with the tools and schemas exposed by the running build. An agent should r
 
 | Need | Current interface |
 | --- | --- |
+| Distinguish retained source, compiled engines and connected features | `capabilities {}` |
+| Find an effect and its exact controls | `effects_catalog {"query":"glow","details":true}` |
 | Inspect a project and its journal state | `timeline_get {"timeline":"project.json"}` |
 | Discover timeline structure | `timeline_schema {"part":"timeline"}` |
 | Discover typed operations | `timeline_schema {"part":"edit_ops"}` |
@@ -19,8 +21,20 @@ Start with the tools and schemas exposed by the running build. An agent should r
 | Inspect offline media and proxies | `media_status {"timeline":"project.json"}` |
 | Plan render keys without decoding or GPU execution | `plan {"timeline":"project.json"}` |
 | Inspect edit history / restore the last journaled edit | `log` / `undo`, each with `timeline` |
+| Import/export an editable foreign timeline with explicit loss reports | `timeline_import` / `timeline_export`, `format:"otio"` or `"fcp7"`, start with `dry_run:true` |
+| Measure rendered picture with numeric video scopes | `scopes_read {"path":"renders/title-draft.mkv","at":"1/2"}` |
 
 The same documentation is available through MCP resources: `docs://timeline/guide.md`, `docs://timeline/schema.json`, `docs://timeline/edit-ops.schema.json`, `docs://timeline/params.json`, and `docs://perceive/check.schema.json`. The MCP server's `--list-tools` option prints tool definitions without starting a client session.
+
+`docs://integrations/storytold.md` explains the reused engines and their limits;
+`docs://capabilities.json` provides their package and connection inventory.
+Search the effect catalog narrowly and request details before authoring. Only
+connected entries can execute; every unsupported entry explains its missing host
+or data requirement. Effect numeric controls accept the usual exact constants,
+keyframes and expressions. Shape operators are ordered in
+`generator.shape.operators`; edit an existing numeric slot with a path such as
+`generator.shape.operators.1.angle`. Creating/removing/reordering operators uses
+the whole array, not sparse numeric indices.
 
 From a built checkout:
 
@@ -48,6 +62,11 @@ Read each parameter's registry entry. For a normal clip, source time is `source_
 `set_keyframes` accepts `timeline_time:true` to convert key locations to the property's time base. Source properties use the clip's actual speed/remapping, including its `source_in`. Conversion maps key locations; interpolation still belongs to the resulting source curve. For precise easing under a nonlinear map, design the source curve explicitly. Multiple timeline keys mapping to the same source time are rejected rather than silently overwritten.
 
 Generator animation stays with its source through a split or an in-trim. A title split at timeline time `"3/2"` should show the same frame on either side of the cut. Moving a clip changes placement; slipping changes the source range; trimming changes its exposed range. Use the corresponding operation instead of trying to reproduce these distinctions with hand-edited timestamps.
+
+Procedural effect phase uses a separate `clock_offset` maintained by split/trim;
+effect parameter keys keep their usual clip-local clock. Do not overwrite that
+offset to change a numeric effect control. Intrinsic path wiggle follows source
+time. See the [integration contract](../integrations/STORYTOLD.md) for examples.
 
 ## Build a native title through normal edit operations
 

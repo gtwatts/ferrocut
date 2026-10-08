@@ -24,6 +24,8 @@ acceptance checks. It is a capability roadmap, not a claim of Adobe parity.
   `docs://agent/onboarding.md`.
 - [FilmCraft and EffectCraft review](STORYTOLD_REVIEW.md): pinned source,
   reusable component candidates, model differences and unverified runtime claims.
+- [Executed FilmCraft/EffectCraft integration](../integrations/STORYTOLD.md):
+  retained engines, connected agent controls, adapter tests and rendered evidence.
 - [Executed native milestone](EXECUTION.md): actual tests, inspected render,
   title revision/cache/undo evidence and unresolved baseline failures.
 

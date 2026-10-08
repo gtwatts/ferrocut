@@ -1,6 +1,6 @@
 # FilmCraft and EffectCraft: reuse review
 
-Read-only assessment retrieved 2026-10-08. No repository was cloned, built, installed or executed; no source was copied into Ferrocut and no architecture change was made. **Documented** means an upstream description; **source inspected** means the implementation/manifests were read, not that their behavior was independently verified. Recommendations and effort rankings below are engineering inferences.
+Historical read-only assessment retrieved 2026-10-08, before integration. At the time of this review, no repository was built or executed and no source was copied. Gordon subsequently authorized core reuse; the source and native adapters are now in Ferrocut. See [the current integration report](../integrations/STORYTOLD.md) for executable capabilities and evidence. **Documented** below means an upstream description; **source inspected** means the initial source review. Recommendations and effort rankings below describe that earlier assessment.
 
 ## Pinned scope
 

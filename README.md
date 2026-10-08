@@ -9,6 +9,12 @@ The [capability roadmap](docs/parity/README.md) records the researched requireme
 implementation limits and verification evidence. Start with the
 [agent guide](docs/parity/AGENT_GUIDE.md) and [native graphics example](examples/native-showcase.json).
 
+[FilmCraft and EffectCraft core integration](docs/integrations/STORYTOLD.md) adds
+170 effects, ordered native shape operators, OTIO/FCP7 interchange and numeric
+video scopes. Agents discover exact controls through `capabilities` and the paged
+`effects_catalog`; the [editable integration example](examples/storytold-showcase.json)
+uses the reused engines through Ferrocut's normal renderer.
+
 Brief: Obsidian vault `Pi Memory/Projects/cutline-research-brief-2026-10-07.md` (written before the rename to Ferrocut).
 
 License: Apache-2.0 (see `LICENSE`).

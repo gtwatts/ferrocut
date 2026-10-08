@@ -1,0 +1,25 @@
+   Compiling ferrocut-engine v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine)
+   Compiling ferrocut-mcp v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.68s
+     Running tests/storytold.rs (target/debug/deps/storytold-ffcb36ccd33cfa78)
+
+running 10 tests
+test discovery_and_paged_catalog_match_the_executable_registry ... ok
+test hostile_foreign_source_urls_return_errors_without_panics_or_files ... ok
+test import_export_dry_runs_new_files_and_explicit_loss_permission ... ok
+test import_export_paths_and_nested_assets_cannot_escape_the_project_root ... ok
+test import_losses_require_permission_and_invalid_selection_never_writes ... ok
+test import_missing_or_unprobeable_media_requires_explicit_loss_permission ... Truncating packet of size 13344 to 17
+[matroska,webm @ 0x777b30230080] EBML header parsing failed
+Truncating packet of size 13344 to 17
+[matroska,webm @ 0x777b30230080] EBML header parsing failed
+Truncating packet of size 13344 to 17
+[matroska,webm @ 0x777b30230080] EBML header parsing failed
+ok
+test import_probes_actual_source_ranges_before_publication ... ok
+test nested_import_resolves_siblings_and_refuses_collisions_before_publication ... ok
+test scopes_decode_inside_root_and_reject_outside_symlink_and_time ... ok
+test tool_schemas_annotations_and_runtime_arguments_are_strict ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.59s
+

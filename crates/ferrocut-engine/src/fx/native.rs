@@ -567,6 +567,7 @@ impl VideoEffect for Transform {
             width: 2,
             height: 2,
             pixel_aspect: 1.0,
+            frame_rate: 30.0,
         };
         let mut t = Self::at(p, c);
         if p.vec2("position").is_none() && p.vec2("anchor").is_none() {
@@ -765,6 +766,7 @@ mod tests {
             width: 100,
             height: 50,
             pixel_aspect: 1.0,
+            frame_rate: 30.0,
         };
         let full = PixelRect::full(100, 50);
         let b = params(&[("sigma", ParamValue::Scalar(2.0))]);

@@ -161,11 +161,55 @@ fn geometry() -> Value {
             "radius":pair("ellipse radii [rx,ry] in pixels; clamp to nonnegative")
         }), &["type","center","radius"]),
         object(json!({
+            "type":{"const":"polygon"},
+            "center":pair("polygon center [x,y] in output pixels"),
+            "points":animatable("polygon vertices, 3..256"),
+            "radius":animatable("outer radius in pixels"),
+            "rotation":default(animatable("rotation in degrees"),json!(0)),
+            "roundness":default(animatable("corner roundness in percent, 0..100"),json!(0))
+        }), &["type","center","points","radius"]),
+        object(json!({
+            "type":{"const":"star"},
+            "center":pair("star center [x,y] in output pixels"),
+            "points":animatable("star points, 3..256"),
+            "inner_radius":animatable("inner radius in pixels"),
+            "outer_radius":animatable("outer radius in pixels"),
+            "rotation":default(animatable("rotation in degrees"),json!(0)),
+            "inner_roundness":default(animatable("inner roundness in percent, 0..100"),json!(0)),
+            "outer_roundness":default(animatable("outer roundness in percent, 0..100"),json!(0))
+        }), &["type","center","points","inner_radius","outer_radius"]),
+        object(json!({
             "type":{"const":"path"},
             "commands":{"type":"array","minItems":2,"maxItems":100000,"items":command(),
                 "description":"Each contour starts with move_to, followed by drawable segments; close requires a segment and the next contour requires move_to. Engine validates ordering. Open contours close for fill only."}
         }), &["type","commands"])
     ]})
+}
+
+fn operators() -> Value {
+    let a = animatable;
+    json!({"type":"array","maxItems":32,"default":[],"items":{"oneOf":[
+        object(json!({"type":{"const":"trim"},
+            "start":default(a("start percent"),json!(0)),"end":default(a("end percent"),json!(100)),
+            "offset":default(a("offset in degrees"),json!(0)),"mode":{"enum":["simultaneous","individual"],"default":"simultaneous"}}), &["type"]),
+        object(json!({"type":{"const":"round_corners"},"radius":a("rounding radius in pixels")}), &["type","radius"]),
+        object(json!({"type":{"const":"offset"},"amount":a("offset in pixels"),
+            "join":{"enum":["miter","round","bevel"],"default":"miter"},
+            "miter_limit":default(a("miter limit, at least 1"),json!(4)),
+            "copies":default(a("copies, bounded integer count"),json!(1)),
+            "copy_offset":default(a("offset copy progression"),json!(0))}), &["type","amount"]),
+        object(json!({"type":{"const":"pucker_bloat"},"amount":a("pucker/bloat percent")}), &["type","amount"]),
+        object(json!({"type":{"const":"zigzag"},"size":a("displacement in pixels"),
+            "ridges":default(a("ridges per segment"),json!(1)),"smooth":{"type":"boolean","default":false}}), &["type","size"]),
+        object(json!({"type":{"const":"twist"},"angle":a("twist in degrees"),
+            "center":default(pair("twist center [x,y] in pixels"),json!([0,0]))}), &["type","angle"]),
+        object(json!({"type":{"const":"wiggle"},"size":a("displacement in pixels"),
+            "detail":default(a("path detail"),json!(10)),"smooth":{"type":"boolean","default":true},
+            "speed":default(a("evolution per source second"),json!(2)),"correlation":default(a("correlation percent"),json!(50)),
+            "phase":default(a("phase in degrees"),json!(0)),"seed":default(a("deterministic seed"),json!(0))}), &["type","size"]),
+        object(json!({"type":{"const":"reverse"}}), &["type"]),
+        object(json!({"type":{"const":"merge"},"mode":{"enum":["merge","add","subtract","intersect","exclude"],"default":"merge"}}), &["type"])
+    ]},"description":"Ordered EffectCraft path operations before fill/stroke. Numeric animation and intrinsic wiggle time use generator source time. Engine bounds geometry expansion."})
 }
 
 fn stops() -> Value {
@@ -243,6 +287,7 @@ pub fn shape() -> Value {
     let mut schema = object(
         json!({
             "geometry":geometry(),
+            "operators":operators(),
             "fill":default(nullable(paint()),json!({"type":"solid","color":[1,1,1,1]})),
             "stroke":default(nullable(stroke()),Value::Null),
             "fill_rule":{"enum":["nonzero","even_odd"],"default":"nonzero"}

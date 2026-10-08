@@ -1,0 +1,411 @@
+{
+  "OTIO_SCHEMA": "Timeline.1",
+  "global_start_time": {
+    "OTIO_SCHEMA": "RationalTime.1",
+    "rate": 24.0,
+    "value": 0.0
+  },
+  "metadata": {
+    "filmcraft": {
+      "item": 1,
+      "label": "Forest",
+      "master_effects": [],
+      "master_volume_db": 0.0,
+      "settings": {
+        "audio_master": "Stereo",
+        "color": {
+          "auto_tone_map": true,
+          "wide_gamut": false,
+          "working": "Rec709"
+        },
+        "drop_frame": false,
+        "frame_rate": {
+          "den": 1,
+          "num": 24
+        },
+        "height": 360,
+        "max_bit_depth": false,
+        "max_render_quality": false,
+        "par": [
+          1,
+          1
+        ],
+        "preset": "HD 1080p 23.976",
+        "preview_codec": "ProRes 422",
+        "sample_rate": 48000,
+        "width": 640,
+        "working_space": "Rec. 709"
+      },
+      "start_timecode": 0
+    }
+  },
+  "name": "Storytold interchange render proof",
+  "tracks": {
+    "OTIO_SCHEMA": "Stack.1",
+    "children": [
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "effects": [],
+            "enabled": true,
+            "markers": [],
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "available_image_bounds": null,
+                "available_range": {
+                  "OTIO_SCHEMA": "TimeRange.1",
+                  "duration": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 24.0,
+                    "value": 48.0
+                  },
+                  "start_time": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 24.0,
+                    "value": 0.0
+                  }
+                },
+                "metadata": {
+                  "filmcraft": {
+                    "info": {
+                      "audio": null,
+                      "container": "external",
+                      "duration": 508032000000,
+                      "file_size": null,
+                      "kind": "Movie",
+                      "name": "ferrocut-storytold-showcase.mkv",
+                      "start_timecode": null,
+                      "video": {
+                        "bitrate": null,
+                        "codec": "external",
+                        "color": {
+                          "matrix": "Bt709",
+                          "primaries": "Bt709",
+                          "range": "Limited",
+                          "transfer": "Bt709"
+                        },
+                        "frame_rate": {
+                          "den": 1,
+                          "num": 24
+                        },
+                        "has_alpha": false,
+                        "height": 360,
+                        "par": [
+                          1,
+                          1
+                        ],
+                        "pixel_format": "unknown",
+                        "width": 640
+                      }
+                    },
+                    "item": 3,
+                    "label": "Blue",
+                    "offline": false
+                  }
+                },
+                "name": "ferrocut-storytold-showcase.mkv",
+                "target_url": "file:///tmp/ferrocut-storytold-showcase.mkv"
+              }
+            },
+            "metadata": {
+              "filmcraft": {
+                "duration_ticks": 190512000000,
+                "effects": [
+                  {
+                    "effect": "motion",
+                    "enabled": true,
+                    "params": {
+                      "anchor": {
+                        "value": {
+                          "Vec2": {
+                            "x": 320.0,
+                            "y": 180.0
+                          }
+                        }
+                      },
+                      "anti_flicker": {
+                        "value": {
+                          "Float": 0.0
+                        }
+                      },
+                      "position": {
+                        "value": {
+                          "Vec2": {
+                            "x": 320.0,
+                            "y": 180.0
+                          }
+                        }
+                      },
+                      "rotation": {
+                        "value": {
+                          "Float": 0.0
+                        }
+                      },
+                      "scale": {
+                        "value": {
+                          "Float": 100.0
+                        }
+                      },
+                      "scale_width": {
+                        "value": {
+                          "Float": 100.0
+                        }
+                      },
+                      "uniform_scale": {
+                        "value": {
+                          "Bool": true
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "effect": "opacity",
+                    "enabled": true,
+                    "params": {
+                      "blend": {
+                        "value": {
+                          "Choice": 0
+                        }
+                      },
+                      "opacity": {
+                        "value": {
+                          "Float": 100.0
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "effect": "time_remap",
+                    "enabled": true,
+                    "params": {
+                      "speed": {
+                        "value": {
+                          "Float": 100.0
+                        }
+                      }
+                    }
+                  }
+                ],
+                "gain_db": 0.0,
+                "group": null,
+                "label": "Blue",
+                "link": null,
+                "scale_to_frame": false,
+                "source_in_ticks": 0
+              }
+            },
+            "name": "a",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 24.0,
+                "value": 18.0
+              },
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 24.0,
+                "value": 0.0
+              }
+            }
+          },
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "active_media_reference_key": "DEFAULT_MEDIA",
+            "effects": [],
+            "enabled": true,
+            "markers": [],
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "available_image_bounds": null,
+                "available_range": {
+                  "OTIO_SCHEMA": "TimeRange.1",
+                  "duration": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 24.0,
+                    "value": 48.0
+                  },
+                  "start_time": {
+                    "OTIO_SCHEMA": "RationalTime.1",
+                    "rate": 24.0,
+                    "value": 0.0
+                  }
+                },
+                "metadata": {
+                  "filmcraft": {
+                    "info": {
+                      "audio": null,
+                      "container": "external",
+                      "duration": 508032000000,
+                      "file_size": null,
+                      "kind": "Movie",
+                      "name": "ferrocut-storytold-showcase.mkv",
+                      "start_timecode": null,
+                      "video": {
+                        "bitrate": null,
+                        "codec": "external",
+                        "color": {
+                          "matrix": "Bt709",
+                          "primaries": "Bt709",
+                          "range": "Limited",
+                          "transfer": "Bt709"
+                        },
+                        "frame_rate": {
+                          "den": 1,
+                          "num": 24
+                        },
+                        "has_alpha": false,
+                        "height": 360,
+                        "par": [
+                          1,
+                          1
+                        ],
+                        "pixel_format": "unknown",
+                        "width": 640
+                      }
+                    },
+                    "item": 5,
+                    "label": "Blue",
+                    "offline": false
+                  }
+                },
+                "name": "ferrocut-storytold-showcase.mkv",
+                "target_url": "file:///tmp/ferrocut-storytold-showcase.mkv"
+              }
+            },
+            "metadata": {
+              "filmcraft": {
+                "duration_ticks": 190512000000,
+                "effects": [
+                  {
+                    "effect": "motion",
+                    "enabled": true,
+                    "params": {
+                      "anchor": {
+                        "value": {
+                          "Vec2": {
+                            "x": 320.0,
+                            "y": 180.0
+                          }
+                        }
+                      },
+                      "anti_flicker": {
+                        "value": {
+                          "Float": 0.0
+                        }
+                      },
+                      "position": {
+                        "value": {
+                          "Vec2": {
+                            "x": 320.0,
+                            "y": 180.0
+                          }
+                        }
+                      },
+                      "rotation": {
+                        "value": {
+                          "Float": 0.0
+                        }
+                      },
+                      "scale": {
+                        "value": {
+                          "Float": 100.0
+                        }
+                      },
+                      "scale_width": {
+                        "value": {
+                          "Float": 100.0
+                        }
+                      },
+                      "uniform_scale": {
+                        "value": {
+                          "Bool": true
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "effect": "opacity",
+                    "enabled": true,
+                    "params": {
+                      "blend": {
+                        "value": {
+                          "Choice": 0
+                        }
+                      },
+                      "opacity": {
+                        "value": {
+                          "Float": 100.0
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "effect": "time_remap",
+                    "enabled": true,
+                    "params": {
+                      "speed": {
+                        "value": {
+                          "Float": 100.0
+                        }
+                      }
+                    }
+                  }
+                ],
+                "gain_db": 0.0,
+                "group": null,
+                "label": "Blue",
+                "link": null,
+                "scale_to_frame": false,
+                "source_in_ticks": 254016000000
+              }
+            },
+            "name": "b",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 24.0,
+                "value": 18.0
+              },
+              "start_time": {
+                "OTIO_SCHEMA": "RationalTime.1",
+                "rate": 24.0,
+                "value": 24.0
+              }
+            }
+          }
+        ],
+        "effects": [],
+        "enabled": true,
+        "kind": "Video",
+        "markers": [],
+        "metadata": {
+          "filmcraft": {
+            "channels": "Stereo",
+            "effects": [],
+            "locked": false,
+            "muted": false,
+            "pan": 0.0,
+            "solo": false,
+            "sync_lock": true,
+            "volume_db": 0.0
+          }
+        },
+        "name": "Picture",
+        "source_range": null
+      }
+    ],
+    "effects": [],
+    "enabled": true,
+    "markers": [],
+    "metadata": {},
+    "name": "Storytold interchange render proof",
+    "source_range": null
+  }
+}

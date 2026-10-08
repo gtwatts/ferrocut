@@ -35,11 +35,25 @@ unicode-segmentation = "1.12"
 unicode-script = "0.5"
 tiny-skia = "0.12"
 half = "2.7"
+# Pinned reusable Rust internals; source/license provenance in vendor/storytold/manifest.json.
+filmcraft-interchange = { path = "../../vendor/storytold/filmcraft/crates/interchange" }
+filmcraft-project = { path = "../../vendor/storytold/filmcraft/crates/project" }
+filmcraft-media = { path = "../../vendor/storytold/filmcraft/crates/media" }
+filmcraft-time = { path = "../../vendor/storytold/filmcraft/crates/time" }
+filmcraft-geom = { path = "../../vendor/storytold/filmcraft/crates/geom" }
+filmcraft-color = { path = "../../vendor/storytold/filmcraft/crates/color" }
+filmcraft-scopes = { path = "../../vendor/storytold/filmcraft/crates/scopes" }
+effectcraft-effects = { path = "../../vendor/storytold/effectcraft/crates/effects" }
+effectcraft-path = { path = "../../vendor/storytold/effectcraft/crates/path" }
+effectcraft-keyframe = { path = "../../vendor/storytold/effectcraft/crates/keyframe" }
+effectcraft-project = { path = "../../vendor/storytold/effectcraft/crates/project" }
+effectcraft-color = { path = "../../vendor/storytold/effectcraft/crates/color" }
 # Expressions (MIT/Apache-2.0): sandboxed, no modules/time/I/O, op limits.
 rhai = { version = "1.26", features = ["no_module", "no_time", "no_custom_syntax", "sync"] }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+roxmltree = "0.21"
 wgpu = "30"
 
 [build-dependencies]

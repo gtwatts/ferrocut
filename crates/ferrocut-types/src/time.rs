@@ -218,11 +218,14 @@ impl FromStr for Rational {
                     let neg = i.trim_start().starts_with('-');
                     let ip = match i.trim() {
                         "" | "-" | "+" => 0,
-                        v => v.parse::<i64>().map_err(|_| err())?.abs(),
+                        v => (v.parse::<i64>().map_err(|_| err())? as i128).abs(),
                     };
                     let scale = 10i128.checked_pow(f.len() as u32).ok_or_else(err)?;
                     let fp = f.parse::<i128>().map_err(|_| err())?;
-                    let n = ip as i128 * scale + fp;
+                    let n = ip
+                        .checked_mul(scale)
+                        .and_then(|n| n.checked_add(fp))
+                        .ok_or(TimeError::Overflow)?;
                     Rational::try_new(if neg { -n } else { n }, scale)
                 }
                 Some(_) => Err(err()),
@@ -481,6 +484,26 @@ mod tests {
     fn overflow_is_an_error_not_a_wrap() {
         let big = Rational::from_int(i64::MAX);
         assert_eq!(big.checked_add(big), Err(TimeError::Overflow));
+    }
+
+    #[test]
+    fn extreme_decimal_inputs_return_values_or_errors_without_panicking() {
+        assert_eq!(
+            "-9223372036854775808.0".parse::<Rational>().unwrap(),
+            Rational::from_int(i64::MIN)
+        );
+        assert_eq!(
+            "9223372036854775807.0".parse::<Rational>().unwrap(),
+            Rational::from_int(i64::MAX)
+        );
+        for input in [
+            "9223372036854775807.123456789012345678901234567890",
+            "-9223372036854775808.123456789012345678901234567890",
+            "0.1234567890123456789012345678901234567890",
+            "-9223372036854775808.1",
+        ] {
+            assert!(input.parse::<Rational>().is_err(), "accepted {input}");
+        }
     }
 }
 

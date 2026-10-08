@@ -1,0 +1,340 @@
+{
+  "name": "Storytold core integration",
+  "output": {
+    "width": 640,
+    "height": 360,
+    "fps": "24",
+    "duration": 2,
+    "gop": 12,
+    "gops_per_chunk": 1
+  },
+  "tracks": [
+    {
+      "name": "background",
+      "clips": [
+        {
+          "id": "background",
+          "generator": {
+            "type": "solid",
+            "color": [
+              0,
+              0,
+              0
+            ]
+          },
+          "start": 0,
+          "duration": 2,
+          "effects": [
+            {
+              "type": "ec.generate.gradientramp",
+              "start": [
+                0,
+                0
+              ],
+              "end": [
+                1,
+                1
+              ],
+              "startColor": [
+                "0.008",
+                "0.016",
+                "0.028",
+                1
+              ],
+              "endColor": [
+                "0.025",
+                "0.055",
+                "0.065",
+                1
+              ]
+            },
+            {
+              "type": "ec.color.exposure",
+              "master/exposure": "1/4"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "brand",
+      "clips": [
+        {
+          "id": "brand",
+          "generator": {
+            "type": "text",
+            "text": {
+              "content": "FERROCUT",
+              "font": "../crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+              "font_size": 14,
+              "position": [
+                36,
+                34
+              ],
+              "fill": [
+                "0.3",
+                "0.9",
+                "0.8",
+                1
+              ]
+            }
+          },
+          "start": 0,
+          "duration": 2
+        }
+      ]
+    },
+    {
+      "name": "headline",
+      "clips": [
+        {
+          "id": "headline",
+          "generator": {
+            "type": "text",
+            "text": {
+              "content": "CORE ENGINES.\nONE WORKFLOW.",
+              "font": "../crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+              "font_size": 31,
+              "position": [
+                36,
+                101
+              ],
+              "fill": [
+                1,
+                1,
+                1,
+                1
+              ]
+            }
+          },
+          "start": 0,
+          "duration": 2
+        }
+      ]
+    },
+    {
+      "name": "subhead",
+      "clips": [
+        {
+          "id": "subhead",
+          "generator": {
+            "type": "text",
+            "text": {
+              "content": "Native effects and motion tools\nunder agent control.",
+              "font": "../crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+              "font_size": 16,
+              "position": [
+                38,
+                203
+              ],
+              "fill": [
+                "0.6",
+                "0.72",
+                "0.76",
+                1
+              ]
+            }
+          },
+          "start": 0,
+          "duration": 2
+        }
+      ]
+    },
+    {
+      "name": "star",
+      "clips": [
+        {
+          "id": "star",
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "star",
+                "center": [
+                  480,
+                  168
+                ],
+                "points": 7,
+                "inner_radius": 38,
+                "outer_radius": 77,
+                "rotation": {
+                  "keyframes": [
+                    {
+                      "t": 0,
+                      "v": 0,
+                      "interp": "ease_in_out"
+                    },
+                    {
+                      "t": 2,
+                      "v": 32
+                    }
+                  ]
+                },
+                "inner_roundness": 8,
+                "outer_roundness": 12
+              },
+              "operators": [
+                {
+                  "type": "round_corners",
+                  "radius": 3
+                },
+                {
+                  "type": "twist",
+                  "angle": {
+                    "keyframes": [
+                      {
+                        "t": 0,
+                        "v": 0,
+                        "interp": "ease_in_out"
+                      },
+                      {
+                        "t": 2,
+                        "v": 45
+                      }
+                    ]
+                  },
+                  "center": [
+                    480,
+                    168
+                  ]
+                }
+              ],
+              "fill": {
+                "type": "solid",
+                "color": [
+                  "0.05",
+                  "0.62",
+                  "0.46",
+                  1
+                ]
+              },
+              "stroke": {
+                "paint": {
+                  "type": "solid",
+                  "color": [
+                    "0.35",
+                    "1",
+                    "0.83",
+                    1
+                  ]
+                },
+                "width": 2
+              }
+            }
+          },
+          "start": 0,
+          "duration": 2,
+          "effects": [
+            {
+              "type": "ec.stylize.glow",
+              "id": "halo",
+              "threshold": 20,
+              "radius": 4,
+              "intensity": "0.55"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "orbit",
+      "clips": [
+        {
+          "id": "orbit",
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "ellipse",
+                "center": [
+                  480,
+                  168
+                ],
+                "radius": [
+                  101,
+                  101
+                ]
+              },
+              "operators": [
+                {
+                  "type": "trim",
+                  "start": 0,
+                  "end": {
+                    "keyframes": [
+                      {
+                        "t": 0,
+                        "v": 12,
+                        "interp": "ease_in_out"
+                      },
+                      {
+                        "t": 2,
+                        "v": 94
+                      }
+                    ]
+                  },
+                  "offset": {
+                    "keyframes": [
+                      {
+                        "t": 0,
+                        "v": 0,
+                        "interp": "ease_in_out"
+                      },
+                      {
+                        "t": 2,
+                        "v": 50
+                      }
+                    ]
+                  }
+                }
+              ],
+              "fill": null,
+              "stroke": {
+                "paint": {
+                  "type": "solid",
+                  "color": [
+                    "0.55",
+                    "0.94",
+                    "0.85",
+                    "0.8"
+                  ]
+                },
+                "width": 2,
+                "cap": "round"
+              }
+            }
+          },
+          "start": 0,
+          "duration": 2
+        }
+      ]
+    },
+    {
+      "name": "footer",
+      "clips": [
+        {
+          "id": "footer",
+          "generator": {
+            "type": "text",
+            "text": {
+              "content": "EFFECTCRAFT  /  FILMCRAFT  /  FERROCUT",
+              "font": "../crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+              "font_size": 11,
+              "position": [
+                37,
+                307
+              ],
+              "fill": [
+                "0.45",
+                "0.6",
+                "0.64",
+                1
+              ]
+            }
+          },
+          "start": 0,
+          "duration": 2
+        }
+      ]
+    }
+  ]
+}

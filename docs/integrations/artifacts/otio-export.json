@@ -1,0 +1,31 @@
+{
+  "bytes": 12809,
+  "dry_run": false,
+  "format": "OpenTimelineIO",
+  "has_losses": false,
+  "output": "/tmp/ferrocut-storytold-interchange.otio",
+  "report": {
+    "entries": [
+      {
+        "feature": "silent_source_audio",
+        "location": "a",
+        "message": "audio settings have no effect on the probed silent source",
+        "severity": "info"
+      },
+      {
+        "feature": "silent_source_audio",
+        "location": "b",
+        "message": "audio settings have no effect on the probed silent source",
+        "severity": "info"
+      },
+      {
+        "feature": "codec_empty_tracks",
+        "location": "Storytold interchange render proof",
+        "message": "codec added empty default tracks",
+        "severity": "info"
+      }
+    ]
+  },
+  "source_probe_issues": [],
+  "written": true
+}

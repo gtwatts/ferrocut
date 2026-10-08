@@ -355,6 +355,22 @@ fn spec_of(owner: &Owner, rel: &[Seg]) -> (Option<ParamSpec>, Option<usize>) {
         let kind = owner.json["effects"][*i]["type"].as_str().unwrap_or("");
         return (crate::fx::param_spec(kind, p), comp);
     }
+    if owner.kind == OwnerKind::VideoClip
+        && matches!(rel, [Seg::Key(g),Seg::Key(s),Seg::Key(o),Seg::Idx(_),..]
+            if g == "generator" && s == "shape" && o == "operators")
+    {
+        let path = if comp.is_some() {
+            &rel[..rel.len() - 1]
+        } else {
+            rel
+        };
+        return (
+            crate::params::lookup(PScope::VideoClip, &segs_name(path))
+                .ok()
+                .map(|(s, _)| *s),
+            comp,
+        );
+    }
     let keys: Vec<&str> = rel
         .iter()
         .filter_map(|s| match s {

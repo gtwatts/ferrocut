@@ -1,0 +1,34 @@
+{
+  "description": "Native 36-frame media edit exported through FilmCraft OTIO, imported back, then revised through native edit_apply/CLI.",
+  "renders": [
+    {
+      "variant": "interchange",
+      "total_frames": 36,
+      "rendered_frames": 36,
+      "reused_frames": 0,
+      "video_blake3": "444ec10e8e90bc68c4e9ad9e8b3195582fb6b62ed5d9f49a8b0585233d28364e",
+      "final_blake3": "137a12be803213e272a6e855726ae0b0191c79964489af5a0c34d6d36e70b0e0"
+    },
+    {
+      "variant": "imported",
+      "total_frames": 36,
+      "rendered_frames": 36,
+      "reused_frames": 0,
+      "video_blake3": "8133efeb8f86d9b4628d26c8e26794bb7e5061ad82ab9e4f1db13539a594be57",
+      "final_blake3": "d05764f5212877f38de54bdbfd6b3ac968a322e745bc730323f00c9b589b0e33"
+    },
+    {
+      "variant": "imported-revised",
+      "total_frames": 36,
+      "rendered_frames": 36,
+      "reused_frames": 0,
+      "video_blake3": "53c2e256f99ba145a738fa2e50d0c13eeeb9307b5d73a01c412b1584f6e602e0",
+      "final_blake3": "c3d7d3f46ef9108bdaa5414dc24013893ae24e0e2dc4720a5de9a27f54bef1b5"
+    }
+  ],
+  "decoded_rgba_frames_equal_before_after_otio": true,
+  "compressed_packet_hash_note": "FFV1 packet hashes differ because import uses native GOP24 instead of the source project GOP12; decoded frames are identical.",
+  "source": "/tmp/ferrocut-storytold-showcase.mkv",
+  "source_sha256": "79a5cc7df1ded3a6dc3ae3e6aa8f9e8b2e3f63ffdf9ea56d84a2672242e3ce91",
+  "edit": "Second imported clip opacity changed to0.7, editable reference and timing retained; rendering succeeds."
+}

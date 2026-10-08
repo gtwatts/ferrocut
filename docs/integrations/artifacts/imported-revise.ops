@@ -1,0 +1,8 @@
+[
+  {
+    "op": "set_param",
+    "clip": "video-0-5",
+    "param": "opacity",
+    "value": "0.7"
+  }
+]
