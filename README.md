@@ -132,7 +132,8 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
 - **Loudness.** Two passes: measure integrated loudness (EBU R128, `ebur128` crate, MIT, pure Rust), apply a
   constant gain to the target (e.g. -23 LUFS broadcast, -14 streaming), then a 5 ms lookahead true-peak
   limiter (4x oversampled) holds the ceiling; iterated until within 0.02 LU. The render report has the
-  analysis (before/after loudness, gain, limiter reduction, duck stats) and per-chunk audio hashes.
+  analysis (before/after loudness, gain, limiter reduction, duck stats) and, per chunk, the audio hash
+  (`audio_blake3`) and its master sample range (`audio_samples: [start, end)`, tiling `0..audio.samples`).
 
 ### Edit operations (`ferrocut edit`)
 

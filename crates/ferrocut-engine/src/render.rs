@@ -106,6 +106,11 @@ pub struct ChunkReport {
     /// blake3 of this chunk's audio (interleaved f32le), if the timeline has audio.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_blake3: Option<String>,
+    /// This chunk's audio as master sample indices `[start, end)` (per channel),
+    /// if the timeline has audio. Consecutive chunks tile `0..audio.samples`, so
+    /// a checker can map an audio join to the exact sample.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_samples: Option<[i64; 2]>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -886,6 +891,13 @@ pub fn render(
                 blake3::hash(&ch[p.index].to_f32le_interleaved())
                     .to_hex()
                     .to_string()
+            }),
+            audio_samples: audio_plan.as_ref().map(|a| {
+                let total = a.program.total;
+                [
+                    frame_sample(tl, p.start_frame).min(total),
+                    frame_sample(tl, p.start_frame + p.frames).min(total),
+                ]
             }),
         });
     }

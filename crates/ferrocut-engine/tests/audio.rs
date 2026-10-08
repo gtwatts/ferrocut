@@ -196,6 +196,28 @@ fn j_and_l_cuts_are_sample_exact_and_chunking_invariant() {
     assert_eq!(audio.blake3, blake3::hash(&bytes).to_hex().to_string());
     // Per-chunk audio hashes are present and chunk audio covers exact frame ranges.
     assert!(r1.chunks.iter().all(|c| c.audio_blake3.is_some()));
+    // audio_samples tile the master exactly, and each range is that chunk's audio.
+    let mut next = 0;
+    for c in &r1.chunks {
+        let [a, b] = c.audio_samples.expect("audio_samples");
+        assert_eq!(
+            a, next,
+            "chunk {} starts where the previous ended",
+            c.plan.index
+        );
+        next = b;
+        let bytes: Vec<u8> = s1[2 * a as usize..2 * b as usize]
+            .iter()
+            .flat_map(|x| x.to_le_bytes())
+            .collect();
+        assert_eq!(
+            c.audio_blake3.as_deref(),
+            Some(blake3::hash(&bytes).to_hex().as_str()),
+            "chunk {}",
+            c.plan.index
+        );
+    }
+    assert_eq!(next, audio.samples);
 
     // Run to run: forced full re-render gives identical bytes.
     let r3 = run(&chunked, "chunked2.mkv", true);
