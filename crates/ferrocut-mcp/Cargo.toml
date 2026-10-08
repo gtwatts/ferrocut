@@ -1,0 +1,24 @@
+[package]
+name = "ferrocut-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "MCP server (stdio) exposing Ferrocut timeline inspection, journaled edits, diff, plan and render to agents"
+
+[[bin]]
+name = "ferrocut-mcp"
+path = "src/main.rs"
+
+[dependencies]
+ferrocut-core.workspace = true
+ferrocut-engine = { path = "../ferrocut-engine" }
+anyhow = "1"
+rmcp = { version = "3.5", default-features = false, features = ["server", "transport-io"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+
+[dev-dependencies]
+rmcp = { version = "3.5", default-features = false, features = ["client", "transport-child-process"] }
+tempfile = "3"

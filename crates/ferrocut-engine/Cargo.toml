@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Ferrocut engine: timeline, scheduler, pull-based render graph, FFmpeg I/O, wgpu compositor"
+# Lets dependents' build scripts read the FFmpeg rpaths (see build.rs).
+links = "ferrocut-engine-ffmpeg"
 
 [[bin]]
 name = "ferrocut"

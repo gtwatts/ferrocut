@@ -17,6 +17,9 @@
 //! canonical absolute path. The project FFmpeg's own libs carry
 //! RUNPATH `$ORIGIN/../lib`, so their inter-library deps resolve too.
 //!
+//! Crates with their own binaries (ferrocut-mcp) get the same entries via
+//! `links` metadata: `DEP_FERROCUT_ENGINE_FFMPEG_RPATHS` (`;`-separated).
+//!
 //! FERROCUT_FFMPEG_LIBDIR overrides the rpath (empty string disables it).
 //! FERROCUT_REQUIRE_LGPL_FFMPEG=1 turns the fallback warning into an error.
 
@@ -105,8 +108,12 @@ fn main() {
     let libdir = std::env::var("FERROCUT_FFMPEG_LIBDIR").ok().or(resolved);
     if let Some(dir) = libdir.filter(|d| !d.is_empty() && !d.starts_with("/usr/lib") && d != "/lib")
     {
-        for rp in rpaths(&dir) {
+        let rps = rpaths(&dir);
+        for rp in &rps {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{rp}");
         }
+        // `links = "ferrocut-engine-ffmpeg"`: dependents' build scripts (e.g.
+        // ferrocut-mcp's binary) read DEP_FERROCUT_ENGINE_FFMPEG_RPATHS.
+        println!("cargo:rpaths={}", rps.join(";"));
     }
 }

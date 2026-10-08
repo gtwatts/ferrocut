@@ -11,6 +11,7 @@ License: Apache-2.0 (see `LICENSE`).
 - `ferrocut-core`: shared GPU context + texture pool, GPU `Frame`, `RenderNode`/`RenderCtx`; re-exports `ferrocut-types` (Rusty + SeePlus)
 - `ferrocut-engine`: timeline, edit ops, scheduler, render graph, FFmpeg I/O, wgpu compositor, layer transform (Rusty)
 - `ferrocut-audio`: pure-Rust, deterministic audio mixer: buses, fades/crossfades, ducking, EBU R128 normalization, true-peak limiter (Rusty)
+- `ferrocut-mcp`: MCP server (stdio) exposing timeline inspection, journaled edits, diff, plan, render and reports to agents (Rusty)
 - `ferrocut-colorspace`: pure-Rust Rec.709/sRGB/ACEScg matrices, transfer functions and matching WGSL (SeePlus)
 - `ferrocut-color`: OCIO bridge (SeePlus)
 - `ferrocut-ofx`: out-of-process OpenFX host (SeePlus)
@@ -179,6 +180,71 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
   - `ferrocut merge <tl> <name>` replays the branch's live ops since it forked onto the current branch, atomically
     and rebase-style. An op that no longer applies (e.g. a clip deleted on this branch) fails the merge and nothing
     is written. A merge undoes as one step.
+
+### MCP server (`ferrocut-mcp`)
+
+`ferrocut-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server built on the official Rust SDK
+(`rmcp` 3.5, Apache-2.0; every new transitive dependency is MIT and/or Apache-2.0). It is a thin layer over
+`ferrocut_engine::{project, diff}`, so tools and CLI behave identically.
+
+| Tool | What it does |
+|---|---|
+| `timeline_get` | Canonical hash, timeline JSON, duration, frame/chunk counts, flat clip list, journal status |
+| `edit_apply` | Apply edit ops atomically (`dry_run`, `plan` for chunks that would re-render, `output`, `return_timeline`); journaled |
+| `diff` | The structured diff above, with render impact |
+| `plan` | Chunk plan (index, frame range, content key) without decoding or GPU |
+| `render` | Incremental render (`jobs`, `force`, `cache_dir`, `cpu`, `timeout_s`); returns `report_path`, hashes and chunk-reuse stats |
+| `report_read` | Summary (or `full`) of a render report |
+| `log`, `undo`, `branch` | Journal log, undo, and branch `create`/`checkout`/`merge` |
+
+- **Schemas** are hand-written JSON Schema (`crates/ferrocut-mcp/src/schema.rs`), not derived:
+  - each edit op is a `oneOf` branch with `op` as a `const`, its required fields, `additionalProperties: false`
+    and an example;
+  - rationals are integers or strings matching `^-?[0-9]+(/[1-9][0-9]*|\.[0-9]+)?$`;
+  - keyframes, interpolations (presets, `bezier`, `speed`), transforms, fades and the `ripple_insert` clip object
+    are spelled out;
+  - a test checks that every op kind has a branch, that every example parses with the engine, and that every
+    property the schema allows is one the engine accepts.
+- **Results** are structured JSON (`structuredContent`, also sent as text). Tool failures, such as an op that
+  doesn't apply, a missing file or a render error, come back as `isError` results with
+  `{"error": "op 0 (trim nope): ..."}`; an unknown tool is a JSON-RPC invalid-params error.
+- **Paths** are absolute, or relative to the server's working directory.
+- **Libraries:** the binary embeds the same relocatable FFmpeg rpath as `ferrocut` (via `links` metadata from
+  the engine's build script), so it needs no `LD_LIBRARY_PATH`.
+- **Tests:** `tests/stdio.rs` spawns the server over stdio and runs:
+  1. list tools;
+  2. `timeline_get`;
+  3. a dry-run edit with plan (chunks 4-7), then a real edit;
+  4. `log`, `diff`, `plan`, and error cases;
+  5. render a 64x32 timeline (12 chunks rendered), render again (12 of 12 reused, same hash);
+  6. `report_read`;
+  7. `undo`, then render again (only chunks 4-7 re-render).
+
+```sh
+cargo build --release -p ferrocut-mcp
+./target/release/ferrocut-mcp --list-tools     # prints every tool with its JSON Schema
+```
+
+**Register with Codex.** Add this to `~/.codex/config.toml`, or to a trusted project's `.codex/config.toml`.
+Codex's default 60 s tool timeout is too short for real renders, hence `tool_timeout_sec`:
+
+```toml
+[mcp_servers.ferrocut]
+command = "/home/gordontwatts/Documents/projects/ferrocut/target/release/ferrocut-mcp"
+args = []
+# Relative timeline paths in tool calls resolve against this directory.
+cwd = "/home/gordontwatts/Documents/projects/ferrocut"
+startup_timeout_sec = 20
+# Renders block until done; allow long ones (Codex's default is 60 s).
+tool_timeout_sec = 1800
+# Prompt before tools not marked read-only (edit_apply, render, undo, branch).
+default_tools_approval_mode = "writes"
+```
+
+The CLI equivalent (without the timeouts) is
+`codex mcp add ferrocut -- /home/gordontwatts/Documents/projects/ferrocut/target/release/ferrocut-mcp`.
+Check it with `codex mcp get ferrocut`, or `/mcp` in the TUI. Any other MCP client works the same way: run the
+binary over stdio.
 
 ### Keyframes and the layer transform
 
