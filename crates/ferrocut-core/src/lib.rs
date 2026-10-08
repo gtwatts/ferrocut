@@ -15,6 +15,6 @@ pub use ferrocut_types::*;
 pub use frame::{Frame, FrameStorage, GpuImage, WORKING_FORMAT};
 pub use gpu::{
     AdapterPreference, GpuContext, GpuError, GpuErrorExt, GpuErrorScope, GpuRequirements,
-    PoolStats, SharedGpu,
+    PoolStats, SharedGpu, with_alloc_scope,
 };
 pub use node::{AccessPattern, Pull, RenderCtx, RenderNode, WorkerState};

@@ -193,7 +193,7 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 | `edit_apply` | Apply edit ops atomically (`dry_run`, `plan` for chunks that would re-render, `output`, `return_timeline`); journaled |
 | `diff` | The structured diff above, with render impact |
 | `plan` | Chunk plan (index, frame range, content key) without decoding or GPU |
-| `render` | Incremental render (`jobs`, `force`, `cache_dir`, `cpu`, `timeout_s`); returns `report_path`, hashes and chunk-reuse stats |
+| `render` | Incremental render (`jobs` (default 4, lowered to fit free VRAM), `force`, `cache_dir`, `cpu`, `timeout_s`); returns `report_path`, hashes, chunk-reuse stats and `oom_backoffs` |
 | `report_read` | Summary (or `full`) of a render report |
 | `quality_check` | Perceptual quality check of a render via `ferrocut-perceive` (below); `render` also takes `check: true` |
 | `log`, `undo`, `branch` | Journal log, undo, and branch `create`/`checkout`/`merge` |
@@ -353,8 +353,21 @@ and outputs only the transformed bounding box as its data window. Held poses reu
 - **GPU faults.** `NodeError::from_gpu(&wgpu::Error)` (`ferrocut_core::GpuErrorExt`) classifies
   out-of-memory and device-lost as `Retryable` with a `gpu_fault` (`NodeError::gpu_out_of_memory` /
   `NodeError::device_lost` build them directly); other validation/internal errors are `Permanent`.
-  Each frame runs in a `GpuContext::error_scope`, so wgpu OOM becomes an error instead of a panic:
-  the pool is trimmed and the frame retried. Device loss (reported by a node, or seen via wgpu's
+  Each frame runs in a `GpuContext::error_scope`, so wgpu OOM becomes an error instead of a panic.
+- **Out of GPU memory.** A failed wgpu allocation doesn't fail where it happens: it leaves an
+  invalid object, and a later use fails validation ("BindGroup with '' label is invalid"). Wrap
+  allocations outside `render` (setup, lazily built caches) in
+  `ferrocut_core::with_alloc_scope(&gpu, || ...) -> Result<T, NodeError>`. It pushes OutOfMemory +
+  Validation error scopes and maps a failed allocation (including "... is invalid" fallout once
+  the device has run out of memory) to `Retryable` + `GpuFault::OutOfMemory`. Any OOM poisons the
+  texture pool, so textures leased before it are freed instead of reused. The scheduler doesn't
+  retry an OOM frame. It drops the worker, restarts the chunk and lowers the number of chunks in
+  flight (`RenderReport.oom_backoffs`, `min_jobs_in_flight`; the output is identical). If even one
+  chunk in flight runs out of memory it fails with a clear error (free VRAM, lower the resolution or
+  use `--cpu`). The default `--jobs` is `min(cores, 12)`, lowered to what fits in free VRAM where
+  NVML reports it (NVIDIA; about 80 bytes per output pixel per job plus 512 MiB headroom). MCP
+  `render` defaults to at most 4. `FERROCUT_VRAM_BUDGET_MB` (or `GpuContext::set_memory_budget`)
+  simulates a small GPU for tests. Device loss (reported by a node, or seen via wgpu's
   device-lost callback) is not retried per frame: the scheduler recreates the shared device, queue
   and texture pool on the same adapter (`SharedGpu::recover`) and re-renders the chunk on a fresh
   worker, at most `max_chunk_restarts` (2) times per chunk. Nodes that cache device objects outside

@@ -292,6 +292,15 @@ fn retries_permanent_errors_and_cancellation() {
     assert_eq!(idle.attempts.lock().unwrap().len(), 0);
 }
 
+/// Tests that create and destroy several devices run one at a time: the dev
+/// box shares its GPU with other processes, so parallel device creation can
+/// fail for lack of VRAM.
+static MULTI_DEVICE: Mutex<()> = Mutex::new(());
+
+fn multi_device_lock() -> std::sync::MutexGuard<'static, ()> {
+    MULTI_DEVICE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn gpu_or_skip() -> Option<SharedGpu> {
     match GpuContext::new(AdapterPreference::default()) {
         Ok(g) => Some(SharedGpu::new(g)),
@@ -443,6 +452,7 @@ impl RenderNode for SeqProbe {
 
 #[test]
 fn gpu_faults_are_classified_and_recovered() {
+    let _one_at_a_time = multi_device_lock();
     let Some(gpu) = gpu_or_skip() else { return };
     let dir = tempfile::tempdir().unwrap();
     synth(&dir.path().join("a.mkv"), 60, 1);
@@ -468,7 +478,8 @@ fn gpu_faults_are_classified_and_recovered() {
         (0, 0)
     );
 
-    // Out of memory once: retried per frame on the same device.
+    // Out of memory once: not retried per frame (the frame's objects may be
+    // invalid); the chunk restarts with one fewer job in flight.
     let r = render(
         &tl,
         &wrapped(vec![GpuFaultAt::once(30, Fault::ReportOom)]),
@@ -477,7 +488,9 @@ fn gpu_faults_are_classified_and_recovered() {
         &opts("oom"),
     )
     .unwrap();
-    assert_eq!((r.retries, r.chunk_restarts, r.gpu_recreations), (1, 0, 0));
+    assert_eq!((r.retries, r.chunk_restarts, r.gpu_recreations), (0, 1, 0));
+    assert_eq!(r.oom_backoffs, 1);
+    assert!(r.min_jobs_in_flight < 3, "{r:?}");
     assert_eq!(r.final_blake3, reference.final_blake3);
 
     // A node reports device-lost once: the context is recreated and the chunk re-rendered.
@@ -534,6 +547,66 @@ fn gpu_faults_are_classified_and_recovered() {
     );
     assert_eq!(gpu.recreations() - before, 2);
     assert!(!out("dead").exists());
+}
+
+/// A VRAM budget far below what `jobs` workers need (the `FERROCUT_VRAM_BUDGET_MB`
+/// knob, simulating a GPU mostly held by another process): the render backs
+/// off to fewer chunks in flight and still produces the identical file; below
+/// what even one worker needs it fails with a clear error, not a validation panic.
+#[test]
+fn out_of_vram_backs_off_jobs_then_fails_clearly() {
+    let _one_at_a_time = multi_device_lock();
+    let dir = tempfile::tempdir().unwrap();
+    synth(&dir.path().join("a.mkv"), 60, 1);
+    synth(&dir.path().join("b.mkv"), 60, 2);
+    synth(&dir.path().join("c.mkv"), 30, 3);
+    let tl = timeline(dir.path(), "1/2");
+    let c = compile(&tl).unwrap();
+    let opts = |name: &str, jobs: usize| RenderOptions {
+        force: true,
+        jobs,
+        ..RenderOptions::new(dir.path().join(format!("cache-{name}")))
+    };
+    let out = |name: &str| dir.path().join(format!("{name}.mkv"));
+    let fresh = || {
+        GpuContext::new(AdapterPreference::default())
+            .ok()
+            .map(SharedGpu::new)
+    };
+    let Some(gpu) = fresh() else { return };
+
+    // One worker's working set: the pool's live bytes after a -j 1 render.
+    let reference = render(&tl, &c, &gpu, &out("ref"), &opts("ref", 1)).unwrap();
+    let per_worker = gpu.get().pool_live_bytes();
+    assert!(per_worker > 0);
+    assert_eq!(reference.oom_backoffs, 0);
+
+    // Room for about two workers, asked for six.
+    drop(gpu);
+    let gpu = fresh().unwrap();
+    gpu.get().set_memory_budget(Some(per_worker * 5 / 2));
+    let r = render(&tl, &c, &gpu, &out("tight"), &opts("tight", 6)).unwrap();
+    assert!(r.oom_backoffs >= 1, "{r:?}");
+    assert!(r.min_jobs_in_flight <= 2, "{r:?}");
+    assert_eq!(r.gpu_recreations, 0);
+    assert_eq!(r.final_blake3, reference.final_blake3, "identical output");
+
+    // Not even one worker fits: a clear, actionable error.
+    drop(gpu);
+    let gpu = fresh().unwrap();
+    gpu.get().set_memory_budget(Some(per_worker / 2));
+    let e = render(&tl, &c, &gpu, &out("none"), &opts("none", 4)).unwrap_err();
+    let msg = format!("{e:#}");
+    assert!(
+        msg.contains("out of GPU memory even with a single chunk in flight"),
+        "{msg}"
+    );
+    assert!(msg.contains("--cpu"), "{msg}");
+    assert!(
+        node_error(&e).is_some_and(NodeError::is_gpu_out_of_memory),
+        "{msg}"
+    );
+    assert!(!out("none").exists());
 }
 
 #[test]

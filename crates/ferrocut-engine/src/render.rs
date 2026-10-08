@@ -15,8 +15,16 @@
 //! nodes in [`RenderCtx`].
 //!
 //! GPU faults: each frame runs inside a [`GpuContext::error_scope`], so wgpu
-//! out-of-memory surfaces as a `Retryable` [`GpuFault::OutOfMemory`] error (the
-//! pool is trimmed and the frame retried) instead of panicking. A device-lost
+//! out-of-memory surfaces as a `Retryable` [`GpuFault::OutOfMemory`] error
+//! instead of panicking (or, worse, as a validation error from an invalid
+//! object a failed allocation left behind; see `ferrocut_core::gpu`). Out of
+//! memory is not retried per frame: the chunk is abandoned (its worker state
+//! and every texture leased so far are discarded, the pool is poisoned), the
+//! number of chunks allowed on the GPU at once is lowered (adaptive back-off,
+//! [`RenderReport::oom_backoffs`], [`RenderReport::min_jobs_in_flight`]) and the
+//! chunk restarts from its first frame on a fresh worker. If it still runs out
+//! of memory with a single chunk in flight (after two more tries) the render
+//! fails with a clear out-of-memory error. A device-lost
 //! fault (reported by a node via `NodeError::from_gpu`/`device_lost`, or seen
 //! through wgpu's device-lost callback) is not retried per frame: the chunk is
 //! abandoned, the shared [`SharedGpu`] recreates the device, queue and texture
@@ -48,7 +56,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -134,6 +142,11 @@ pub struct RenderReport {
     pub chunk_restarts: u64,
     /// GPU contexts recreated after device loss.
     pub gpu_recreations: u64,
+    /// Chunk restarts after running out of GPU memory (each lowers the cap on
+    /// chunks in flight).
+    pub oom_backoffs: u64,
+    /// The cap on chunks rendering at once at the end (`jobs` unless it backed off).
+    pub min_jobs_in_flight: usize,
     /// Where this adapter's chunks are cached (see [`adapter_tag`]).
     pub chunk_dir: PathBuf,
     pub final_blake3: String,
@@ -268,7 +281,8 @@ pub fn with_retries<T>(
         check_cancel(cancel, deadline)?;
         match f(attempt) {
             Ok(v) => return Ok(v),
-            Err(e) if e.is_retryable() && !e.is_device_lost() && attempt < max_retries => {
+            // GPU faults are handled per chunk (fresh worker / device, back-off).
+            Err(e) if e.is_retryable() && e.gpu_fault.is_none() && attempt < max_retries => {
                 retries.fetch_add(1, Ordering::Relaxed);
                 std::thread::sleep(Duration::from_millis(10 << attempt.min(6)));
                 attempt += 1;
@@ -384,7 +398,76 @@ struct ChunkEnv<'a> {
     resets: &'a AtomicU64,
     restarts: &'a AtomicU64,
     progress: Option<&'a ProgressCounter>,
+    slots: &'a GpuSlots,
+    oom_backoffs: &'a AtomicU64,
 }
+
+/// Adaptive cap on chunks doing GPU work at once: starts at `jobs`; every
+/// out-of-memory restart lowers it (never below 1).
+struct GpuSlots {
+    /// (active, limit)
+    state: Mutex<(usize, usize)>,
+    cv: Condvar,
+}
+
+struct SlotGuard<'a>(&'a GpuSlots);
+
+impl Drop for SlotGuard<'_> {
+    fn drop(&mut self) {
+        let mut s = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
+        s.0 -= 1;
+        self.0.cv.notify_all();
+    }
+}
+
+impl GpuSlots {
+    fn new(jobs: usize) -> Self {
+        GpuSlots {
+            state: Mutex::new((0, jobs.max(1))),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Wait for a slot (checking cancellation while waiting).
+    fn acquire(
+        &self,
+        cancel: &CancelToken,
+        deadline: Option<Instant>,
+    ) -> Result<SlotGuard<'_>, NodeError> {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        while s.0 >= s.1 {
+            drop(s);
+            check_cancel(cancel, deadline)?;
+            s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if s.0 >= s.1 {
+                s = self
+                    .cv
+                    .wait_timeout(s, Duration::from_millis(50))
+                    .unwrap_or_else(|e| e.into_inner())
+                    .0;
+            }
+        }
+        s.0 += 1;
+        Ok(SlotGuard(self))
+    }
+
+    /// After an OOM (caller holds no slot): cap = max(1, min(cap - 1, active)).
+    /// Returns the cap before.
+    fn back_off(&self) -> usize {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let before = s.1;
+        s.1 = s.1.saturating_sub(1).min(s.0).max(1);
+        self.cv.notify_all();
+        before
+    }
+
+    fn limit(&self) -> usize {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).1
+    }
+}
+
+/// OOM restarts allowed per chunk once only one chunk is in flight.
+const OOM_TRIES_AT_ONE_JOB: u32 = 2;
 
 /// One render worker: a device snapshot plus its per-worker node state.
 struct Worker {
@@ -395,9 +478,14 @@ struct Worker {
 
 impl Worker {
     fn new(env: &ChunkEnv<'_>, gpu: Arc<GpuContext>) -> anyhow::Result<Worker> {
-        let comp = env.comps.get(&gpu);
-        let mut state = WorkerState::default();
-        state.slot(compositor_slot(), || Ok(comp.clone()))?;
+        let (comp, state) = ferrocut_core::with_alloc_scope(&gpu, || -> anyhow::Result<_> {
+            let comp = env.comps.get(&gpu);
+            let mut state = WorkerState::default();
+            state.slot(compositor_slot(), || Ok(comp.clone()))?;
+            Ok((comp, state))
+        })
+        .map_err(anyhow::Error::new)
+        .context("setting up a render worker")??;
         Ok(Worker { gpu, comp, state })
     }
 }
@@ -410,48 +498,94 @@ fn gpu_fault(e: &anyhow::Error, gpu: &GpuContext) -> Option<GpuFault> {
     node_error(e).and_then(|n| n.gpu_fault)
 }
 
-/// Render `chunks` in order on one worker (one chunk, or a sequential run).
+/// Recreate a lost device. A retryable failure (typically "not enough memory"
+/// while another process holds most of the VRAM) is retried with backoff.
+fn recover_device(
+    env: &ChunkEnv<'_>,
+    failed: &Arc<GpuContext>,
+) -> Result<Arc<GpuContext>, NodeError> {
+    let mut attempt = 0;
+    loop {
+        match env.gpu.recover(failed).map_err(NodeError::from) {
+            Ok(g) => return Ok(g),
+            Err(e) if e.is_retryable() && attempt < 4 => {
+                check_cancel(env.cancel, env.deadline)?;
+                std::thread::sleep(Duration::from_millis(100 << attempt));
+                attempt += 1;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Render `chunks` in order on one worker (one chunk, or a sequential run),
+/// holding one [`GpuSlots`] slot.
 fn render_run(
     env: &ChunkEnv<'_>,
     chunks: &[&ChunkPlan],
     path_of: &(dyn Fn(&ChunkPlan) -> PathBuf + Sync),
 ) -> anyhow::Result<Vec<(usize, u128)>> {
-    let mut w = Worker::new(env, env.gpu.get())?;
+    let mut gpu = env.gpu.get();
+    let mut slot = None;
+    let mut w: Option<Worker> = None;
     let mut out = Vec::with_capacity(chunks.len());
     for p in chunks {
         let s = Instant::now();
-        let mut restarts = 0;
+        let (mut restarts, mut oom_at_one) = (0, 0);
         loop {
-            let (sub0, res0) = (w.state.submissions, w.state.sequential_resets);
-            let r = render_chunk(env, &mut w, p, &path_of(p));
-            env.submissions
-                .fetch_add(w.state.submissions - sub0, Ordering::Relaxed);
-            env.resets
-                .fetch_add(w.state.sequential_resets - res0, Ordering::Relaxed);
+            if slot.is_none() {
+                slot = Some(env.slots.acquire(env.cancel, env.deadline)?);
+            }
+            let r = (|| -> anyhow::Result<()> {
+                if w.is_none() {
+                    w = Some(Worker::new(env, gpu.clone())?);
+                }
+                let w = w.as_mut().expect("worker");
+                let (sub0, res0) = (w.state.submissions, w.state.sequential_resets);
+                let r = render_chunk(env, w, p, &path_of(p));
+                env.submissions
+                    .fetch_add(w.state.submissions - sub0, Ordering::Relaxed);
+                env.resets
+                    .fetch_add(w.state.sequential_resets - res0, Ordering::Relaxed);
+                r
+            })();
             let Err(e) = r else { break };
-            match gpu_fault(&e, &w.gpu) {
-                Some(fault)
-                    if restarts < env.max_chunk_restarts
-                        && check_cancel(env.cancel, env.deadline).is_ok() =>
-                {
+            if let Err(c) = check_cancel(env.cancel, env.deadline) {
+                // Cancelled (by the caller, or because a sibling run failed):
+                // report Cancelled so the root cause wins in `render`.
+                return Err(anyhow::Error::new(c)
+                    .context(format!("chunk {} (stopped after: {e:#})", p.index)));
+            }
+            match gpu_fault(&e, &gpu) {
+                Some(GpuFault::DeviceLost) if restarts < env.max_chunk_restarts => {
                     restarts += 1;
                     env.restarts.fetch_add(1, Ordering::Relaxed);
-                    let gpu = match fault {
-                        GpuFault::DeviceLost => env
-                            .gpu
-                            .recover(&w.gpu)
-                            .map_err(NodeError::from)
-                            .with_context(|| {
-                                format!("chunk {}: recreating the GPU device", p.index)
-                            })?,
-                        GpuFault::OutOfMemory => {
-                            w.gpu.trim_pool();
-                            w.gpu.clone()
+                    w = None;
+                    gpu = recover_device(env, &gpu)
+                        .with_context(|| format!("chunk {}: recreating the GPU device", p.index))?;
+                }
+                Some(GpuFault::OutOfMemory) => {
+                    // Discard everything the failed attempt touched (some objects
+                    // may be invalid), free our slot, lower the cap, retry.
+                    gpu.note_out_of_memory();
+                    w = None;
+                    slot = None;
+                    let cap = env.slots.back_off();
+                    if cap == 1 {
+                        oom_at_one += 1;
+                        if oom_at_one > OOM_TRIES_AT_ONE_JOB {
+                            return Err(e.context(format!(
+                                "chunk {}: out of GPU memory even with a single chunk in flight{}. \
+                                 Free GPU memory (other processes may hold it), render at a lower \
+                                 resolution, or render on the CPU (--cpu)",
+                                p.index,
+                                crate::vram::free_note(&gpu.info)
+                            )));
                         }
-                    };
-                    // Fresh worker state: nothing from the failed attempt (or the
-                    // old device) leaks into the retry; sequential nodes pre-roll.
-                    w = Worker::new(env, gpu)?;
+                    }
+                    env.oom_backoffs.fetch_add(1, Ordering::Relaxed);
+                    env.restarts.fetch_add(1, Ordering::Relaxed);
+                    std::thread::sleep(Duration::from_millis(20 << oom_at_one.min(4)));
                 }
                 _ => return Err(e.context(format!("chunk {}", p.index))),
             }
@@ -495,7 +629,11 @@ fn render_chunk_to(
     // so its textures go back to the pool for the next one.
     let mut cache = FrameCache::new(16);
     let mut enc = ChunkEncoder::create(tmp, &encode_settings(tl))?;
-    let mut ring = ReadbackRing::new(gpu, tl.output.width, tl.output.height, READBACK_DEPTH);
+    let mut ring = ferrocut_core::with_alloc_scope(gpu, || {
+        ReadbackRing::new(gpu, tl.output.width, tl.output.height, READBACK_DEPTH)
+    })
+    .map_err(anyhow::Error::new)
+    .context("allocating the readback ring")?;
     let mut sink = |rows: &[u8], stride: usize| enc.push_bgra_strided(rows, stride);
     for i in chunk.start_frame..chunk.start_frame + chunk.frames {
         let t = RationalTime::from_frames(i, tl.output.fps);
@@ -511,7 +649,6 @@ fn render_chunk_to(
                 });
                 if r.as_ref().is_err_and(NodeError::is_gpu_out_of_memory) {
                     cache.clear();
-                    gpu.trim_pool();
                 }
                 r
             },
@@ -585,6 +722,7 @@ pub fn render(
     let run_cancel = opts.cancel.child();
     let (retries, submissions) = (AtomicU64::new(0), AtomicU64::new(0));
     let (resets, restarts) = (AtomicU64::new(0), AtomicU64::new(0));
+    let (slots, oom_backoffs) = (GpuSlots::new(opts.jobs), AtomicU64::new(0));
     let path_of = |p: &ChunkPlan| chunk_dir.join(format!("{}.mkv", p.key));
     let todo: Vec<&ChunkPlan> = plans
         .iter()
@@ -621,6 +759,8 @@ pub fn render(
         resets: &resets,
         restarts: &restarts,
         progress: progress.as_ref(),
+        slots: &slots,
+        oom_backoffs: &oom_backoffs,
     };
     let sequential = c.graph.access_pattern(c.output) == AccessPattern::Sequential;
     let runs: Vec<Vec<&ChunkPlan>> = if sequential {
@@ -777,6 +917,8 @@ pub fn render(
         worker_tasks: runs.len(),
         sequential_resets: resets.load(Ordering::Relaxed),
         chunk_restarts: restarts.load(Ordering::Relaxed),
+        oom_backoffs: oom_backoffs.load(Ordering::Relaxed),
+        min_jobs_in_flight: slots.limit(),
         gpu_recreations: gpu.recreations() - recreations_before,
         chunk_dir: chunk_dir.clone(),
         final_blake3: file_blake3(out)?,
@@ -855,14 +997,21 @@ mod tests {
     }
 
     #[test]
-    fn device_lost_is_not_retried_per_frame() {
+    fn gpu_faults_are_not_retried_per_frame() {
         let c = CancelToken::new();
         let (r, calls, retries) = run(5, &c, None, |_| Some(NodeError::device_lost("gone")));
         assert!(r.unwrap_err().is_device_lost());
         assert_eq!((calls, retries), (1, 0));
-        // Out of memory is retried like any Retryable error.
-        let (r, calls, _) = run(2, &c, None, |a| {
+        // Neither is out of memory: the scheduler restarts the chunk with fewer
+        // chunks in flight instead (stale worker state may hold invalid objects).
+        let (r, calls, retries) = run(2, &c, None, |a| {
             (a == 0).then(|| NodeError::gpu_out_of_memory("alloc"))
+        });
+        assert!(r.unwrap_err().is_gpu_out_of_memory());
+        assert_eq!((calls, retries), (1, 0));
+        // Other retryable errors are retried per frame.
+        let (r, calls, _) = run(2, &c, None, |a| {
+            (a == 0).then(|| NodeError::retryable("busy"))
         });
         assert_eq!((r.unwrap(), calls), (1, 2));
     }

@@ -285,7 +285,7 @@ pub fn render() -> Value {
         json!({
             "timeline": path(TL),
             "output": path("output .mkv (FFV1 + PCM master)"),
-            "jobs": { "type": "integer", "minimum": 1, "maximum": 32, "default": 4, "description": "parallel chunk workers" },
+            "jobs": { "type": "integer", "minimum": 1, "maximum": 32, "description": "parallel chunk workers (default: 4, lowered to fit free VRAM; backs off automatically if the GPU runs out of memory)" },
             "force": { "type": "boolean", "default": false, "description": "re-render every chunk even if cached" },
             "cache_dir": path("chunk cache directory (default <output dir>/.ferrocut-cache)"),
             "report": path("report JSON path (default <output>.report.json)"),

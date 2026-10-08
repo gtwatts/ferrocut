@@ -32,7 +32,8 @@ enum Cmd {
         /// Re-render every chunk even if cached.
         #[arg(long)]
         force: bool,
-        /// Parallel chunk workers (default: min(cores, 12)).
+        /// Parallel chunk workers (default: min(cores, 12), lowered to what fits in free
+        /// VRAM on NVIDIA; backs off automatically if the GPU runs out of memory).
         #[arg(short, long)]
         jobs: Option<usize>,
         /// Write the JSON render report here (default: <output>.report.json).
@@ -366,10 +367,13 @@ fn main() -> anyhow::Result<()> {
                     .join(".ferrocut-cache")
             });
             let jobs = jobs.unwrap_or_else(|| {
-                std::thread::available_parallelism()
-                    .map(|n| n.get())
-                    .unwrap_or(4)
-                    .min(12)
+                let (j, why) = ferrocut_engine::vram::default_jobs(
+                    &gpu.get().info,
+                    tl.output.width,
+                    tl.output.height,
+                );
+                println!("jobs:    {why}");
+                j
             });
             let r = render(
                 &tl,
@@ -436,6 +440,12 @@ fn main() -> anyhow::Result<()> {
                 r.chunk_restarts,
                 r.gpu_recreations
             );
+            if r.oom_backoffs > 0 {
+                println!(
+                    "out of GPU memory {} time(s): backed off to {} chunk(s) in flight (of {} jobs)",
+                    r.oom_backoffs, r.min_jobs_in_flight, r.jobs
+                );
+            }
             if r.sequential {
                 println!(
                     "sequential graph: {} contiguous worker runs, {} sequential resets",

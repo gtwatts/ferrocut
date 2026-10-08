@@ -14,6 +14,18 @@
 //! so allocation failures surface as errors instead of wgpu's default panic,
 //! and owns the context through a [`SharedGpu`], which replaces a lost device
 //! with a fresh one (new device, queue and texture pool on the same adapter).
+//!
+//! Out of memory: wgpu reports a failed allocation once (to the innermost
+//! OutOfMemory scope) and hands back an *invalid* object; everything built from
+//! it later fails with validation errors like "BindGroup with '' label is
+//! invalid", often in a different scope. So every OOM (in a scope, or uncaptured)
+//! is recorded on the context ([`GpuContext::out_of_memory_events`]) and poisons
+//! the texture pool, and once a device has seen an OOM, "... is invalid"
+//! validation errors are classified as OOM fallout (`Retryable`,
+//! [`GpuFault::OutOfMemory`](ferrocut_types::GpuFault::OutOfMemory)) rather than
+//! as permanent bugs. Nodes wrap their own allocations in [`with_alloc_scope`].
+//! A byte budget ([`GpuContext::set_memory_budget`], or
+//! `FERROCUT_VRAM_BUDGET_MB`) simulates OOM for tests.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, mpsc};
@@ -145,7 +157,12 @@ pub struct GpuContext {
     /// Set by wgpu's device-lost callback, or by [`SharedGpu::recover`].
     lost: Arc<Mutex<Option<String>>>,
     lost_flag: Arc<AtomicBool>,
+    oom_events: Arc<AtomicU64>,
 }
+
+/// Environment knob: a VRAM budget in MiB for pool textures; going over it
+/// raises a simulated out-of-memory error (see [`GpuContext::set_memory_budget`]).
+pub const VRAM_BUDGET_ENV: &str = "FERROCUT_VRAM_BUDGET_MB";
 
 static NEXT_CONTEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -242,16 +259,43 @@ impl GpuContext {
                 flag.store(true, Ordering::Release);
             });
         }
+        let pool: Arc<PoolInner> = Arc::default();
+        let oom_events: Arc<AtomicU64> = Arc::default();
+        {
+            // Errors outside any scope: record OOMs (instead of wgpu's default
+            // panic) so their fallout is classified correctly later; log the rest
+            // (the invalid objects they leave behind fail the next scope).
+            // Weak: the device owns this handler and pooled textures own the
+            // device, so a strong pool reference would leak device + textures.
+            let (pool, oom) = (Arc::downgrade(&pool), oom_events.clone());
+            device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
+                if matches!(e, wgpu::Error::OutOfMemory { .. }) {
+                    oom.fetch_add(1, Ordering::AcqRel);
+                    if let Some(pool) = pool.upgrade() {
+                        pool.poison();
+                    }
+                } else {
+                    eprintln!("ferrocut: uncaptured wgpu error: {e}");
+                }
+            }));
+        }
+        if let Some(mb) = std::env::var(VRAM_BUDGET_ENV)
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+        {
+            pool.budget_bytes.store(mb << 20, Ordering::Relaxed);
+        }
         Ok(GpuContext {
             adapter,
             device,
             queue,
             info,
-            pool: Arc::default(),
+            pool,
             id: NEXT_CONTEXT_ID.fetch_add(1, Ordering::Relaxed),
             requirements: req.clone(),
             lost,
             lost_flag,
+            oom_events,
         })
     }
 
@@ -303,6 +347,40 @@ impl GpuContext {
     /// Free every idle pooled texture (e.g. after an out-of-memory error).
     pub fn trim_pool(&self) {
         self.pool.trim();
+    }
+
+    /// Record an out-of-memory error: poisons the texture pool (idle textures
+    /// freed, textures leased so far are not re-pooled) and makes later
+    /// "... is invalid" validation errors count as OOM fallout. Error scopes and
+    /// [`with_alloc_scope`] call this; call it yourself only for an OOM you
+    /// detected some other way.
+    pub fn note_out_of_memory(&self) {
+        self.oom_events.fetch_add(1, Ordering::AcqRel);
+        self.pool.poison();
+    }
+
+    /// Out-of-memory errors seen on this device so far.
+    pub fn out_of_memory_events(&self) -> u64 {
+        self.oom_events.load(Ordering::Acquire)
+    }
+
+    /// Cap the bytes of live pool textures (`None` = unlimited). An allocation
+    /// past the cap still succeeds but the next error scope reports a
+    /// (simulated) out-of-memory error, exactly like wgpu's. A test knob for
+    /// OOM handling; also settable with `FERROCUT_VRAM_BUDGET_MB`.
+    pub fn set_memory_budget(&self, bytes: Option<u64>) {
+        self.pool
+            .budget_bytes
+            .store(bytes.unwrap_or(0), Ordering::Relaxed);
+    }
+
+    /// Bytes of pool textures currently alive (leased or idle).
+    pub fn pool_live_bytes(&self) -> u64 {
+        self.pool.live_bytes.load(Ordering::Relaxed)
+    }
+
+    fn take_simulated_oom(&self) -> bool {
+        self.pool.simulated_oom.swap(false, Ordering::AcqRel)
     }
 
     /// Capture this thread's out-of-memory and validation errors until
@@ -475,6 +553,9 @@ pub struct GpuErrorScope<'a> {
 impl GpuErrorScope<'_> {
     /// The first error captured, classified. Out-of-memory beats device-lost
     /// beats validation (validation errors are usually fallout of the others).
+    /// An "... is invalid" validation error on a device that has seen an OOM is
+    /// OOM fallout (an object whose allocation failed earlier) and is reported
+    /// as out of memory. Any OOM poisons the pool.
     pub fn finish(mut self) -> Option<NodeError> {
         let oom = self.oom.take().and_then(|g| pollster::block_on(g.pop()));
         let val = self
@@ -482,7 +563,24 @@ impl GpuErrorScope<'_> {
             .take()
             .and_then(|g| pollster::block_on(g.pop()));
         if let Some(e) = oom {
+            self.gpu.note_out_of_memory();
             return Some(NodeError::from_gpu(&e));
+        }
+        if self.gpu.take_simulated_oom() {
+            self.gpu.note_out_of_memory();
+            return Some(NodeError::gpu_out_of_memory(format!(
+                "out of GPU memory (simulated: pool over the {} budget)",
+                VRAM_BUDGET_ENV
+            )));
+        }
+        if let Some(e) = &val
+            && self.gpu.out_of_memory_events() > 0
+            && is_invalid_object_fallout(e)
+        {
+            self.gpu.note_out_of_memory();
+            return Some(NodeError::gpu_out_of_memory(format!(
+                "out of GPU memory (an object whose allocation failed earlier was used): {e}"
+            )));
         }
         if val.is_some() && !self.gpu.is_lost() {
             // A destroyed/lost device turns every new object invalid at once but
@@ -498,6 +596,64 @@ impl GpuErrorScope<'_> {
             return Some(e);
         }
         val.map(|e| NodeError::from_gpu(&e))
+    }
+}
+
+/// A validation error caused by using an object that is itself invalid
+/// (its creation failed), e.g. "BindGroup with '' label is invalid".
+fn is_invalid_object_fallout(e: &wgpu::Error) -> bool {
+    match e {
+        wgpu::Error::Validation { description, .. } => {
+            let d = description.to_lowercase();
+            d.contains(" is invalid") || d.contains("invalid resource")
+        }
+        _ => false,
+    }
+}
+
+/// Run `f`, which creates GPU objects (textures, buffers, bind groups,
+/// pipelines), inside OutOfMemory + Validation error scopes on this thread,
+/// and turn a failed allocation into a [`NodeError`] instead of an invalid
+/// object that breaks a later frame with a confusing validation error.
+///
+/// * out of memory (wgpu's, a simulated budget OOM, or "... is invalid" fallout
+///   on a device that has already run out of memory) ->
+///   `Err(NodeError)` with kind `Retryable` and
+///   [`GpuFault::OutOfMemory`](ferrocut_types::GpuFault::OutOfMemory); the
+///   texture pool is poisoned so no invalid texture is reused. The render
+///   scheduler reacts by restarting the chunk with fewer jobs in flight;
+/// * a lost device -> `Retryable` + `GpuFault::DeviceLost`;
+/// * any other validation error -> `Permanent` (a bug: it reproduces).
+///
+/// On error the objects `f` returned are dropped. Scopes are per thread: call
+/// this on the thread that does the work. Cheap enough for per-frame use; the
+/// render scheduler already wraps each frame, so a node needs it for
+/// allocations made outside `render` (setup, caches built lazily on another
+/// thread) or where it wants to fall back itself.
+///
+/// ```no_run
+/// use ferrocut_core::gpu::with_alloc_scope;
+/// # fn demo(gpu: &ferrocut_core::GpuContext) -> Result<(), ferrocut_types::NodeError> {
+/// let lut = with_alloc_scope(gpu, || {
+///     gpu.device.create_texture(&wgpu::TextureDescriptor {
+///         label: Some("my-node.lut"),
+///         size: wgpu::Extent3d { width: 65, height: 65, depth_or_array_layers: 65 },
+///         mip_level_count: 1,
+///         sample_count: 1,
+///         dimension: wgpu::TextureDimension::D3,
+///         format: wgpu::TextureFormat::Rgba16Float,
+///         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+///         view_formats: &[],
+///     })
+/// })?; // Err: Retryable + GpuFault::OutOfMemory -> the scheduler backs off
+/// # let _ = lut; Ok(()) }
+/// ```
+pub fn with_alloc_scope<T>(gpu: &GpuContext, f: impl FnOnce() -> T) -> Result<T, NodeError> {
+    let scope = gpu.error_scope();
+    let v = f();
+    match scope.finish() {
+        Some(e) => Err(e),
+        None => Ok(v),
     }
 }
 

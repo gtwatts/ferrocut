@@ -14,6 +14,7 @@ pub mod project;
 pub mod render;
 pub mod timeline;
 pub mod transform;
+pub mod vram;
 
 pub use compile::{Compiled, compile};
 pub use render::{

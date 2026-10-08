@@ -209,9 +209,9 @@ pub fn tools() -> Vec<Tool> {
 fn d_true() -> bool {
     true
 }
-fn d_jobs() -> usize {
-    4
-}
+/// Default render jobs for MCP: 4 (renders share the machine with the agent),
+/// lowered to what fits in free VRAM.
+const MCP_MAX_DEFAULT_JOBS: usize = 4;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -249,8 +249,7 @@ struct DiffArgs {
 struct RenderArgs {
     timeline: PathBuf,
     output: PathBuf,
-    #[serde(default = "d_jobs")]
-    jobs: usize,
+    jobs: Option<usize>,
     #[serde(default)]
     force: bool,
     cache_dir: Option<PathBuf>,
@@ -453,12 +452,14 @@ pub fn summarize(report: &Value) -> Value {
         "total_ms": report["total_ms"],
         "retries": report["retries"],
         "chunk_restarts": report["chunk_restarts"],
+        "oom_backoffs": report["oom_backoffs"],
+        "min_jobs_in_flight": report["min_jobs_in_flight"],
         "loudness": audio.get("output").cloned().unwrap_or(Value::Null),
     })
 }
 
 fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
-    if a.jobs == 0 || a.jobs > 32 {
+    if a.jobs.is_some_and(|j| j == 0 || j > 32) {
         bail!("jobs must be 1..=32");
     }
     let started = std::time::Instant::now();
@@ -478,6 +479,12 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
         &c.graph.gpu_requirements(),
     )?);
     let cache_dir = cache_dir.unwrap_or_else(|| project::dir_of(&output).join(".ferrocut-cache"));
+    let jobs = a.jobs.unwrap_or_else(|| {
+        let info = &gpu.get().info;
+        ferrocut_engine::vram::default_jobs(info, tl.output.width, tl.output.height)
+            .0
+            .min(MCP_MAX_DEFAULT_JOBS)
+    });
     let r = render(
         &tl,
         &c,
@@ -485,7 +492,7 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
         &output,
         &RenderOptions {
             force: a.force,
-            jobs: a.jobs,
+            jobs,
             cancel: cx.cancel.clone(),
             progress: cx.progress.clone(),
             deadline: a
