@@ -69,7 +69,7 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
   | `demo.json` fps | 37.5 (`-j 4`), 40.8 (`-j 8`), 39.0 (`-j 24`) | 68.8 (`-j 4`) |
   | `demo-av.json` fps | 28.3 (`-j 4`), 29.6 (`-j 8`), 31.1 (`-j 24`) | 72.8 (`-j 4`) |
   | `demo.json` blake3 | `f9ae266e…` | `2b5f6c89…` |
-  | `demo-av.json` blake3 | `25938728…` | `42cec359…` |
+  | `demo-av.json` blake3 | `7348f127…` | `e9759227…` |
 
   - Lavapipe is bit-exact run to run and across `-j`.
   - Against the NVIDIA output: mean SSIM 0.99976 / 0.99991 (demo / demo-av; minimum 0.99104 on the last dissolve

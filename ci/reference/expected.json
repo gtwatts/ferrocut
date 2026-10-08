@@ -10,7 +10,7 @@
     "demo-av": 312
   },
   "audio_blake3": {
-    "demo-av": "6ad383e03bff798b0d22af43aeed0bce9dbf3b9e5848ea99f42d4d90dd9529c8"
+    "demo-av": "751eda4b8d2d1d61f6afa79ed84d3e6a3161df1eb448ba87ad5b4bc11f208a8a"
   },
   "ssim": {
     "step": 24,
@@ -24,7 +24,7 @@
       "video_blake3": "34ba480f0b7c169487949358fd261f06b89f04bba091a9a57eb5e26ecadc16e2"
     },
     "demo-av": {
-      "final_blake3": "25938728d563c24feb2f0298957755aa290d5f0a07e6208ae6f1b107bd3be51f",
+      "final_blake3": "7348f127b552c586eed69e94d671ce22c6fc19c667820090397da241a3ab9548",
       "video_blake3": "190adb36ec4f04738d569626f5a156551d1ae657433773f1cf44c682680e03db"
     }
   },
