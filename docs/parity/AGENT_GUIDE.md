@@ -14,8 +14,8 @@ Start with the tools and schemas exposed by the running build. An agent should r
 | Find an effect and its exact controls | `effects_catalog {"query":"glow","details":true}` |
 | Inspect a project and its journal state | `timeline_get {"timeline":"project.json"}` |
 | Discover timeline structure | `timeline_schema {"part":"timeline"}` |
-| Discover typed operations | `timeline_schema {"part":"edit_ops"}` |
-| Discover parameter names, units, defaults, ranges and time bases | `timeline_schema {"part":"params"}` |
+| Discover one typed operation | `timeline_schema {"part":"edit_ops","op":"split"}` (the unfiltered part is ~0.8 MB) |
+| Discover parameter names, units, defaults, ranges and time bases | `timeline_schema {"part":"params","query":"opacity"}` (unfiltered: ~0.5 MB) |
 | Read the compact authoring reference | `timeline_schema {"part":"guide"}` |
 | Probe source duration, dimensions, rates and streams | `media_probe {"path":"media/interview.mov"}` |
 | Inspect offline media and proxies | `media_status {"timeline":"project.json"}` |

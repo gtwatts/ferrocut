@@ -873,6 +873,17 @@ fn main() -> anyhow::Result<()> {
         } => {
             use ferrocut_engine::preview;
             let tl = Timeline::load(&timeline)?;
+            let prefix = prefix.unwrap_or_else(|| {
+                timeline
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "stills".into())
+            });
+            preview::check_prefix(&prefix)?;
+            anyhow::ensure!(
+                (1..=64).contains(&cols) && (16..=4096).contains(&cell_width),
+                "--cols must be 1..=64 and --cell-width 16..=4096"
+            );
             let c = compile(&tl)?;
             let at = at
                 .iter()
@@ -883,12 +894,6 @@ fn main() -> anyhow::Result<()> {
                 GpuContext::with_requirements(adapter_pref(cpu), &c.graph.gpu_requirements())?;
             let stills =
                 preview::render_stills(&tl, &c, &gpu, &frames, &ferrocut_core::CancelToken::new())?;
-            let prefix = prefix.unwrap_or_else(|| {
-                timeline
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "stills".into())
-            });
             let sheet = (!no_sheet).then_some((cols, cell_width));
             let r = preview::write_stills(&tl, &stills, &output, &prefix, each || no_sheet, sheet)?;
             if json {

@@ -35,14 +35,16 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
             "--doc" => {
-                let want = args
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--doc needs a docs:// uri or a name\n{USAGE}"))?;
+                let want = args.next().ok_or_else(|| {
+                    anyhow::anyhow!("--doc needs a docs:// uri or a name\n{USAGE}")
+                })?;
                 let uri = ferrocut_mcp::resources()
                     .into_iter()
                     .find(|r| r.uri == want || r.name == want)
                     .map(|r| r.uri)
-                    .ok_or_else(|| anyhow::anyhow!("unknown doc {want:?}; --list-docs lists them"))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("unknown doc {want:?}; --list-docs lists them")
+                    })?;
                 match ferrocut_mcp::read_doc(uri) {
                     Some(text) => println!("{text}"),
                     None => anyhow::bail!("{uri}: no content"),

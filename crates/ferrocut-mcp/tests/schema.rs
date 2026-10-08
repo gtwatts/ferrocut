@@ -1,9 +1,12 @@
 //! Tool schemas: complete, strict, and in sync with the engine's edit ops.
 
+#[path = "support/mini_schema.rs"]
+mod mini_schema;
+
 use std::collections::BTreeSet;
 
 use ferrocut_engine::edit::parse_ops;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[test]
 fn every_edit_op_has_a_strict_schema_whose_example_parses() {
@@ -218,5 +221,30 @@ fn published_schemas_expand_to_the_source_schemas() {
             .as_array()
             .unwrap()
             .len()
+    );
+}
+
+/// The published (compacted) schemas are valid JSON Schema: every `$ref`
+/// sits in schema position, and every op example validates against the
+/// published edit_apply schema through those refs.
+#[test]
+fn published_schemas_place_refs_in_schema_position_and_accept_examples() {
+    use ferrocut_mcp::compact::refs_are_well_placed;
+    for t in ferrocut_mcp::tools() {
+        let s = Value::Object((*t.input_schema).clone());
+        refs_are_well_placed(&s).unwrap_or_else(|at| panic!("{}: $ref at {at}", t.name));
+    }
+    let published = ferrocut_mcp::schema::edit_apply_published();
+    for b in ferrocut_mcp::schema::edit_op()["oneOf"].as_array().unwrap() {
+        let call = json!({ "timeline": "t.json", "ops": [b["examples"][0].clone()] });
+        let errs = mini_schema::validate(&published, &call);
+        assert!(errs.is_empty(), "{}: {errs:#?}", b["title"]);
+    }
+    assert!(
+        !mini_schema::validate(
+            &published,
+            &json!({ "timeline": "t.json", "ops": [{ "op": "nope" }] })
+        )
+        .is_empty()
     );
 }

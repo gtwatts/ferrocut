@@ -29,7 +29,7 @@ use serde::Serialize;
 use super::init;
 
 /// Bump when the proxy encoding changes (part of proxy frame keys).
-pub const PROXY_VERSION: &str = "proxy.v2:half:dnxhr_lb|ffv1:source-timing";
+pub const PROXY_VERSION: &str = "proxy.v3:half:dnxhr_lb|ffv1:source-timing:declared-rate";
 pub const PROXY_DIR: &str = ".ferrocut-proxies";
 /// DNxHR's smallest frame.
 pub const DNXHR_MIN: (u32, u32) = (256, 120);
@@ -170,12 +170,7 @@ fn encode(source: &Path, out: &Path) -> anyhow::Result<(String, u32, u32, u64)> 
     } else {
         stream.start_time()
     };
-    let rate = stream.avg_frame_rate();
-    let rate = if rate.numerator() > 0 {
-        rate
-    } else {
-        stream.rate()
-    };
+    let source_rate = super::stream_rate(&stream);
     let mut dec = codec::context::Context::from_parameters(stream.parameters())?
         .decoder()
         .video()?;
@@ -203,8 +198,8 @@ fn encode(source: &Path, out: &Path) -> anyhow::Result<(String, u32, u32, u64)> 
     enc.set_height(ph);
     enc.set_format(pix);
     enc.set_time_base(in_tb);
-    if rate.numerator() > 0 {
-        enc.set_frame_rate(Some(rate));
+    if let Some(r) = source_rate {
+        enc.set_frame_rate(Some(super::to_ff(r)));
     }
     let mut flags = codec::Flags::BITEXACT;
     if global_header {
@@ -224,10 +219,9 @@ fn encode(source: &Path, out: &Path) -> anyhow::Result<(String, u32, u32, u64)> 
     let mut ost = octx.add_stream(codec)?;
     ost.set_parameters(&enc);
     ost.set_time_base(in_tb);
-    if rate.numerator() > 0 {
-        // Declared as the Matroska DefaultDuration (see encode.rs).
-        ost.set_avg_frame_rate(rate);
-        ost.set_rate(rate);
+    if let Some(r) = source_rate {
+        // Declared as the Matroska DefaultDuration and the exact tag (see encode.rs).
+        super::declare_rate(&mut ost, r);
     }
     octx.write_header()?;
     let ost_tb = octx.stream(0).expect("stream").time_base();
@@ -320,12 +314,15 @@ impl Pipe {
             // duration truncated to the millisecond time base. The proxy must
             // end exactly where the source ends, so the final frame extends to
             // the known source end; nothing is inferred from an average frame
-            // rate (VFR input). A demuxed duration is only ever lengthened.
+            // rate (VFR input). A demuxed duration is only ever lengthened, and
+            // by less than one frame: a container end far beyond the last
+            // frame (audio outlasting the video) is not a video duration.
             if let (Some(end), Some(start)) = (self.source_end, packet.pts())
-                && let Some(duration) = end.checked_sub(start).filter(|duration| *duration > 0)
-                && packet.duration() < duration
+                && let Some(to_end) = end.checked_sub(start).filter(|d| *d > 0)
+                && (packet.duration() <= 0
+                    || (packet.duration() < to_end && to_end <= 2 * packet.duration()))
             {
-                packet.set_duration(duration);
+                packet.set_duration(to_end);
             }
             packet.rescale_ts(self.tbs.0, self.tbs.1);
             packet.write_interleaved(octx)?;

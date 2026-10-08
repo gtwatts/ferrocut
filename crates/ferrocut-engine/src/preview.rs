@@ -6,9 +6,10 @@
 //! encoding a chunk or a video. Times are snapped to the output frame grid.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 
 use anyhow::{Context as _, ensure};
-use ferrocut_core::{CancelToken, GpuContext, RationalTime, RenderCtx, WorkerState};
+use ferrocut_core::{CancelToken, GpuContext, NodeError, RationalTime, RenderCtx, WorkerState};
 use serde::Serialize;
 
 use crate::compile::Compiled;
@@ -18,6 +19,12 @@ use crate::timeline::Timeline;
 
 /// Most frames one call renders (a contact sheet beyond this is unreadable).
 pub const MAX_STILLS: usize = 64;
+
+/// Retries per frame for transient (retryable) node errors, as in a render.
+const STILL_RETRIES: u32 = 2;
+
+/// Largest contact sheet, in pixels (64 Mpx: 8192 x 8192).
+pub const MAX_SHEET_PIXELS: u64 = 1 << 26;
 
 /// One rendered output frame, straight RGBA8 (alpha 255).
 pub struct Still {
@@ -107,7 +114,9 @@ pub fn frame_at(tl: &Timeline, t: RationalTime) -> anyhow::Result<i64> {
     Ok(f)
 }
 
-/// Render `frames` (output frame indices) on `gpu`.
+/// Render `frames` (output frame indices) on `gpu`: the same graph,
+/// compositor output pass and readback as a master render, with the same
+/// per-frame retries, GPU error scopes and cancellation.
 pub fn render_stills(
     tl: &Timeline,
     c: &Compiled,
@@ -121,13 +130,17 @@ pub fn render_stills(
         "at most {MAX_STILLS} frames per call"
     );
     let (w, h) = (tl.output.width, tl.output.height);
-    let comp = std::sync::Arc::new(Compositor::new(gpu));
-    let mut state = WorkerState::default();
-    state
-        .slot(compositor_slot(), || Ok(comp.clone()))
-        .map_err(anyhow::Error::new)?;
-    let mut ring = ReadbackRing::new(gpu, w, h, 2);
+    let (comp, mut state, mut ring) =
+        ferrocut_core::with_alloc_scope(gpu, || -> anyhow::Result<_> {
+            let comp = std::sync::Arc::new(Compositor::new(gpu));
+            let mut state = WorkerState::default();
+            state.slot(compositor_slot(), || Ok(comp.clone()))?;
+            Ok((comp, state, ReadbackRing::new(gpu, w, h, 2)))
+        })
+        .map_err(anyhow::Error::new)
+        .context("setting up the output pass")??;
     let mut cache = FrameCache::new(16);
+    let retries = AtomicU64::new(0);
     let mut out: Vec<Vec<u8>> = Vec::with_capacity(frames.len());
     let mut sink = |rows: &[u8], stride: usize| -> anyhow::Result<()> {
         let mut rgba = Vec::with_capacity((w * h * 4) as usize);
@@ -143,20 +156,38 @@ pub fn render_stills(
         Ok(())
     };
     for &i in frames {
+        crate::render::check_cancel(cancel, None).map_err(anyhow::Error::new)?;
         let t = RationalTime::from_frames(i, tl.output.fps);
-        let frame = gpu
-            .scoped(|| {
+        let frame = crate::render::with_retries(STILL_RETRIES, cancel, None, &retries, |_| {
+            let r = gpu.scoped(|| {
                 let mut ctx = RenderCtx::new(gpu, &mut state, cancel, None);
                 c.graph.evaluate(c.output, t, &mut ctx, &mut cache)
-            })
-            .map_err(anyhow::Error::new)
-            .with_context(|| format!("frame {i}"))?;
-        let mut ctx = RenderCtx::new(gpu, &mut state, cancel, None);
-        ring.push(&comp, &mut ctx, &frame, &mut sink)
-            .with_context(|| format!("frame {i}: output"))?;
+            });
+            if r.as_ref().is_err_and(NodeError::is_gpu_out_of_memory) {
+                cache.clear();
+            }
+            r
+        })
+        .map_err(anyhow::Error::new)
+        .with_context(|| format!("frame {i}"))?;
+        let scope = gpu.error_scope();
+        let pushed = {
+            let mut ctx = RenderCtx::new(gpu, &mut state, cancel, None);
+            ring.push(&comp, &mut ctx, &frame, &mut sink)
+        };
+        if let Some(e) = scope.finish() {
+            return Err(anyhow::Error::new(e).context(format!("frame {i}: output")));
+        }
+        pushed.with_context(|| format!("frame {i}: output"))?;
         cache.clear();
     }
-    ring.drain(gpu, &mut sink)?;
+    let scope = gpu.error_scope();
+    let drained = ring.drain(gpu, &mut sink);
+    if let Some(e) = scope.finish() {
+        return Err(anyhow::Error::new(e).context("output"));
+    }
+    drained?;
+    // Never report pixels that may come from a dying device.
     gpu.check_lost().map_err(anyhow::Error::new)?;
     Ok(frames
         .iter()
@@ -176,6 +207,26 @@ pub fn png_bytes(width: u32, height: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>
     // Opaque pixels: straight == premultiplied, so no conversion is needed.
     let pm = tiny_skia::Pixmap::from_vec(rgba.to_vec(), size).context("pixel buffer size")?;
     pm.encode_png().context("encoding PNG")
+}
+
+/// Encode as PNG, halving the image (area average) while the file exceeds
+/// `max_bytes` and its longer side is above 256 px. Returns the final size
+/// and bytes; the result may still exceed the budget at the floor.
+pub fn png_within(
+    width: u32,
+    height: u32,
+    rgba: &[u8],
+    max_bytes: usize,
+) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    let (mut w, mut h, mut img) = (width, height, rgba.to_vec());
+    let mut png = png_bytes(w, h, &img)?;
+    while png.len() > max_bytes && w.max(h) > 256 {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        img = downscale(&img, w, h, nw, nh);
+        (w, h) = (nw, nh);
+        png = png_bytes(w, h, &img)?;
+    }
+    Ok((w, h, png))
 }
 
 /// Write straight RGBA8 as a PNG.
@@ -290,22 +341,31 @@ fn label(img: &mut [u8], w: u32, h: u32, x: u32, y: u32, text: &str, scale: u32)
     }
 }
 
-/// `m:ss.ss` label of an output frame, plus its frame number.
+/// `m:ss.ss` label of an output frame, plus its frame number (hundredths
+/// rounded once, so 59.996 s reads 1:00.00, never 0:60.00).
 pub fn timecode(tl: &Timeline, frame: i64) -> String {
     let t = RationalTime::from_frames(frame, tl.output.fps)
         .seconds()
         .to_f64();
-    format!("{}:{:05.2} f{}", (t / 60.0) as i64, t % 60.0, frame)
+    let cs = (t * 100.0).round() as i64;
+    format!(
+        "{}:{:02}.{:02} f{}",
+        cs / 6000,
+        (cs % 6000) / 100,
+        cs % 100,
+        frame
+    )
 }
 
 /// Lay out stills in a grid of `cols` columns, each scaled to `cell_w` wide
-/// and labeled with its time and frame number.
+/// and labeled with its time and frame number. Bounded by [`MAX_SHEET_PIXELS`].
 pub fn contact_sheet(
     tl: &Timeline,
     stills: &[Still],
     cols: u32,
     cell_w: u32,
-) -> (u32, u32, Vec<u8>) {
+) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    ensure!(!stills.is_empty(), "no stills");
     let (sw, sh) = (stills[0].width, stills[0].height);
     let cell_w = cell_w.min(sw).max(16);
     let cell_h = ((sh as u64 * cell_w as u64) / sw as u64).max(1) as u32;
@@ -313,10 +373,15 @@ pub fn contact_sheet(
     let rows = (stills.len() as u32).div_ceil(cols);
     let gap = 4;
     let (w, h) = (
-        cols * cell_w + (cols + 1) * gap,
-        rows * cell_h + (rows + 1) * gap,
+        cols as u64 * cell_w as u64 + (cols as u64 + 1) * gap as u64,
+        rows as u64 * cell_h as u64 + (rows as u64 + 1) * gap as u64,
     );
-    let mut img = vec![0u8; (w * h * 4) as usize];
+    ensure!(
+        w * h <= MAX_SHEET_PIXELS,
+        "a {w}x{h} contact sheet is too large (max {MAX_SHEET_PIXELS} pixels): fewer columns, a smaller cell_width or fewer frames"
+    );
+    let (w, h) = (w as u32, h as u32);
+    let mut img = vec![0u8; (w as usize) * (h as usize) * 4];
     for px in img.as_chunks_mut::<4>().0 {
         *px = [24, 24, 28, 255];
     }
@@ -332,7 +397,7 @@ pub fn contact_sheet(
         }
         label(&mut img, w, h, ox, oy, &timecode(tl, s.frame), scale);
     }
-    (w, h, img)
+    Ok((w, h, img))
 }
 
 /// What [`write_stills`] wrote.
@@ -353,6 +418,22 @@ pub struct StillEntry {
     pub path: Option<PathBuf>,
 }
 
+/// A file-name prefix: ASCII letters, digits, `.`, `_`, `-`, not starting
+/// with `.`, at most 64 characters. Anything else (a path separator, `..`, an
+/// absolute path) could place files outside the stills directory.
+pub fn check_prefix(prefix: &str) -> anyhow::Result<()> {
+    ensure!(
+        !prefix.is_empty()
+            && prefix.len() <= 64
+            && !prefix.starts_with('.')
+            && prefix
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-'),
+        "prefix {prefix:?}: use letters, digits, '.', '_' or '-' (not starting with '.'), at most 64 characters"
+    );
+    Ok(())
+}
+
 /// Write `stills` as `<dir>/<prefix>-f<frame>.png` (when `each`) and a
 /// contact sheet `<dir>/<prefix>-sheet.png` (when `sheet`; `cols` columns of
 /// `cell_w`-pixel cells).
@@ -364,6 +445,7 @@ pub fn write_stills(
     each: bool,
     sheet: Option<(u32, u32)>,
 ) -> anyhow::Result<StillsReport> {
+    check_prefix(prefix)?;
     let mut frames = Vec::new();
     for s in stills {
         let path = if each {
@@ -384,7 +466,7 @@ pub fn write_stills(
     }
     let sheet = match sheet {
         Some((cols, cell_w)) => {
-            let (w, h, img) = contact_sheet(tl, stills, cols, cell_w);
+            let (w, h, img) = contact_sheet(tl, stills, cols, cell_w)?;
             let p = dir.join(format!("{prefix}-sheet.png"));
             write_png(&p, w, h, &img)?;
             Some(p)

@@ -7,8 +7,11 @@
 //! `branch`, `openh264`. Resources: `docs://` documents (timeline JSON
 //! Schema, authoring guide, edit-op schema, parameter registry, the
 //! checker's report schema), see [`resources`]. Every input schema is hand-written
-//! JSON Schema ([`schema`]); every result is structured JSON (also sent as
-//! text). Tool failures (bad op, missing file, render error) come back as
+//! JSON Schema ([`schema`]), published in a compacted form (repeated
+//! subschemas hoisted into `$defs`, see [`compact`]; `edit_apply` describes a
+//! video effect as `{type, id?, enabled?, ...}` and points at
+//! `effects_catalog` for per-type controls); every result is structured JSON
+//! (also sent as text). Tool failures (bad op, missing file, render error) come back as
 //! `isError` results with `{"error": "..."}` so agents can read and react.
 //!
 //! Sandbox: every path (timelines, outputs, reports, caches, media sources)
@@ -37,7 +40,7 @@ pub mod schema;
 mod storytold_tools;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context as _, bail};
 use ferrocut_core::{AdapterPreference, CancelToken, GpuContext, SharedGpu};
@@ -160,8 +163,14 @@ fn tool(
         .with_annotations(ann.open_world(false))
 }
 
-/// Every tool with its schema.
+/// Every tool with its (published, compacted) schema. Built once: expanding
+/// and compacting the schemas takes seconds and hundreds of megabytes.
 pub fn tools() -> Vec<Tool> {
+    static TOOLS: OnceLock<Vec<Tool>> = OnceLock::new();
+    TOOLS.get_or_init(build_tools).clone()
+}
+
+fn build_tools() -> Vec<Tool> {
     let ro = || ToolAnnotations::new().read_only(true);
     let rw = |destructive: bool| {
         ToolAnnotations::new()
@@ -179,7 +188,7 @@ pub fn tools() -> Vec<Tool> {
         tool(
             "timeline_schema",
             "Timeline format and authoring guide",
-            "How to author timelines: the exact JSON Schema of the timeline file, the schema of every edit_apply op, every settable parameter (name, kind, unit, range, default, key-time base) and a concise authoring guide (markdown). part=all|timeline|edit_ops|params|guide. Also available as docs:// resources.",
+            "How to author timelines: the exact JSON Schema of the timeline file, the schema of every edit_apply op, every settable parameter (name, kind, unit, range, default, key-time base) and a concise authoring guide (markdown). part=all|timeline|edit_ops|params|guide. Read part=guide first (27 KB); timeline, edit_ops and params are 0.4-0.9 MB each, so narrow them: op=\"split\" returns one op's schema, query=\"glow\" only the matching parameters. Also available as docs:// resources.",
             schema::timeline_schema(),
             ro().idempotent(true),
         ),
@@ -490,6 +499,10 @@ enum SchemaPart {
 struct SchemaArgs {
     #[serde(default)]
     part: SchemaPart,
+    /// Only this edit op's schema (part edit_ops / all).
+    op: Option<String>,
+    /// Only parameters whose entry mentions this text (part params / all).
+    query: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -878,6 +891,9 @@ struct PreviewArgs {
 /// the structured result into an image content block (so agents see it).
 pub const INLINE_PNG_KEY: &str = "_inline_png";
 
+/// Largest inline PNG (bytes before base64); bigger sheets are halved.
+pub const INLINE_PNG_MAX_BYTES: usize = 3 << 20;
+
 /// Standard base64 (RFC 4648, padded).
 pub fn base64(bytes: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -918,6 +934,12 @@ fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
     if !(256..=4096).contains(&a.inline_max) {
         bail!("inline_max must be 256..=4096");
     }
+    let prefix = a.prefix.unwrap_or_else(|| {
+        path.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "stills".into())
+    });
+    preview::check_prefix(&prefix)?;
     let frames = preview::select_frames(&tl, &a.at, &a.frames, a.spread)?;
     let c = compile(&tl)?;
     let pref = if a.cpu {
@@ -928,11 +950,6 @@ fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
     let _one_at_a_time = RENDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let gpu = GpuContext::with_requirements(pref, &c.graph.gpu_requirements())?;
     let stills = preview::render_stills(&tl, &c, &gpu, &frames, &cx.cancel)?;
-    let prefix = a.prefix.unwrap_or_else(|| {
-        path.file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "stills".into())
-    });
     let sheet = a.sheet.then_some((a.cols, a.cell_width));
     let r = preview::write_stills(&tl, &stills, &dir, &prefix, a.each || !a.sheet, sheet)?;
     let mut out = json!({
@@ -956,15 +973,19 @@ fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
             let s = &stills[0];
             (s.width, s.height, s.rgba.clone())
         } else {
-            preview::contact_sheet(&tl, &stills, a.cols, a.cell_width)
+            preview::contact_sheet(&tl, &stills, a.cols, a.cell_width)?
         };
         let (w, h, img) = preview::fit_within(&img, w, h, a.inline_max);
-        let png = preview::png_bytes(w, h, &img)?;
+        // Keep the inline image under a fixed byte budget: MCP clients and
+        // model inputs reject very large images, and a smaller sheet is
+        // still useful; the full-size PNGs on disk are the exact record.
+        let (w, h, png) = preview::png_within(w, h, &img, INLINE_PNG_MAX_BYTES)?;
         out["inline"] = json!({
             "kind": if single { "frame" } else { "sheet" },
             "width": w,
             "height": h,
             "png_bytes": png.len(),
+            "max_png_bytes": INLINE_PNG_MAX_BYTES,
         });
         out[INLINE_PNG_KEY] = Value::String(base64(&png));
     }
@@ -1315,25 +1336,68 @@ pub const AGENT_GUIDE: &str = include_str!("../../../docs/parity/AGENT_GUIDE.md"
 const CHECK_SCHEMA: &str =
     include_str!("../../ferrocut-perceive/schema/perceive-check.schema.json");
 
-fn timeline_schema(part: SchemaPart) -> Value {
-    let ops = || {
-        compact::compact(
-            json!({ "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "docs://timeline/edit-ops.schema.json", "type": "array", "items": schema::edit_op() }),
-        )
+/// Only the entries of the parameter registry whose JSON mentions `query`
+/// (case-insensitive); groups left empty are dropped.
+fn filter_params(mut params: Value, query: &str) -> Value {
+    let q = query.to_lowercase();
+    if let Some(groups) = params.as_object_mut() {
+        for entries in groups.values_mut() {
+            if let Some(arr) = entries.as_array_mut() {
+                arr.retain(|e| e.to_string().to_lowercase().contains(&q));
+            }
+        }
+        groups.retain(|_, e| !e.as_array().is_some_and(Vec::is_empty));
+    }
+    params
+}
+
+fn timeline_schema(
+    part: SchemaPart,
+    op: Option<&str>,
+    query: Option<&str>,
+) -> anyhow::Result<Value> {
+    let ops = || -> anyhow::Result<Value> {
+        let mut items = schema::edit_op();
+        if let Some(op) = op {
+            let branches = items["oneOf"].as_array().cloned().unwrap_or_default();
+            let keep: Vec<Value> = branches
+                .iter()
+                .filter(|b| b["properties"]["op"]["const"] == op)
+                .cloned()
+                .collect();
+            if keep.is_empty() {
+                let known: Vec<&str> = branches
+                    .iter()
+                    .filter_map(|b| b["properties"]["op"]["const"].as_str())
+                    .collect();
+                bail!("unknown op {op:?}; ops: {}", known.join(", "));
+            }
+            items["oneOf"] = Value::Array(keep);
+        }
+        Ok(compact::compact(
+            json!({ "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "docs://timeline/edit-ops.schema.json", "type": "array", "items": items }),
+        ))
     };
-    match part {
+    let params = || {
+        let p = ferrocut_engine::params::registry_json();
+        match query {
+            Some(q) => filter_params(p, q),
+            None => p,
+        }
+    };
+    Ok(match part {
         SchemaPart::All => json!({
             "timeline": compact::compact(schema::timeline()),
-            "edit_ops": ops(),
-            "params": ferrocut_engine::params::registry_json(),
+            "edit_ops": ops()?,
+            "params": params(),
             "guide": GUIDE,
             "resources": resources().iter().map(|r| json!({"uri": r.uri, "name": r.name})).collect::<Vec<_>>(),
         }),
         SchemaPart::Timeline => json!({ "timeline": compact::compact(schema::timeline()) }),
-        SchemaPart::EditOps => json!({ "edit_ops": ops() }),
-        SchemaPart::Params => json!({ "params": ferrocut_engine::params::registry_json() }),
+        SchemaPart::EditOps => json!({ "edit_ops": ops()? }),
+        SchemaPart::Params => json!({ "params": params() }),
         SchemaPart::Guide => json!({ "guide": GUIDE }),
-    }
+    })
 }
 
 /// The `docs://` resources.
@@ -1435,9 +1499,10 @@ pub fn read_doc(uri: &str) -> Option<String> {
         "docs://agent/onboarding.md" => AGENT_GUIDE.to_string(),
         "docs://timeline/guide.md" => GUIDE.to_string(),
         "docs://timeline/schema.json" => pretty(compact::compact(schema::timeline())),
-        "docs://timeline/edit-ops.schema.json" => {
-            pretty(timeline_schema(SchemaPart::EditOps)["edit_ops"].clone())
-        }
+        "docs://timeline/edit-ops.schema.json" => pretty(
+            timeline_schema(SchemaPart::EditOps, None, None).expect("unfiltered")["edit_ops"]
+                .clone(),
+        ),
         "docs://timeline/params.json" => pretty(ferrocut_engine::params::registry_json()),
         "docs://perceive/check.schema.json" => CHECK_SCHEMA.to_string(),
         _ => return None,
@@ -1453,7 +1518,8 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
     };
     Some(match name {
         "timeline_get" => args(name, a).and_then(|a| timeline_get(cx, a)),
-        "timeline_schema" => args::<SchemaArgs>(name, a).map(|a| timeline_schema(a.part)),
+        "timeline_schema" => args::<SchemaArgs>(name, a)
+            .and_then(|a| timeline_schema(a.part, a.op.as_deref(), a.query.as_deref())),
         "media_probe" => args::<ProbeArgs>(name, a).and_then(|a| {
             let p = cx.root.check(&a.path)?;
             let mut v = serde_json::to_value(ferrocut_engine::media::probe(&p)?)?;

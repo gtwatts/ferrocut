@@ -1184,7 +1184,9 @@ pub fn timeline_schema() -> Value {
                 "enum": ["all", "timeline", "edit_ops", "params", "guide"],
                 "default": "all",
                 "description": "timeline: JSON Schema of the file; edit_ops: schema of edit_apply ops; params: every settable parameter (name, kind, unit, range, default, time base); guide: concise authoring guide (markdown)"
-            }
+            },
+            "op": { "type": "string", "minLength": 1, "description": "edit_ops/all: only this op's schema (e.g. \"split\"); unknown ops list the known ones" },
+            "query": { "type": "string", "minLength": 1, "description": "params/all: only parameters whose entry mentions this text, case-insensitive (e.g. \"glow\", \"opacity\")" }
         }),
         &[],
     )
@@ -1203,10 +1205,10 @@ pub fn preview_frames() -> Value {
             "sheet": { "type": "boolean", "default": true, "description": "write the labeled contact sheet (<prefix>-sheet.png)" },
             "cols": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4, "description": "contact sheet columns" },
             "cell_width": { "type": "integer", "minimum": 64, "maximum": 1920, "default": 480, "description": "contact sheet cell width in pixels" },
-            "prefix": { "type": "string", "minLength": 1, "description": "file name prefix (default: the timeline file stem)" },
+            "prefix": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$", "description": "file name prefix (default: the timeline file stem): letters, digits, '.', '_', '-'" },
             "cpu": { "type": "boolean", "default": false, "description": "render on the software (CPU) Vulkan adapter (Mesa lavapipe)" },
             "inline": { "type": "boolean", "default": true, "description": "also return the sheet (or the single frame) as an image content block, shrunk so its longer side is inline_max" },
-            "inline_max": { "type": "integer", "minimum": 256, "maximum": 4096, "default": 1568, "description": "longer side of the inline image in pixels" }
+            "inline_max": { "type": "integer", "minimum": 256, "maximum": 4096, "default": 1568, "description": "longer side of the inline image in pixels; the PNG is also halved until it is under 3 MB" }
         }),
         &["timeline"],
     )

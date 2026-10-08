@@ -90,6 +90,9 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
   | `demo.json` blake3 | `f9ae266e…` | `2b5f6c89…` |
   | `demo-av.json` blake3 | `7348f127…` | `e9759227…` |
 
+  (File hashes from before masters carried a declared frame rate and the `FERROCUT_FRAME_RATE` tag; the video
+  stream hashes in the render report are unchanged.)
+
   - Lavapipe is bit-exact run to run and across `-j`.
   - Against the NVIDIA output: mean SSIM 0.99976 / 0.99991 (demo / demo-av; minimum 0.99104 on the last dissolve
     frame / 0.99907) and PSNR 70.3 / 73.1 dB (minimum 60.0 / 63.5). The largest difference is 1 / 2 levels in
@@ -214,6 +217,8 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 | `diff` | The structured diff above, with render impact |
 | `plan` | Chunk plan (index, frame range, content key) without decoding or GPU |
 | `render` | Incremental render (`jobs` (default 4, lowered to fit free VRAM), `force`, `cache_dir`, `cpu`, `timeout_s`, `deliver: "mp4"` or `{format, output, qp, audio, jobs}`); returns `report_path`, hashes, chunk-reuse stats, `oom_backoffs` and, with `deliver`, a `deliver` section |
+| `preview_frames` | Stills and a labeled contact sheet straight from the graph (`at` times, `frames`, or `spread` N evenly spaced), no video encode; the sheet (or single frame) comes back inline as an image, `each` writes full-resolution PNGs |
+| `timeline_schema` | Timeline JSON Schema, edit-op schema (`op` narrows to one op), parameter registry (`query` filters), authoring guide |
 | `report_read` | Summary (or `full`) of a render report |
 | `quality_check` | Perceptual quality check of a render via `ferrocut-perceive` (below): `status`, `problems`, `warnings`; `render` also takes `check: true` |
 | `log`, `undo`, `branch` | Journal log, undo, and branch `create`/`checkout`/`merge` |
@@ -226,7 +231,11 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
   - keyframes, interpolations (presets, `bezier`, `speed`), transforms, fades and the `ripple_insert` clip object
     are spelled out;
   - a test checks that every op kind has a branch, that every example parses with the engine, and that every
-    property the schema allows is one the engine accepts.
+    property the schema allows is one the engine accepts;
+  - the *published* form (tool list, `docs://` resources) is compacted: repeated subschemas are hoisted into
+    `$defs` with local `$ref`s (`compact.rs`; exact round trip, refs only in schema position), and `edit_apply`
+    describes a video effect as `{type, id?, enabled?, ...}` with `effects_catalog` for per-type controls, so the
+    whole tool list is ~125 KB instead of 15 MB. The engine validates every op strictly either way.
 - **Results** are structured JSON (`structuredContent`, also sent as text). Tool failures, such as an op that
   doesn't apply, a missing file or a render error, come back as `isError` results with
   `{"error": "op 0 (trim nope): ..."}`; an unknown tool is a JSON-RPC invalid-params error.

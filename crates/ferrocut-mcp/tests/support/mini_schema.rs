@@ -1,13 +1,22 @@
 //! Minimal JSON Schema (2020-12 subset) validator for the keywords Ferrocut's
 //! hand-written schemas use: type, const, enum, properties, required,
 //! additionalProperties (false), items, minItems, maxItems, minimum, maximum,
-//! minLength, anyOf, oneOf, pattern (only the rational pattern).
+//! minLength, anyOf, oneOf, pattern (only the rational pattern), and local
+//! `$ref`s into the root `$defs` (the published, compacted schemas).
 
 use serde_json::Value;
 
 pub fn validate(schema: &Value, v: &Value) -> Vec<String> {
     let mut errs = Vec::new();
-    check(schema, v, "$", &mut errs);
+    check(schema, schema, v, "$", &mut errs);
+    errs
+}
+
+/// Errors of `v` against the subschema `s` of the document `root` (local
+/// `$ref`s resolve against the root's `$defs`).
+fn errors(root: &Value, s: &Value, v: &Value, at: &str) -> Vec<String> {
+    let mut errs = Vec::new();
+    check(root, s, v, at, &mut errs);
     errs
 }
 
@@ -38,8 +47,18 @@ fn rational_ok(s: &str) -> bool {
     digits(s)
 }
 
-fn check(s: &Value, v: &Value, at: &str, errs: &mut Vec<String>) {
+fn check(root: &Value, s: &Value, v: &Value, at: &str, errs: &mut Vec<String>) {
     let Some(s) = s.as_object() else { return };
+    if let Some(r) = s.get("$ref").and_then(Value::as_str) {
+        let name = r.strip_prefix("#/$defs/").expect("local $ref");
+        let target = root
+            .get("$defs")
+            .and_then(|d| d.get(name))
+            .unwrap_or_else(|| panic!("unknown $ref {r}"));
+        assert_eq!(s.len(), 1, "{at}: $ref with siblings");
+        check(root, target, v, at, errs);
+        return;
+    }
     if let Some(t) = s.get("type").and_then(Value::as_str)
         && !type_ok(t, v)
     {
@@ -59,9 +78,18 @@ fn check(s: &Value, v: &Value, at: &str, errs: &mut Vec<String>) {
     if let Some(p) = s.get("pattern").and_then(Value::as_str)
         && let Some(x) = v.as_str()
     {
-        assert_eq!(p, RATIONAL, "unsupported pattern");
-        if !rational_ok(x) {
-            errs.push(format!("{at}: {x:?} is not a rational"));
+        match p {
+            RATIONAL => {
+                if !rational_ok(x) {
+                    errs.push(format!("{at}: {x:?} is not a rational"));
+                }
+            }
+            "\\.json$" => {
+                if !x.ends_with(".json") {
+                    errs.push(format!("{at}: {x:?} is not a .json path"));
+                }
+            }
+            other => panic!("unsupported pattern {other:?}"),
         }
     }
     if let (Some(m), Some(x)) = (s.get("minLength").and_then(Value::as_u64), v.as_str())
@@ -94,7 +122,7 @@ fn check(s: &Value, v: &Value, at: &str, errs: &mut Vec<String>) {
         }
         for (k, x) in o {
             match props.and_then(|p| p.get(k)) {
-                Some(ps) => check(ps, x, &format!("{at}.{k}"), errs),
+                Some(ps) => check(root, ps, x, &format!("{at}.{k}"), errs),
                 None if s.get("additionalProperties") == Some(&Value::Bool(false)) => {
                     errs.push(format!("{at}: unexpected property {k}"))
                 }
@@ -115,13 +143,16 @@ fn check(s: &Value, v: &Value, at: &str, errs: &mut Vec<String>) {
         }
         if let Some(is) = s.get("items") {
             for (i, x) in a.iter().enumerate() {
-                check(is, x, &format!("{at}[{i}]"), errs);
+                check(root, is, x, &format!("{at}[{i}]"), errs);
             }
         }
     }
     for (kw, exactly_one) in [("anyOf", false), ("oneOf", true)] {
         if let Some(bs) = s.get(kw).and_then(Value::as_array) {
-            let ok = bs.iter().filter(|b| validate(b, v).is_empty()).count();
+            let ok = bs
+                .iter()
+                .filter(|b| errors(root, b, v, at).is_empty())
+                .count();
             if ok == 0 || (exactly_one && ok > 1) {
                 errs.push(format!("{at}: {ok} of the {kw} branches match {v}"));
             }

@@ -103,3 +103,16 @@ status, and model caches are excluded from public source and delivery packages.
 CI for source revision `8406f2e` passed rustfmt, Clippy with warnings denied,
 workspace tests, release builds, and the CPU render checks:
 [run 37825166466](https://github.com/gtwatts/ferrocut/actions/runs/37825166466).
+
+## Follow-up, later on 2026-10-08
+
+The engineering issues these tests exposed were fixed the same day on
+`feat/agent-native-core-adoption`: masters, chunks and proxies now declare
+their frame rate (and always carry the exact rate as a `FERROCUT_FRAME_RATE`
+stream tag, since 59.94p cannot be expressed as an integer-nanosecond
+Matroska default duration); the published tool schemas are compacted from
+~15 MB to ~125 KB; `preview_frames` / `ferrocut stills` render frames and
+labeled contact sheets without a video encode; and `ferrocut-mcp --doc`
+serves the guide and schemas to agents without an MCP client. The next
+test, with Claude producer agents and the CLI, is described in
+`eval/creative/claude-videos-20261008/`.

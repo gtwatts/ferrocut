@@ -43,6 +43,10 @@ fn base64_is_rfc4648() {
 
 #[test]
 fn stills_land_under_the_root_with_an_inline_sheet() {
+    if let Err(e) = ferrocut_core::GpuContext::new(ferrocut_core::AdapterPreference::Cpu) {
+        eprintln!("SKIP: no software adapter ({e})");
+        return;
+    }
     let (_t, root) = root();
     let cx = Ctx::new(root.clone());
     let v = run(
@@ -112,6 +116,9 @@ fn bad_inputs_are_rejected_before_any_gpu_work() {
         json!({"timeline": "tl.json", "cols": 0, "cpu": true}),
         json!({"timeline": "tl.json", "at": [0.5], "cpu": true}),
         json!({"timeline": "tl.json", "bogus": 1}),
+        json!({"timeline": "tl.json", "prefix": "../escape", "cpu": true}),
+        json!({"timeline": "tl.json", "prefix": "/tmp/x", "cpu": true}),
+        json!({"timeline": "tl.json", "prefix": ".hidden", "cpu": true}),
     ] {
         assert!(run(&cx, args.clone()).is_err(), "{args}");
     }

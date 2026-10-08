@@ -112,13 +112,7 @@ pub fn probe(path: &Path) -> anyhow::Result<MediaInfo> {
             Type::Video => {
                 si.width = Some(raw.width.max(0) as u32);
                 si.height = Some(raw.height.max(0) as u32);
-                let r = to_core(s.avg_frame_rate());
-                let r = if r > Rational::ZERO {
-                    r
-                } else {
-                    to_core(s.rate())
-                };
-                si.fps = (r > Rational::ZERO).then_some(r);
+                si.fps = super::stream_rate(&s);
                 si.frames = (s.frames() > 0).then(|| s.frames());
             }
             Type::Audio => {

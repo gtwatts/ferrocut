@@ -40,6 +40,9 @@ fn timelines() -> Vec<PathBuf> {
 #[test]
 fn every_example_and_task_timeline_validates_and_engine_output_too() {
     let schema = ferrocut_mcp::schema::timeline();
+    // The published form (docs://timeline/schema.json) must accept the same files.
+    let published = ferrocut_mcp::compact::compact(schema.clone());
+    ferrocut_mcp::compact::refs_are_well_placed(&published).unwrap();
     let files = timelines();
     assert!(files.len() >= 8, "{files:?}");
     for f in files {
@@ -47,6 +50,8 @@ fn every_example_and_task_timeline_validates_and_engine_output_too() {
         let v: Value = serde_json::from_str(&text).unwrap();
         let errs = mini_schema::validate(&schema, &v);
         assert!(errs.is_empty(), "{}: {errs:#?}", f.display());
+        let errs = mini_schema::validate(&published, &v);
+        assert!(errs.is_empty(), "{} (published): {errs:#?}", f.display());
         // What the engine writes back (all defaults made explicit) validates too.
         let tl = Timeline::from_json(&text).unwrap();
         let out = serde_json::to_value(&tl).unwrap();
