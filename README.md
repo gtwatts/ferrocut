@@ -283,6 +283,23 @@ cargo build --release -p ferrocut-mcp
 **Register with Codex.** Add this to `~/.codex/config.toml`, or to a trusted project's `.codex/config.toml`.
 Codex's default 60 s tool timeout is too short for real renders, hence `tool_timeout_sec`:
 
+For a local workstation installation after building the four release binaries,
+run `python3 scripts/install-local.py --check` to review the destinations, then
+`python3 scripts/install-local.py` to install. The installer packages the shared
+LGPL FFmpeg libraries with the binaries, creates commands in `~/.local/bin`,
+and adds the MCP entry while preserving other Codex settings. Existing commands
+and configuration are backed up under `~/.local/share/ferrocut/backups/`.
+It stops for review if a different Ferrocut MCP entry already exists.
+
+The [60-second creative brief](eval/creative/agent-editor-60s/BRIEF.md) can be run
+with `python3 eval/run-creative.py --work /absolute/path/to/new/workdir`.
+This launches the user's installed Codex with its existing ChatGPT login and
+model settings, and records tool calls, failures, binary hashes and timing.
+Use `--model MODEL` only for an explicitly selected session override. The run
+inherits installed plugins and confines Ferrocut assets to the work directory;
+it supplies no finished timeline or reference solution. Outputs and raw session
+logs stay local. A successful CLI exit does not certify creative quality.
+
 ```toml
 [mcp_servers.ferrocut]
 command = "/home/gordontwatts/Documents/projects/ferrocut/target/release/ferrocut-mcp"
