@@ -164,6 +164,8 @@ pub fn resolve_with<L: AudioLoader>(
     tl: &Timeline,
     loader: &mut L,
 ) -> anyhow::Result<Option<(Program, Vec<L::Src>, Vec<PathBuf>)>> {
+    let baked = crate::expr::bake(tl)?;
+    let tl: &Timeline = &baked;
     resolve_in(tl, loader, &mut CompStack::new())
 }
 

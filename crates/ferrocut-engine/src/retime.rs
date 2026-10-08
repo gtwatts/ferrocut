@@ -87,6 +87,11 @@ impl TimeMap {
             return TimeMap::Remap { curve: c.clone() };
         }
         match speed {
+            // Expressions are baked before compile; unbaked, use the value.
+            Animatable::Expression(e) => {
+                let one = Animatable::Constant(Rational::ONE);
+                TimeMap::new(source_in, e.value.as_deref().unwrap_or(&one), None)
+            }
             Animatable::Constant(s) => TimeMap::Linear {
                 source_in: source_in.0,
                 speed: *s,
@@ -230,6 +235,12 @@ pub fn shift_values(a: &Animatable, dv: Rational) -> Animatable {
             }
             Animatable::Keyframes(k)
         }
+        Animatable::Expression(e) => Animatable::Expression(ferrocut_core::Expression {
+            expression: format!("{{\n{}\n}} + {}.0 / {}.0", e.expression, dv.num(), dv.den()),
+            // The result moves; `value` (the script's input) stays.
+            value: e.value.clone(),
+            time_offset: e.time_offset,
+        }),
     }
 }
 

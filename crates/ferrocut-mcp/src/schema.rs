@@ -70,8 +70,29 @@ pub fn animatable(desc: &str) -> Value {
                     }
                 } },
                 "required": ["keyframes"], "additionalProperties": false
-            }
+            },
+            expression()
         ]
+    })
+}
+
+/// An expression on a numeric parameter (see the guide's "Expressions").
+pub fn expression() -> Value {
+    json!({
+        "type": "object",
+        "description": "After Effects-style expression (rhai syntax, sandboxed, deterministic): variables time, value, fps, frame, comp_time, duration, in_point; functions wiggle, seed_random, random, noise, linear, ease, ease_in, ease_out, clamp, lerp, value_at_time, loop_out, loop_in, param, layer(id).param, track(name).param, comp().param. Evaluated per frame when the timeline is validated; errors name the parameter, time, line and column.",
+        "properties": {
+            "expression": { "type": "string", "minLength": 1, "maxLength": 16384, "description": "the script; its result (a number) is the parameter's value. Integer division truncates: write 1.0 / 2" },
+            "value": {
+                "description": "pre-expression value (`value` in the script): a constant or {keyframes} in the parameter's time base; default: the parameter's default",
+                "anyOf": [
+                    rational("constant"),
+                    { "type": "object", "properties": { "keyframes": { "type": "array" } }, "required": ["keyframes"] }
+                ]
+            },
+            "time_offset": rational("added to the parameter time to get the script's `time` (set by split; normally omitted)")
+        },
+        "required": ["expression"], "additionalProperties": false
     })
 }
 
@@ -266,7 +287,7 @@ pub fn video_effect() -> Value {
         })
         .collect();
     json!({
-        "description": "{type, id?, enabled?, ...params}; numeric params take a constant or {keyframes} (clip-local on clips, timeline time on tracks)",
+        "description": "{type, id?, enabled?, ...params}; numeric params take a constant, {keyframes} (clip-local on clips, timeline time on tracks) or {expression}",
         "oneOf": branches
     })
 }
@@ -524,7 +545,7 @@ pub fn edit_op() -> Value {
         ),
         op(
             "set_video_effect_param",
-            "Set one parameter of a video effect (by index or id): `param` is a parameter name (sigma, color, color.g, position.x), `enabled` (bypass with false) or `id`; `value` a constant, {keyframes}, array, boolean, string, or null (back to the default).",
+            "Set one parameter of a video effect (by index or id): `param` is a parameter name (sigma, color, color.g, position.x), `enabled` (bypass with false) or `id`; `value` a constant, {keyframes}, {expression}, array, boolean, string, or null (back to the default).",
             json!({
                 "clip": video_target().0,
                 "track": video_target().1,
@@ -605,7 +626,7 @@ pub fn edit_op() -> Value {
         ),
         op(
             "set_param",
-            "Set one parameter by name on a clip (`clip`), a track's audio bus (`track`) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant or {keyframes}; objects take an object, or null to remove.",
+            "Set one parameter by name on a clip (`clip`), a track's audio bus (`track`) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant, {keyframes} or {expression, value?} (see the guide's Expressions); objects take an object, or null to remove.",
             json!({
                 "clip": clip_id(),
                 "track": { "type": "string", "minLength": 1, "description": "track name (its audio bus)" },

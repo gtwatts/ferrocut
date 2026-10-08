@@ -496,7 +496,13 @@ impl Timeline {
         Ok(tl)
     }
 
+    /// Validate the timeline. Expressions are evaluated (see [`crate::expr`])
+    /// and the rest is checked on their baked values.
     pub fn validate(&self) -> anyhow::Result<()> {
+        crate::expr::bake(self)?.validate_baked()
+    }
+
+    fn validate_baked(&self) -> anyhow::Result<()> {
         let o = &self.output;
         ensure!(o.width > 0 && o.height > 0, "output size must be non-zero");
         ensure!(o.fps > Rational::ZERO, "fps must be positive");

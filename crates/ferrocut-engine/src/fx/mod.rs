@@ -323,6 +323,16 @@ fn parse_value(spec: &ParamSpec, v: &Value) -> Result<Val, String> {
     })
 }
 
+/// The spec of parameter `name` of the registered effect `kind`.
+pub(crate) fn param_spec(kind: &str, name: &str) -> Option<ParamSpec> {
+    ensure_builtins();
+    effect::lookup(kind)?
+        .params()
+        .iter()
+        .find(|s| s.name == name)
+        .copied()
+}
+
 /// Defaults are JSON text written by effect authors: decimals there (`0.8`)
 /// mean the exact decimal (`"0.8"`), as rationals require.
 fn exact_numbers(v: Value) -> Value {

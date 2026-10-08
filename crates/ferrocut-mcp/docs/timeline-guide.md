@@ -13,6 +13,7 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
   "interp": "ease_in_out"}]}`. `interp` (segment to the next key): `linear` (default), `hold`,
   `ease`, `ease_in`, `ease_out`, `ease_in_out`, `easy_ease`, `{"bezier": [x1, y1, x2, y2]}`,
   `{"speed": {...}}`. Before the first key the first value holds; after the last, the last.
+  Any animatable number may instead be an **expression** (see "Expressions").
 - **Key times**: clip parameters (opacity, transform, clip audio) are **clip-local** (0 = the clip's
   `start`); bus and master parameters use **timeline time**. `set_keyframes` with
   `timeline_time: true` converts timeline times to the parameter's base for you.
@@ -166,6 +167,40 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
   default), `remove_video_effect`, `move_video_effect` (`to`); each takes `clip` or `track`.
 - Effects work in linear light on premultiplied pixels; blurs, glows and shadows may extend
   past the layer's edges (until a later `crop`), so put `crop` last to trim them.
+
+## Expressions
+
+Any animatable number (opacity, one component of `transform.position`, a video effect's `sigma`,
+`audio.gain_db`, `camera.zoom`, ...) can be an After Effects-style expression:
+`{"expression": "wiggle(2, 30)", "value": "960"}`. Set it with `set_param` / `set_video_effect_param`
+(value = the expression object). `value` (optional; default the parameter's default) is the
+pre-expression value, a constant or keyframes, available as `value` in the script.
+
+- Syntax: [rhai](https://rhai.rs). Integer division truncates: write `1.0 / 2`. The last expression
+  is the result and must be a number. Sandboxed: no imports, files, clock, `eval`; operation and
+  recursion limits.
+- Variables: `time` (seconds in the parameter's time base: clip-local for clip parameters, source
+  time for generator parameters, timeline time for tracks/timeline), `value`, `fps`, `frame`,
+  `comp_time` (timeline seconds), `duration`, `in_point`.
+- Functions: `wiggle(freq, amp [, octaves, amp_mult, t])` (returns `value` + smooth deterministic
+  noise, seeded per parameter: the same expression on x and y wiggles independently),
+  `seed_random(n [, timeless])`, `random()`, `random(max)`, `random(min, max)`, `noise(x)`,
+  `linear(t, t_min, t_max, v1, v2)` / `linear(t, v1, v2)` and `ease`, `ease_in`, `ease_out` alike,
+  `clamp(x, lo, hi)`, `lerp(a, b, s)`, `value_at_time(t)`, `loop_out(type [, keys])` /
+  `loop_in(...)` over `value`'s keyframes (`"cycle"` default, `"pingpong"`, `"offset"`,
+  `"continue"`).
+- References: `param("transform.rotation")` (same clip/track), `layer("clip_id").param("opacity")`,
+  `track("V2").param("audio.gain_db")`, `comp().param("camera.zoom")`; vector components as `.x`/`.y`
+  (or `.0`), effects by id or index (`"effects.blur.sigma"`). Evaluated at the same timeline time;
+  cycles are errors naming the chain.
+- Evaluation is deterministic and done when the timeline is validated (every op, load, render): each
+  expression becomes one value per frame (linear in between) that is part of the cache keys, so
+  only frames whose values change re-render. Errors name the owner, parameter, time, line and
+  column, e.g. `clip "a": opacity: the expression gives 1.25 at clip time 1/2 s (frame 12), above
+  the maximum 1`.
+- Example: `{"op": "set_param", "clip": "title", "param": "transform.position.y", "value":
+  {"expression": "value + 20 * sin(time * 6.283)", "value": "540"}}`; a looping bounce:
+  `set_param` `{"expression": "loop_out(\"pingpong\")", "value": {"keyframes": [...]}}`.
 
 ## Adjustment layers
 

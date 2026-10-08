@@ -153,6 +153,10 @@ impl ParamSpec {
     /// (Bezier overshoot between keys is clamped by the consumer.)
     pub fn check(&self, v: &Animatable) -> Result<(), String> {
         v.validate().map_err(|e| format!("{}: {e}", self.name))?;
+        if v.is_expression() {
+            // Range-checked on its evaluated values (by the engine's bake).
+            return Ok(());
+        }
         let (lo, hi) = v.key_range();
         let f = |r: Rational| r.to_f64();
         if let Some(min) = self.min

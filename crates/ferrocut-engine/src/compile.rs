@@ -71,6 +71,10 @@ fn build(
     sources: &mut Sources,
     stack: &mut CompStack,
 ) -> anyhow::Result<NodeId> {
+    // Expressions become per-frame keyframes (part of every frame key);
+    // nested comps are baked here too.
+    let baked = crate::expr::bake(tl)?;
+    let tl: &Timeline = &baked;
     let (w, h) = (tl.output.width, tl.output.height);
     // Painter's sort only when there are 3D layers (otherwise the plain
     // over/blend chain, so 2D graphs and keys are unchanged).

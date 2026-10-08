@@ -28,6 +28,8 @@ blake3 = "1.8"
 bytemuck = { version = "1", features = ["derive"] }
 ffmpeg-next = { version = "9.0.0", default-features = false, features = ["codec", "format", "software-resampling", "software-scaling"] }
 rayon = "1.12"
+# Expressions (MIT/Apache-2.0): sandboxed, no modules/time/I/O, op limits.
+rhai = { version = "1.26", features = ["no_module", "no_time", "no_custom_syntax", "sync"] }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

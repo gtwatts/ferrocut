@@ -472,6 +472,7 @@ pub fn registry_json() -> Value {
         "track": TRACK,
         "timeline": TIMELINE,
         "video_effects": crate::fx::registry_json(),
+        "expressions": crate::expr::language_json(),
     })
 }
 
@@ -497,7 +498,7 @@ fn segments(scope: Scope, spec: &ParamSpec) -> Vec<String> {
 }
 
 /// Default for a missing vector parameter (frame center for position/anchor).
-fn vec_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
+pub(crate) fn vec_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
     let half = |v: u32| Rational::new(v as i64, 2).to_string();
     let zoom = || Rational::new(frame.0 as i64 * 50, 36);
     match spec.kind {
@@ -521,7 +522,10 @@ fn vec_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
 
 fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow::Result<()> {
     let scalar_ok = |v: &Value| {
-        v.is_string() || v.is_i64() || v.is_u64() || (v.is_object() && v.get("keyframes").is_some())
+        v.is_string()
+            || v.is_i64()
+            || v.is_u64()
+            || (v.is_object() && (v.get("keyframes").is_some() || v.get("expression").is_some()))
     };
     let ok = match (spec.kind, comp) {
         // Optional animatables (default null, e.g. time_remap): null removes.
@@ -559,7 +563,7 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
         spec.name,
         match (spec.kind, comp) {
             (Scalar, _) | (Vec2 | ScalarOrVec2 | Vec3 | Color, Some(_)) if spec.animatable =>
-                "a rational (\"1/2\", \"0.5\", 2) or {\"keyframes\": [...]}",
+                "a rational (\"1/2\", \"0.5\", 2), {\"keyframes\": [...]} or {\"expression\": \"...\"}",
             (Scalar, _) => "a rational (\"1/2\", \"0.5\", 2)",
             (Vec2, None) => "[x, y] (each a rational or {\"keyframes\": [...]})",
             (Vec3, None) => "[x, y, z] (each a rational or {\"keyframes\": [...]})",

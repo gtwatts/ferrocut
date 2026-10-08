@@ -10,6 +10,7 @@ pub mod compositor;
 pub mod deliver;
 pub mod diff;
 pub mod edit;
+pub mod expr;
 pub mod fx;
 pub mod generator;
 pub mod graph;
