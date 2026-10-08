@@ -109,7 +109,7 @@ pub fn has_audio(tl: &Timeline, stack: &mut CompStack) -> anyhow::Result<bool> {
     }
     let mut seen = std::collections::HashSet::new();
     for c in tl.tracks.iter().flat_map(|t| &t.clips) {
-        if c.audio.mute || !seen.insert(c.source.clone()) {
+        if c.audio.mute || c.is_generator() || !seen.insert(c.source.clone()) {
             continue;
         }
         let yes = if is_comp(&c.source) {

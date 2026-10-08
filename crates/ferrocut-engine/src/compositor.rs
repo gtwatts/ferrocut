@@ -43,6 +43,17 @@ struct TransformParams {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GenParams {
+    c0: [f32; 4],
+    c1: [f32; 4],
+    geo: [f32; 4],
+    kind: u32,
+    space: u32,
+    _pad: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct DownParams {
     src_origin: [i32; 2],
     dst_origin: [i32; 2],
@@ -68,6 +79,7 @@ pub struct Compositor {
     downsample: wgpu::ComputePipeline,
     blend: wgpu::ComputePipeline,
     matte: wgpu::ComputePipeline,
+    generate: wgpu::ComputePipeline,
 }
 
 /// Worker-slot key under which the shared compositor is stored.
@@ -214,6 +226,12 @@ impl Compositor {
             label: Some("blend.wgsl"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blend.wgsl").into()),
         });
+        let generator = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("generator.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(
+                fns.shader(include_str!("shaders/generator.wgsl")).into(),
+            ),
+        });
         let mk = |m: &wgpu::ShaderModule, entry: &str| {
             dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
@@ -235,6 +253,7 @@ impl Compositor {
             downsample: mk(&down, "downsample"),
             blend: mk(&blend, "blend"),
             matte: mk(&blend, "matte"),
+            generate: mk(&generator, "generate"),
         }
     }
 
@@ -714,6 +733,38 @@ impl Compositor {
             &[(3, Res::Tex(dst))],
             window.width,
             window.height,
+        );
+        out
+    }
+
+    /// A generator layer (solid / gradient, see [`crate::generator`]) as a
+    /// full-window working frame.
+    pub fn generate(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        w: u32,
+        h: u32,
+        a: &crate::generator::GeneratorAt,
+    ) -> Frame {
+        let out = Frame::new_gpu(ctx.gpu, w, h, ColorSpace::acescg());
+        let p = Self::uniform(
+            ctx.gpu,
+            &GenParams {
+                c0: a.c0.map(|v| v as f32),
+                c1: a.c1.map(|v| v as f32),
+                geo: a.geo.map(|v| v as f32),
+                kind: a.kind,
+                space: a.linear as u32,
+                _pad: [0; 2],
+            },
+        );
+        let dst = &out.gpu().expect("gpu").view;
+        Self::dispatch(
+            ctx,
+            &self.generate,
+            &[(0, Res::Params(&p)), (3, Res::Tex(dst))],
+            w,
+            h,
         );
         out
     }

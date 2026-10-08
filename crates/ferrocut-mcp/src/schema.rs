@@ -186,9 +186,11 @@ pub fn clip() -> Value {
             "time_remap": time_remap(),
             "sampling": sampling(),
             "blend_mode": blend_mode(),
-            "audio": clip_audio()
+            "audio": clip_audio(),
+            "generator": generator()
         },
-        "required": ["id", "source", "duration"],
+        "required": ["id", "duration"],
+        "oneOf": [ { "required": ["source"] }, { "required": ["generator"] } ],
         "additionalProperties": false
     })
 }
@@ -220,6 +222,60 @@ pub fn effect() -> Value {
         "description": "{type, ...params}",
         "required": ["type"],
         "properties": { "type": { "enum": types } }
+    })
+}
+
+/// A generator layer (see `ferrocut_engine::generator`).
+pub fn generator() -> Value {
+    let color = |d: &str| {
+        json!({
+            "description": d,
+            "type": "array", "minItems": 3, "maxItems": 4,
+            "items": animatable("component in [0, 1]")
+        })
+    };
+    let xy = |d: &str| {
+        json!({
+            "description": d,
+            "type": "array", "minItems": 2, "maxItems": 2,
+            "items": animatable("output pixels")
+        })
+    };
+    let space = json!({ "enum": ["display", "linear"], "default": "display",
+        "description": "display: mix the encoded colors (After Effects Gradient Ramp); linear: mix linear light" });
+    json!({
+        "description": "Synthesized layer. Colors are [r, g, b] or [r, g, b, a] in [0, 1], display-referred Rec.709 (like decoded video), straight alpha. Keyframe times are the clip's source time (clip-local + source_in). Vector shapes (rect/ellipse/paths) are not generators: they come from the Lottie/ThorVG path.",
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": { "type": { "const": "solid" }, "color": color("fill color") },
+                "required": ["type", "color"], "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "type": { "const": "linear_gradient" },
+                    "start": xy("start point (default [0, h/2])"),
+                    "end": xy("end point (default [w, h/2])"),
+                    "start_color": color("color at start (default black)"),
+                    "end_color": color("color at end (default white)"),
+                    "interpolation": space.clone()
+                },
+                "required": ["type"], "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "type": { "const": "radial_gradient" },
+                    "center": xy("center (default frame center)"),
+                    "radius": animatable("radius in pixels (default half the frame diagonal)"),
+                    "start_color": color("color at the center (default black)"),
+                    "end_color": color("color at the radius and beyond (default white)"),
+                    "interpolation": space
+                },
+                "required": ["type"], "additionalProperties": false
+            }
+        ]
     })
 }
 
@@ -385,16 +441,17 @@ pub fn edit_op() -> Value {
         ),
         op(
             "add_clip",
-            "Add a clip from a media file to a track. The file is probed: it must have a video stream for a video track (its audio, if any, plays as linked audio) or an audio stream for an audio track. Defaults: source_in 0, duration = the rest of the media after source_in, start = the end of the track, id = the file stem (made unique). The range must be free (use ripple_insert to push clips right).",
+            "Add a clip to a track: from a media file (`source`), or a generator layer (`generator`: solid color, linear or radial gradient; video tracks; `duration` required). A media file is probed: it must have a video stream for a video track (its audio, if any, plays as linked audio) or an audio stream for an audio track. Defaults: source_in 0, duration = the rest of the media after source_in, start = the end of the track, id = the file stem or generator type (made unique). The range must be free (use ripple_insert to push clips right).",
             json!({
                 "track": { "type": "string", "minLength": 1, "description": "track name" },
                 "source": path("media path or nested timeline (.json), relative to the timeline file's directory (or absolute, inside the project root)"),
+                "generator": generator(),
                 "id": { "type": "string", "minLength": 1, "description": "clip id (unique)" },
                 "start": rational("timeline time of the clip's first frame"),
                 "source_in": rational("source time of the clip's first frame"),
                 "duration": rational("clip length in seconds")
             }),
-            &["track", "source"],
+            &["track"],
             json!({ "op": "add_clip", "track": "V1", "source": "media/s1.mkv", "source_in": "1", "duration": "4" }),
         ),
         op(
@@ -461,7 +518,7 @@ fn param_value() -> Value {
         "description": "constant rational or {keyframes} (numeric), [x, y] (vectors), true/false, an object (fades, duck, loudness) or null (remove)",
         "anyOf": [
             animatable("numeric value"),
-            { "type": "array", "minItems": 2, "maxItems": 2, "items": animatable("component") },
+            { "type": "array", "minItems": 2, "maxItems": 4, "items": animatable("component"), "description": "[x, y], [x, y, z] or a color [r, g, b(, a)]" },
             { "type": "boolean" },
             { "type": "object" },
             { "type": "array", "items": { "type": "object" }, "description": "audio.effects / bus.effects chain" },
@@ -682,7 +739,7 @@ fn bus() -> Value {
 
 fn video_clip() -> Value {
     json!({
-        "description": "A clip on a video track. Its source's audio (if any) plays as linked audio on the track's bus.",
+        "description": "A clip on a video track: media or a nested comp (`source`; its audio, if any, plays as linked audio on the track's bus) or a generator layer (`generator`).",
         "type": "object",
         "properties": {
             "id": { "type": "string", "minLength": 1, "description": "unique across the timeline; edit ops refer to it" },
@@ -707,9 +764,11 @@ fn video_clip() -> Value {
             "time_remap": time_remap(),
             "sampling": sampling(),
             "blend_mode": blend_mode(),
-            "audio": clip_audio()
+            "audio": clip_audio(),
+            "generator": generator()
         },
-        "required": ["id", "source", "start", "duration"],
+        "required": ["id", "start", "duration"],
+        "oneOf": [ { "required": ["source"] }, { "required": ["generator"] } ],
         "additionalProperties": false
     })
 }

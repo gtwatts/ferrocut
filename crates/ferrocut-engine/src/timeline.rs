@@ -20,6 +20,7 @@ use ferrocut_audio::FadeCurve;
 use ferrocut_core::{Animatable, FrameRate, Rational, RationalTime};
 
 use crate::blend::{BlendMode, MatteSpec};
+use crate::generator::GeneratorSpec;
 use crate::retime::{Sampling, TimeMap};
 use crate::transform::TransformSpec;
 use serde::{Deserialize, Serialize};
@@ -286,8 +287,14 @@ pub struct Track {
 #[serde(deny_unknown_fields)]
 pub struct Clip {
     pub id: String,
-    /// Media path, relative to the timeline file.
+    /// Media path (or nested comp), relative to the timeline file. Empty
+    /// (omitted) for generator clips.
+    #[serde(default, skip_serializing_if = "path_is_empty")]
     pub source: PathBuf,
+    /// A synthesized picture instead of media: solid color or linear /
+    /// radial gradient (see [`crate::generator`]). Exclusive with `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generator: Option<GeneratorSpec>,
     /// Position on the timeline.
     pub start: RationalTime,
     /// In point in the source.
@@ -321,6 +328,10 @@ pub struct Clip {
     /// Linked audio (used if the source has an audio stream).
     #[serde(default, skip_serializing_if = "ClipAudio::is_default")]
     pub audio: ClipAudio,
+}
+
+fn path_is_empty(p: &Path) -> bool {
+    p.as_os_str().is_empty()
 }
 
 pub(crate) fn one() -> Animatable {
@@ -361,6 +372,10 @@ impl Clip {
     pub fn end(&self) -> RationalTime {
         self.start + self.duration
     }
+    /// A generator layer (no media, no audio).
+    pub fn is_generator(&self) -> bool {
+        self.generator.is_some()
+    }
     pub fn time_map(&self) -> TimeMap {
         TimeMap::new(self.source_in, &self.speed, self.time_remap.as_ref())
     }
@@ -398,7 +413,12 @@ impl Timeline {
     pub fn sources_mut(&mut self) -> impl Iterator<Item = &mut PathBuf> {
         self.tracks
             .iter_mut()
-            .flat_map(|t| t.clips.iter_mut().map(|c| &mut c.source))
+            .flat_map(|t| {
+                t.clips
+                    .iter_mut()
+                    .filter(|c| !c.is_generator())
+                    .map(|c| &mut c.source)
+            })
             .chain(
                 self.audio_tracks
                     .iter_mut()
@@ -473,6 +493,22 @@ impl Timeline {
                     "clip {}: source_in must be >= 0",
                     c.id
                 );
+                match &c.generator {
+                    Some(g) => {
+                        ensure!(
+                            path_is_empty(&c.source),
+                            "clip {}: give either source or generator, not both",
+                            c.id
+                        );
+                        g.validate()
+                            .map_err(|e| anyhow::anyhow!("clip {}: {e}", c.id))?;
+                    }
+                    None => ensure!(
+                        !path_is_empty(&c.source),
+                        "clip {}: needs a source (media file or comp) or a generator",
+                        c.id
+                    ),
+                }
                 c.opacity
                     .validate()
                     .map_err(|e| anyhow::anyhow!("clip {}: opacity: {e}", c.id))?;

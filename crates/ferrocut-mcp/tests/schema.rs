@@ -95,6 +95,17 @@ fn sample(p: &Value) -> Value {
     if p.get("anyOf").is_some() {
         return Value::from("1/2");
     }
+    if let Some(b) = p.get("oneOf").and_then(|b| b.get(0))
+        && b.get("type") == Some(&Value::from("object"))
+    {
+        // An object branch (e.g. a generator): its required properties.
+        let mut o = serde_json::Map::new();
+        for r in b["required"].as_array().into_iter().flatten() {
+            let k = r.as_str().unwrap();
+            o.insert(k.into(), sample(&b["properties"][k]));
+        }
+        return Value::Object(o);
+    }
     panic!("no sample for {p}");
 }
 

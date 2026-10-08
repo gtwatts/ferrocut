@@ -103,7 +103,10 @@ fn timelines_built_with_every_op_validate() {
       {"op":"add_clip","track":"M","source":"m.wav","start":"0","duration":"9"},
       {"op":"set_param","track":"M","param":"bus.duck","value":{"key":["V1"],"ratio":"6"}},
       {"op":"set_param","param":"audio.loudness","value":{"target_lufs":"-23"}},
-      {"op":"split","clip":"b","at":"7"}
+      {"op":"split","clip":"b","at":"7"},
+      {"op":"add_clip","track":"V1","generator":{"type":"radial_gradient","radius":"10","end_color":["0","0","1","1/2"]},"duration":"2"},
+      {"op":"set_keyframes","clip":"radial_gradient","param":"generator.center.x","keyframes":[{"t":"0","v":"0"},{"t":"2","v":"64"}]},
+      {"op":"add_clip","track":"V1","generator":{"type":"solid","color":["1","1","1"]},"duration":"1"}
     ]"#,
     )
     .unwrap();

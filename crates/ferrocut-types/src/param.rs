@@ -24,6 +24,11 @@ pub enum ParamKind {
     Vec2,
     /// A number or `[x, y]` (uniform or per-axis, e.g. scale).
     ScalarOrVec2,
+    /// Three numbers `[x, y, z]` (3D orientation); components `.x` `.y` `.z`.
+    Vec3,
+    /// A color `[r, g, b]` or `[r, g, b, a]` (each an [`Animatable`] in
+    /// [0, 1]); components `.r` `.g` `.b` `.a`.
+    Color,
     Bool,
     /// A rational time in seconds.
     Time,
@@ -41,6 +46,10 @@ pub enum TimeBase {
     ClipLocal,
     /// Timeline seconds.
     Timeline,
+    /// The clip's source time in seconds (clip-local time + `source_in` for
+    /// a clip that is not retimed). Generator layers animate in source time,
+    /// so splits and trims keep their animation in place.
+    Source,
     /// Not animatable.
     None,
 }
@@ -143,22 +152,26 @@ impl ParamSpec {
     }
 }
 
-/// Find a parameter by name; `<vec2 name>.x` / `.y` resolve to the vector
-/// with the component index.
+/// Find a parameter by name; `<vector>.x` / `.y` (`.z` for [`ParamKind::Vec3`])
+/// and `<color>.r` / `.g` / `.b` / `.a` resolve to the vector with the
+/// component index.
 pub fn find<'a>(specs: &'a [ParamSpec], name: &str) -> Option<(&'a ParamSpec, Option<usize>)> {
     if let Some(s) = specs.iter().find(|s| s.name == name) {
         return Some((s, None));
     }
     let (base, comp) = name.rsplit_once('.')?;
-    let i = match comp {
-        "x" => 0,
-        "y" => 1,
+    let s = specs.iter().find(|s| s.name == base)?;
+    let i = match (s.kind, comp) {
+        (ParamKind::Vec2 | ParamKind::ScalarOrVec2 | ParamKind::Vec3, "x") => 0,
+        (ParamKind::Vec2 | ParamKind::ScalarOrVec2 | ParamKind::Vec3, "y") => 1,
+        (ParamKind::Vec3, "z") => 2,
+        (ParamKind::Color, "r") => 0,
+        (ParamKind::Color, "g") => 1,
+        (ParamKind::Color, "b") => 2,
+        (ParamKind::Color, "a") => 3,
         _ => return None,
     };
-    specs
-        .iter()
-        .find(|s| s.name == base && matches!(s.kind, ParamKind::Vec2 | ParamKind::ScalarOrVec2))
-        .map(|s| (s, Some(i)))
+    Some((s, Some(i)))
 }
 
 #[cfg(test)]
@@ -168,6 +181,8 @@ mod tests {
     const SPECS: &[ParamSpec] = &[
         ParamSpec::scalar("opacity", TimeBase::ClipLocal, "", "1", "").range(0.0, 1.0),
         ParamSpec::scalar("pos", TimeBase::ClipLocal, "px", "0", "").with_kind(ParamKind::Vec2),
+        ParamSpec::scalar("rot", TimeBase::ClipLocal, "deg", "0", "").with_kind(ParamKind::Vec3),
+        ParamSpec::scalar("fill", TimeBase::Source, "", "0", "").with_kind(ParamKind::Color),
     ];
 
     #[test]
@@ -177,6 +192,10 @@ mod tests {
             Some(("pos", Some(1)))
         );
         assert!(find(SPECS, "opacity.x").is_none());
+        assert!(find(SPECS, "pos.z").is_none());
+        assert_eq!(find(SPECS, "rot.z").map(|(_, c)| c), Some(Some(2)));
+        assert_eq!(find(SPECS, "fill.a").map(|(_, c)| c), Some(Some(3)));
+        assert!(find(SPECS, "fill.x").is_none());
         assert!(find(SPECS, "nope").is_none());
         let s = find(SPECS, "opacity").unwrap().0;
         assert!(s.check(&Animatable::constant(Rational::new(1, 2))).is_ok());

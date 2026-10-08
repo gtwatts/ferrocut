@@ -26,7 +26,8 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 - A **video clip**: `id` (unique), `source` (path relative to the timeline file), `start`
   (timeline), `source_in` (source time of its first frame), `duration`, `opacity`, `transform`,
   `transition_in`, `blend_mode`, `audio` (linked audio: gain, pan, mute, fades, J/L offsets). A clip shows source
-  `[source_in, source_in + duration)` at timeline `[start, start + duration)`.
+  `[source_in, source_in + duration)` at timeline `[start, start + duration)`. Instead of `source`, a
+  clip can have a `generator` (see Generator layers).
 - `audio_tracks`: audio-only tracks (music, dialogue) with a `bus` and audio clips
   (`id`, `source`, `start`, `source_in`, `duration`, `audio`).
 - `audio`: `sample_rate` (48000), `master_gain_db`, `loudness` (`target_lufs`: -23 broadcast,
@@ -70,6 +71,26 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 - `nest` moves clips into a new comp file and puts one clip in their place; `unnest` puts a
   plain comp clip's contents back (trimmed to the part it shows).
 
+## Generator layers
+
+- A video clip with `generator` instead of `source` synthesizes its picture (no audio):
+  - `{"type": "solid", "color": [r, g, b]}` (or `[r, g, b, a]`)
+  - `{"type": "linear_gradient", "start": [x, y], "end": [x, y], "start_color", "end_color"}`
+    (defaults: left-center to right-center, black to white)
+  - `{"type": "radial_gradient", "center": [x, y], "radius", "start_color", "end_color"}`
+    (defaults: frame center, half the diagonal, black to white)
+  - gradients take `interpolation`: `display` (default; like After Effects' Gradient Ramp) or
+    `linear` (even light).
+- Colors are in [0, 1], display-referred Rec.709 like decoded video (a solid of 0.5 matches a 50 %
+  video level), straight alpha. Positions are output pixels. Every number can be keyframed;
+  generator key times are the clip's **source time** (clip-local + `source_in`; a new generator
+  clip has `source_in` 0), so `split` and `trim` keep the animation in place. Components:
+  `generator.color.r` ... `.a`, `generator.start.x`, ...
+- Add one with `add_clip` `{"track": "V1", "generator": {...}, "duration": "5"}`; opacity,
+  transform, blend modes, mattes, dissolves and speed work as for media.
+- Vector shapes (rectangles, ellipses, paths with fill/stroke) and shape masks are not
+  generators: they come from the Lottie/ThorVG path (`ferrocut-lottie`).
+
 ## Blend modes and track mattes
 
 - `blend_mode` on a video clip: how its track composites onto everything below while the clip is
@@ -109,7 +130,7 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 | Op | What it does |
 |---|---|
 | `add_track` | new empty video track (`index` 0 = bottom; default top) or audio track |
-| `add_clip` | clip from a media file; probed; defaults: `start` = end of track, `source_in` 0, `duration` = rest of the media, `id` = file stem |
+| `add_clip` | clip from a media file (probed; defaults: `start` = end of track, `source_in` 0, `duration` = rest of the media, `id` = file stem) or a `generator` layer (`duration` required, `id` = its type) |
 | `add_transition` | dissolve into `clip` from the previous clip; `align` `center` (default) / `start` / `end` relative to the cut; uses handles, moves nothing else; adds a matching audio crossfade |
 | `set_param` | any parameter by name on a clip (`clip`), a track (`track`: its bus, or `matte`) or the timeline (neither); `null` removes an optional object |
 | `set_keyframes` | keyframes on an animatable parameter (`mode` replace / merge) |
@@ -127,7 +148,10 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
 - video clip: `opacity`, `transform.position` (`.x`/`.y`), `transform.anchor`, `transform.scale`
   (uniform or `.x`/`.y`), `transform.rotation`, `transition_in`, `sampling`, `blend_mode`, `speed`,
   `time_remap`, `audio.gain_db`, `audio.pan`, `audio.mute`, `audio.fade_in`, `audio.fade_out`,
-  `audio.crossfade_in`, `audio.preserve_pitch`, `audio.effects`
+  `audio.crossfade_in`, `audio.preserve_pitch`, `audio.effects`; generator clips: `generator`,
+  `generator.color` (`.r`/`.g`/`.b`/`.a`), `generator.start_color`, `generator.end_color`,
+  `generator.start`, `generator.end`, `generator.center` (`.x`/`.y`), `generator.radius`,
+  `generator.interpolation`
 - audio clip: the `audio.*` ones, `speed`, `time_remap`
 - track: `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.effects`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
   `bus.duck.ratio`, `bus.duck.attack_ms`, `bus.duck.release_ms`, `bus.duck.range_db`
@@ -159,8 +183,8 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
 
 ## Nodes
 
-Video clips, opacity, transforms, dissolves and the audio graph above are what timelines contain
-today. HTML, Lottie and color nodes (SeePlus's `ferrocut-html`, `ferrocut-lottie`,
+Video clips, generator layers (solid, gradients), opacity, transforms, dissolves and the audio
+graph above are what timelines contain today. HTML, Lottie and color nodes (SeePlus's `ferrocut-html`, `ferrocut-lottie`,
 `ferrocut-color`) will appear here with their published parameter schemas once they are wired
 into the timeline format; until then they are not valid timeline content.
 

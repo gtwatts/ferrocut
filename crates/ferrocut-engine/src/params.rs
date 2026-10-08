@@ -22,7 +22,7 @@ use ferrocut_core::{Animatable, Rational, RationalTime};
 use serde_json::{Value, json};
 
 use ParamKind::*;
-use TimeBase::{ClipLocal, Timeline as Tl};
+use TimeBase::{ClipLocal, Source as Src, Timeline as Tl};
 
 const fn s(
     name: &'static str,
@@ -115,6 +115,79 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
         "",
         "\"normal\"",
         "how the track composites onto the tracks below while this clip is active: normal | add | multiply | screen | overlay | soft_light | hard_light | darken | lighten | difference | exclusion | color_dodge | color_burn | hue | saturation | color | luminosity",
+    ),
+    ParamSpec::fixed(
+        "generator",
+        Object,
+        "",
+        "null",
+        "generator clips only: {type: solid | linear_gradient | radial_gradient, ...}; add generator clips with add_clip {generator}",
+    ),
+    s(
+        "generator.color",
+        Src,
+        "",
+        "[1, 1, 1, 1]",
+        "solid: color [r, g, b] or [r, g, b, a] in [0, 1], display-referred Rec.709, straight alpha; keys in source time",
+    )
+    .with_kind(Color)
+    .range(0.0, 1.0),
+    s(
+        "generator.start_color",
+        Src,
+        "",
+        "[0, 0, 0, 1]",
+        "gradients: color at the start / center",
+    )
+    .with_kind(Color)
+    .range(0.0, 1.0),
+    s(
+        "generator.end_color",
+        Src,
+        "",
+        "[1, 1, 1, 1]",
+        "gradients: color at the end / radius",
+    )
+    .with_kind(Color)
+    .range(0.0, 1.0),
+    s(
+        "generator.start",
+        Src,
+        "px",
+        "[0, h/2]",
+        "linear_gradient: start point, output pixels",
+    )
+    .with_kind(Vec2),
+    s(
+        "generator.end",
+        Src,
+        "px",
+        "[w, h/2]",
+        "linear_gradient: end point, output pixels",
+    )
+    .with_kind(Vec2),
+    s(
+        "generator.center",
+        Src,
+        "px",
+        "[w/2, h/2]",
+        "radial_gradient: center, output pixels",
+    )
+    .with_kind(Vec2),
+    s(
+        "generator.radius",
+        Src,
+        "px",
+        "half the frame diagonal",
+        "radial_gradient: radius in pixels, >= 0",
+    )
+    .min(0.0),
+    ParamSpec::fixed(
+        "generator.interpolation",
+        Choice,
+        "",
+        "\"display\"",
+        "gradients: display (mix encoded colors, After Effects Gradient Ramp) | linear (mix linear light)",
     ),
     CA[0],
     CA[1],
@@ -282,14 +355,18 @@ fn segments(scope: Scope, spec: &ParamSpec) -> Vec<String> {
 }
 
 /// Default for a missing vector parameter (frame center for position/anchor).
-fn vec2_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
-    if spec.name.ends_with("scale") {
-        json!(["1", "1"])
-    } else {
-        json!([
-            Rational::new(frame.0 as i64, 2).to_string(),
-            Rational::new(frame.1 as i64, 2).to_string()
-        ])
+fn vec_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
+    let half = |v: u32| Rational::new(v as i64, 2).to_string();
+    match spec.kind {
+        Color | Vec3 => {
+            // The spec default is a JSON array of integers.
+            let v: Vec<i64> = serde_json::from_str(spec.default).unwrap_or_default();
+            Value::Array(v.into_iter().map(|x| json!(x.to_string())).collect())
+        }
+        _ if spec.name.ends_with("scale") => json!(["1", "1"]),
+        _ if spec.name == "generator.start" => json!(["0", half(frame.1)]),
+        _ if spec.name == "generator.end" => json!([frame.0.to_string(), half(frame.1)]),
+        _ => json!([half(frame.0), half(frame.1)]),
     }
 }
 
@@ -301,7 +378,7 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
         // Optional animatables (default null, e.g. time_remap): null removes.
         (Scalar, _) if v.is_null() && spec.default == "null" => true,
         (Choice, _) => v.is_string(),
-        (Scalar, _) | (Vec2 | ScalarOrVec2, Some(_)) => {
+        (Scalar, _) | (Vec2 | ScalarOrVec2 | Vec3 | Color, Some(_)) => {
             if spec.animatable {
                 scalar_ok(v)
             } else {
@@ -311,6 +388,12 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
         (Vec2, None) => v
             .as_array()
             .is_some_and(|a| a.len() == 2 && a.iter().all(scalar_ok)),
+        (Vec3, None) => v
+            .as_array()
+            .is_some_and(|a| a.len() == 3 && a.iter().all(scalar_ok)),
+        (Color, None) => v
+            .as_array()
+            .is_some_and(|a| (3..=4).contains(&a.len()) && a.iter().all(scalar_ok)),
         (ScalarOrVec2, None) => {
             scalar_ok(v)
                 || v.as_array()
@@ -326,10 +409,13 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
         "{}: expected {}, got {v}",
         spec.name,
         match (spec.kind, comp) {
-            (Scalar, _) | (Vec2 | ScalarOrVec2, Some(_)) if spec.animatable =>
+            (Scalar, _) | (Vec2 | ScalarOrVec2 | Vec3 | Color, Some(_)) if spec.animatable =>
                 "a rational (\"1/2\", \"0.5\", 2) or {\"keyframes\": [...]}",
             (Scalar, _) => "a rational (\"1/2\", \"0.5\", 2)",
             (Vec2, None) => "[x, y] (each a rational or {\"keyframes\": [...]})",
+            (Vec3, None) => "[x, y, z] (each a rational or {\"keyframes\": [...]})",
+            (Color, None) =>
+                "[r, g, b] or [r, g, b, a] (each a rational in [0, 1] or {\"keyframes\": [...]})",
             (ScalarOrVec2, None) => "a rational, {\"keyframes\": [...]} or [x, y]",
             (Bool, _) => "true or false",
             (Object, _) if spec.name.ends_with("effects") => "an array of effect objects or null",
@@ -392,13 +478,18 @@ pub fn set(
         Some(i) => {
             let e = m
                 .entry(last.clone())
-                .or_insert_with(|| vec2_default(spec, frame));
+                .or_insert_with(|| vec_default(spec, frame));
             if !e.is_array() {
                 // uniform scale -> per-axis
                 let u = e.clone();
                 *e = json!([u.clone(), u]);
             }
-            e.as_array_mut().expect("array")[i] = value;
+            let a = e.as_array_mut().expect("array");
+            while a.len() <= i {
+                // `.a` of an opaque [r, g, b] color.
+                a.push(json!("1"));
+            }
+            a[i] = value;
         }
     }
     Ok(())
@@ -526,6 +617,20 @@ mod tests {
         assert!(clip["audio"].get("fade_in").is_none());
         let (sp, c) = lookup(Scope::VideoClip, "opacity").unwrap();
         assert!(set(&mut clip, Scope::VideoClip, sp, c, json!(true), (64, 32)).is_err());
+        // Colors: components, alpha added to an opaque color, defaults.
+        let mut g = json!({"id": "g", "generator": {"type": "solid", "color": ["1", "0", "0"]}});
+        let (sp, c) = lookup(Scope::VideoClip, "generator.color.a").unwrap();
+        set(&mut g, Scope::VideoClip, sp, c, json!("1/2"), (64, 32)).unwrap();
+        assert_eq!(g["generator"]["color"], json!(["1", "0", "0", "1/2"]));
+        let mut g = json!({"id": "g", "generator": {"type": "linear_gradient"}});
+        let (sp, c) = lookup(Scope::VideoClip, "generator.end_color.g").unwrap();
+        set(&mut g, Scope::VideoClip, sp, c, json!("0"), (64, 32)).unwrap();
+        assert_eq!(g["generator"]["end_color"], json!(["1", "0", "1", "1"]));
+        let (sp, c) = lookup(Scope::VideoClip, "generator.end.y").unwrap();
+        set(&mut g, Scope::VideoClip, sp, c, json!("0"), (64, 32)).unwrap();
+        assert_eq!(g["generator"]["end"], json!(["64", "0"]));
+        let (sp, c) = lookup(Scope::VideoClip, "generator.color").unwrap();
+        assert!(set(&mut g, Scope::VideoClip, sp, c, json!(["1", "1"]), (64, 32)).is_err());
     }
 
     #[test]

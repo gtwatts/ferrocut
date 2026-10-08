@@ -154,7 +154,14 @@ pub enum EditOp {
     },
     AddClip {
         track: String,
+        /// Media file or comp (omit for a generator clip).
+        #[serde(default, skip_serializing_if = "path_is_empty")]
         source: PathBuf,
+        /// A generator layer instead of media (`{"type": "solid", "color":
+        /// [r, g, b]}`, `linear_gradient`, `radial_gradient`; video tracks,
+        /// `duration` required). See [`crate::generator`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        generator: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -949,10 +956,14 @@ fn check_track_bounds(
     media: &mut MediaLengths<'_>,
 ) -> anyhow::Result<()> {
     match tr {
-        TrackRef::Video(i) => tl.tracks[i]
-            .clips
-            .iter()
-            .try_for_each(|c| check_bounds(c, media.get(&c.source))),
+        TrackRef::Video(i) => tl.tracks[i].clips.iter().try_for_each(|c| {
+            let len = if c.is_generator() {
+                None
+            } else {
+                media.get(&c.source)
+            };
+            check_bounds(c, len)
+        }),
         TrackRef::Audio(i) => tl.audio_tracks[i]
             .clips
             .iter()
@@ -1229,6 +1240,7 @@ fn apply_one(
         EditOp::AddClip {
             track,
             source,
+            generator,
             id,
             start,
             source_in,
@@ -1238,6 +1250,7 @@ fn apply_one(
             media,
             track,
             source,
+            generator.as_ref(),
             id.as_deref(),
             *start,
             *source_in,
@@ -1333,7 +1346,10 @@ fn apply_one(
             let clip_start = match clip {
                 Some(c) => {
                     let (tr, ci) = locate(tl, c)?;
-                    Some(on_track!(tl, tr, |clips| clips[ci].start()))
+                    Some(on_track!(tl, tr, |clips| (
+                        clips[ci].start(),
+                        clips[ci].source_in()
+                    )))
                 }
                 None => None,
             };
@@ -1346,7 +1362,9 @@ fn apply_one(
                 |spec, cur| {
                     crate::params::ensure_animatable(spec)?;
                     let shift = match (timeline_time, spec.time, clip_start) {
-                        (true, ferrocut_core::TimeBase::ClipLocal, Some(s)) => s.0,
+                        (true, ferrocut_core::TimeBase::ClipLocal, Some((s, _))) => s.0,
+                        // Source time of an unretimed clip: t - start + source_in.
+                        (true, ferrocut_core::TimeBase::Source, Some((s, si))) => s.0 - si.0,
                         _ => Rational::ZERO,
                     };
                     crate::params::keyframes_value(cur, keyframes, shift, *mode == KeyMode::Merge)
@@ -1445,6 +1463,7 @@ fn add_clip(
     media: &mut MediaLengths<'_>,
     track: &str,
     source: &Path,
+    generator: Option<&serde_json::Value>,
     id: Option<&str>,
     start: Option<RationalTime>,
     source_in: Option<RationalTime>,
@@ -1454,7 +1473,38 @@ fn add_clip(
         let names: Vec<&str> = tl.track_names().collect();
         anyhow!("{e} (tracks: {names:?}; add one with add_track)")
     })?;
-    let facts = media.facts(source)?;
+    let generator = match generator {
+        None => {
+            ensure!(
+                !path_is_empty(source),
+                "add_clip: give a source (media file or comp) or a generator"
+            );
+            None
+        }
+        Some(g) => {
+            ensure!(
+                path_is_empty(source),
+                "add_clip: give either source or generator, not both"
+            );
+            ensure!(
+                matches!(tr, TrackRef::Video(_)),
+                "add_clip: generators go on video tracks"
+            );
+            ensure!(
+                duration.is_some(),
+                "add_clip: a generator has no media length; pass `duration`"
+            );
+            let g: crate::generator::GeneratorSpec = serde_json::from_value(g.clone())
+                .map_err(|e| anyhow!("add_clip: generator: {e}"))?;
+            g.validate().map_err(|e| anyhow!("add_clip: {e}"))?;
+            Some(g)
+        }
+    };
+    let facts = if generator.is_some() {
+        None
+    } else {
+        media.facts(source)?
+    };
     if let Some(f) = facts {
         match tr {
             TrackRef::Video(_) => ensure!(
@@ -1467,7 +1517,10 @@ fn add_clip(
     }
     let source_in = source_in.unwrap_or(z());
     ensure!(source_in >= z(), "add_clip: source_in must be >= 0");
-    let len = facts.and_then(|f| f.duration).or_else(|| media.get(source));
+    let len = match &generator {
+        Some(_) => None,
+        None => facts.and_then(|f| f.duration).or_else(|| media.get(source)),
+    };
     let duration = match (duration, len) {
         (Some(d), _) => d,
         (None, Some(l)) => {
@@ -1516,11 +1569,14 @@ fn add_clip(
             i.to_string()
         }
         None => {
-            let stem = source
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "clip".into());
+            let stem = match &generator {
+                Some(g) => g.type_name().to_string(),
+                None => source
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "clip".into()),
+            };
             if tl.clip_ids().any(|x| x == stem) {
                 unique_id(tl, &stem)
             } else {
@@ -1532,6 +1588,7 @@ fn add_clip(
         TrackRef::Video(i) => tl.tracks[i].clips.push(Clip {
             id: id.clone(),
             source: source.to_path_buf(),
+            generator: generator.clone(),
             start,
             source_in,
             duration,
@@ -1561,7 +1618,10 @@ fn add_clip(
             kind: "add_clip",
             summary: format!(
                 "add clip {id} ({}, source {}..{}) at {start}..{end} on {track:?}",
-                source.display(),
+                match &generator {
+                    Some(g) => format!("{} generator", g.type_name()),
+                    None => source.display().to_string(),
+                },
                 source_in,
                 source_in + duration
             ),
@@ -2009,8 +2069,12 @@ fn dir_of(p: &Path) -> PathBuf {
 
 /// Re-express `src` (relative to `from`, or absolute) for a timeline stored
 /// in `to`: unchanged when the directories match, else absolute.
+fn path_is_empty(p: &Path) -> bool {
+    p.as_os_str().is_empty()
+}
+
 fn rebase_source(src: &Path, from: &Path, to: &Path) -> PathBuf {
-    if src.is_absolute() || same_dir(from, to) {
+    if path_is_empty(src) || src.is_absolute() || same_dir(from, to) {
         return src.to_path_buf();
     }
     let j = from.join(src);

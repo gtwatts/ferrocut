@@ -319,6 +319,7 @@ fn resolve_in<L: AudioLoader>(
         let items = t
             .clips
             .iter()
+            .filter(|c| !c.is_generator())
             .map(|c| Item {
                 id: &c.id,
                 source: &c.source,

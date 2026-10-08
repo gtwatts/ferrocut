@@ -660,10 +660,15 @@ fn clip_list(tl: &Timeline) -> Vec<Value> {
     let mut out = Vec::new();
     for t in &tl.tracks {
         for c in &t.clips {
-            out.push(json!({
+            let mut v = json!({
                 "id": c.id, "kind": "video", "track": t.name, "start": c.start, "end": c.end(),
                 "source_in": c.source_in, "duration": c.duration, "source": c.source,
-            }));
+            });
+            if let Some(g) = &c.generator {
+                v["source"] = Value::Null;
+                v["generator"] = json!(g.type_name());
+            }
+            out.push(v);
         }
     }
     for t in &tl.audio_tracks {
