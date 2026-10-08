@@ -9,6 +9,7 @@ use ferrocut_core::{
     RenderNode,
 };
 
+use crate::blend::{BlendMode, MatteMode};
 use crate::compositor::{Compositor, compositor};
 use crate::media::decode::Decoder;
 use crate::retime::{Sample, Sampling, TimeMap};
@@ -413,6 +414,103 @@ impl RenderNode for SequenceNode {
                 mix.to_f32_param(),
             )?)),
         }
+    }
+}
+
+/// Input 0 (a track) blended onto input 1 (the tracks below) with the blend
+/// mode of the track's clip active at `t`. Normal frames hash and render
+/// exactly like [`OverNode`], so only non-normal frames get new keys.
+pub struct BlendNode {
+    /// The track's clip ranges (sorted by start, later wins) and modes.
+    pub ranges: Vec<(ClipRange, BlendMode)>,
+}
+
+impl BlendNode {
+    pub fn mode_at(&self, t: RationalTime) -> BlendMode {
+        self.ranges
+            .iter()
+            .rev()
+            .find(|(r, _)| r.start <= t && t < r.end)
+            .map_or(BlendMode::Normal, |(_, m)| *m)
+    }
+}
+
+impl RenderNode for BlendNode {
+    fn kind(&self) -> &'static str {
+        "blend"
+    }
+    fn batches_gpu_work(&self) -> bool {
+        true
+    }
+    fn supports_data_window(&self) -> bool {
+        true
+    }
+    fn content_hash(&self) -> NodeHash {
+        let mut b = Vec::new();
+        for (r, m) in &self.ranges {
+            b.extend_from_slice(&r.start.hash_bytes());
+            b.extend_from_slice(&r.end.hash_bytes());
+            b.extend_from_slice(m.name().as_bytes());
+            b.push(0);
+        }
+        NodeHash::of("blend", &[&b])
+    }
+    fn content_hash_at(&self, t: RationalTime) -> NodeHash {
+        match self.mode_at(t) {
+            BlendMode::Normal => NodeHash::of("over", &[]),
+            m => NodeHash::of("blend.at", &[m.name().as_bytes()]),
+        }
+    }
+    fn pulls(&self, t: RationalTime) -> Vec<Pull> {
+        vec![Pull { input: 0, time: t }, Pull { input: 1, time: t }]
+    }
+    fn render(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        t: RationalTime,
+        inputs: &[Arc<Frame>],
+    ) -> Result<Arc<Frame>, NodeError> {
+        let comp = compositor(ctx)?;
+        Ok(Arc::new(comp.blend(
+            ctx,
+            &inputs[0],
+            &inputs[1],
+            self.mode_at(t),
+        )?))
+    }
+}
+
+/// Track matte: input 0 (the layer) cut out by input 1 (the matte source).
+pub struct MatteNode {
+    pub mode: MatteMode,
+}
+
+impl RenderNode for MatteNode {
+    fn kind(&self) -> &'static str {
+        "matte"
+    }
+    fn batches_gpu_work(&self) -> bool {
+        true
+    }
+    fn supports_data_window(&self) -> bool {
+        true
+    }
+    fn content_hash(&self) -> NodeHash {
+        NodeHash::of("matte", &[self.mode.name().as_bytes()])
+    }
+    fn pulls(&self, t: RationalTime) -> Vec<Pull> {
+        vec![Pull { input: 0, time: t }, Pull { input: 1, time: t }]
+    }
+    fn render(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        _t: RationalTime,
+        inputs: &[Arc<Frame>],
+    ) -> Result<Arc<Frame>, NodeError> {
+        let comp = compositor(ctx)?;
+        Ok(Arc::new(
+            comp.matte(ctx, &inputs[0], &inputs[1], self.mode)?,
+        ))
     }
 }
 

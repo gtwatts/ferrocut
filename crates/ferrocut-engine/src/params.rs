@@ -6,7 +6,8 @@
 //!
 //! - video clips: [`VIDEO_CLIP`] (`opacity`, `transform.*`, `audio.*`, ...)
 //! - audio-track clips: [`AUDIO_CLIP`] (`audio.*`)
-//! - tracks (video or audio): [`TRACK`] (`bus.*`, the track's audio bus)
+//! - tracks (video or audio): [`TRACK`] (`bus.*`, the track's audio bus;
+//!   `matte` on video tracks)
 //! - the timeline: [`TIMELINE`] (`audio.master_gain_db`, `audio.loudness.*`, ...)
 //!
 //! `<vec2>.x` / `<vec2>.y` address one component. Setting works on the
@@ -107,6 +108,13 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
         "\"nearest\"",
         "source frame sampling when retimed: nearest | frame_blend (optical_flow is a reserved hook)",
     ),
+    ParamSpec::fixed(
+        "blend_mode",
+        Choice,
+        "",
+        "\"normal\"",
+        "how the track composites onto the tracks below while this clip is active: normal | add | multiply | screen | overlay | soft_light | hard_light | darken | lighten | difference | exclusion | color_dodge | color_burn | hue | saturation | color | luminosity",
+    ),
     CA[0],
     CA[1],
     CA[2],
@@ -125,6 +133,13 @@ pub const AUDIO_CLIP: &[ParamSpec] = &[
 
 /// Parameters of a track's audio bus (video tracks' linked audio, or audio tracks).
 pub const TRACK: &[ParamSpec] = &[
+    ParamSpec::fixed(
+        "matte",
+        Object,
+        "",
+        "null",
+        "video tracks only: {mode: alpha | alpha_inverted | luma | luma_inverted}; the track above becomes this track's matte and is not composited itself",
+    ),
     s("bus.gain_db", Tl, "dB", "0", "track bus gain"),
     s("bus.pan", Tl, "", "0", "track balance -1 .. 1").range(-1.0, 1.0),
     ParamSpec::fixed("bus.mute", Bool, "", "false", "mute the track's audio"),

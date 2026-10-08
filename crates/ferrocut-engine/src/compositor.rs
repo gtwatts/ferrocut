@@ -20,7 +20,9 @@ const ALIGN: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 struct Params {
     mix_amount: f32,
     opacity: f32,
-    _pad: [f32; 2],
+    /// Blend / matte mode index (`blend.wgsl`); unused by `composite.wgsl`.
+    mode: u32,
+    _pad: u32,
     a_origin: [i32; 2],
     b_origin: [i32; 2],
     dst_origin: [i32; 2],
@@ -64,6 +66,8 @@ pub struct Compositor {
     output: wgpu::ComputePipeline,
     transform: wgpu::ComputePipeline,
     downsample: wgpu::ComputePipeline,
+    blend: wgpu::ComputePipeline,
+    matte: wgpu::ComputePipeline,
 }
 
 /// Worker-slot key under which the shared compositor is stored.
@@ -206,6 +210,10 @@ impl Compositor {
             label: Some("downsample.wgsl"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/downsample.wgsl").into()),
         });
+        let blend = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("blend.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blend.wgsl").into()),
+        });
         let mk = |m: &wgpu::ShaderModule, entry: &str| {
             dev.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
@@ -225,6 +233,8 @@ impl Compositor {
             output: mk(&out, "output_rec709"),
             transform: mk(&xf, "transform"),
             downsample: mk(&down, "downsample"),
+            blend: mk(&blend, "blend"),
+            matte: mk(&blend, "matte"),
         }
     }
 
@@ -291,7 +301,8 @@ impl Compositor {
             &Params {
                 mix_amount,
                 opacity,
-                _pad: [0.0; 2],
+                mode: 0,
+                _pad: 0,
                 a_origin: origin(&a),
                 b_origin: origin(&b),
                 dst_origin: origin(&dst),
@@ -428,6 +439,93 @@ impl Compositor {
             (3, Res::Tex(view(&out)?)),
         ];
         Self::dispatch(ctx, &self.over, &res, win.width, win.height);
+        Ok(out)
+    }
+
+    /// `fg` blended onto `bg` with `mode` (see [`crate::blend`]); normal is
+    /// exactly [`Compositor::over`]. The result covers both data windows.
+    pub fn blend(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        fg: &Frame,
+        bg: &Frame,
+        mode: crate::blend::BlendMode,
+    ) -> Result<Frame, NodeError> {
+        if mode.is_normal() {
+            return self.over(ctx, fg, bg);
+        }
+        check_compatible(fg, bg)?;
+        let win = fg.data_window.union(&bg.data_window);
+        let out = Frame::new_gpu_window(
+            ctx.gpu,
+            bg.width,
+            bg.height,
+            win,
+            bg.pixel_aspect,
+            bg.color_space.clone(),
+        );
+        let p = Self::uniform(
+            ctx.gpu,
+            &Params {
+                mix_amount: 0.0,
+                opacity: 1.0,
+                mode: mode.index(),
+                _pad: 0,
+                a_origin: origin(&fg.data_window),
+                b_origin: origin(&bg.data_window),
+                dst_origin: origin(&win),
+                _pad2: [0; 2],
+            },
+        );
+        let res = [
+            (0, Res::Params(&p)),
+            (1, Res::Tex(view(fg)?)),
+            (2, Res::Tex(view(bg)?)),
+            (3, Res::Tex(view(&out)?)),
+        ];
+        Self::dispatch(ctx, &self.blend, &res, win.width, win.height);
+        Ok(out)
+    }
+
+    /// `layer` through the track matte `matte`; the result keeps `layer`'s
+    /// data window (outside the matte's window the matte is transparent black).
+    pub fn matte(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        layer: &Frame,
+        matte: &Frame,
+        mode: crate::blend::MatteMode,
+    ) -> Result<Frame, NodeError> {
+        check_compatible(layer, matte)?;
+        let win = layer.data_window;
+        let out = Frame::new_gpu_window(
+            ctx.gpu,
+            layer.width,
+            layer.height,
+            win,
+            layer.pixel_aspect,
+            layer.color_space.clone(),
+        );
+        let p = Self::uniform(
+            ctx.gpu,
+            &Params {
+                mix_amount: 0.0,
+                opacity: 1.0,
+                mode: mode.index(),
+                _pad: 0,
+                a_origin: origin(&layer.data_window),
+                b_origin: origin(&matte.data_window),
+                dst_origin: origin(&win),
+                _pad2: [0; 2],
+            },
+        );
+        let res = [
+            (0, Res::Params(&p)),
+            (1, Res::Tex(view(layer)?)),
+            (2, Res::Tex(view(matte)?)),
+            (3, Res::Tex(view(&out)?)),
+        ];
+        Self::dispatch(ctx, &self.matte, &res, win.width, win.height);
         Ok(out)
     }
 

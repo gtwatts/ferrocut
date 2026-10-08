@@ -2,6 +2,7 @@
 //! FFmpeg I/O and the wgpu compositor. Owned by Rusty.
 
 pub mod audio;
+pub mod blend;
 pub mod compile;
 pub mod compositor;
 pub mod deliver;

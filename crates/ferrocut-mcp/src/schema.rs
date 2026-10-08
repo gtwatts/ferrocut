@@ -118,6 +118,30 @@ fn time_remap() -> Value {
     })
 }
 
+fn blend_mode() -> Value {
+    json!({
+        "description": "How this clip's track composites onto the tracks below while the clip is active (linear-light, premultiplied; W3C/After Effects formulas). Default normal (= over).",
+        "enum": ferrocut_engine::blend::BlendMode::ALL.iter().map(|m| m.name()).collect::<Vec<_>>()
+    })
+}
+
+fn matte() -> Value {
+    json!({
+        "description": "Track matte: the track directly above is this track's matte source (and is not composited itself). alpha keeps this track where the matte is opaque, luma where it is bright (ACEScg luminance of the premultiplied matte, i.e. luminance times alpha); the _inverted variants keep the rest. The matte track's own linked audio still plays.",
+        "anyOf": [
+            { "type": "null" },
+            {
+                "type": "object",
+                "properties": {
+                    "mode": { "enum": ["alpha", "alpha_inverted", "luma", "luma_inverted"] },
+                    "source": { "const": "track_above", "description": "default; other matte sources (e.g. vector masks) are a planned hook" }
+                },
+                "required": ["mode"], "additionalProperties": false
+            }
+        ]
+    })
+}
+
 fn sampling() -> Value {
     json!({
         "description": "Source frame sampling for retimed clips: nearest (default) or frame_blend (mix of the two neighbouring source frames). optical_flow is a reserved hook and is rejected for now.",
@@ -161,6 +185,7 @@ pub fn clip() -> Value {
             "speed": speed(),
             "time_remap": time_remap(),
             "sampling": sampling(),
+            "blend_mode": blend_mode(),
             "audio": clip_audio()
         },
         "required": ["id", "source", "duration"],
@@ -612,6 +637,7 @@ fn video_clip() -> Value {
             "speed": speed(),
             "time_remap": time_remap(),
             "sampling": sampling(),
+            "blend_mode": blend_mode(),
             "audio": clip_audio()
         },
         "required": ["id", "source", "start", "duration"],
@@ -668,6 +694,7 @@ pub fn timeline() -> Value {
                     "properties": {
                         "name": { "type": "string", "description": "unique (edit ops and duck keys refer to it)" },
                         "audio": bus(),
+                        "matte": matte(),
                         "clips": { "type": "array", "items": video_clip() }
                     },
                     "required": ["clips"], "additionalProperties": false

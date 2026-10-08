@@ -1246,6 +1246,7 @@ fn add_track(
             crate::timeline::Track {
                 name: name.into(),
                 audio: Default::default(),
+                matte: None,
                 clips: vec![],
             },
         ),
@@ -1371,6 +1372,7 @@ fn add_clip(
             speed: crate::timeline::one(),
             time_remap: None,
             sampling: Default::default(),
+            blend_mode: Default::default(),
             audio: ClipAudio::default(),
         }),
         TrackRef::Audio(i) => tl.audio_tracks[i].clips.push(AudioClip {
@@ -1540,6 +1542,10 @@ fn set_param(
         (None, None) => (Scope::Timeline, None),
     };
     let (spec, comp) = params::lookup(scope, name)?;
+    ensure!(
+        !(scope == (Scope::Track { audio_track: true }) && spec.name == "matte"),
+        "matte applies to video tracks only"
+    );
     let mut obj = match tr {
         Some((TrackRef::Video(i), Some(ci))) => serde_json::to_value(&tl.tracks[i].clips[ci])?,
         Some((TrackRef::Audio(i), Some(ci))) => {

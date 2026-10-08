@@ -7,7 +7,9 @@ use std::sync::Arc;
 use anyhow::Context as _;
 
 use crate::graph::{Graph, NodeId};
-use crate::nodes::{ClipNode, ClipRange, OverNode, SequenceNode, SourceNode, TransformNode};
+use crate::nodes::{
+    BlendNode, ClipNode, ClipRange, MatteNode, OverNode, SequenceNode, SourceNode, TransformNode,
+};
 use crate::timeline::Timeline;
 
 pub struct Compiled {
@@ -29,6 +31,7 @@ pub fn compile_with(
         clips.sort_by_key(|c| c.start);
         let mut clip_ids = Vec::new();
         let mut ranges = Vec::new();
+        let mut modes = Vec::new();
         for c in clips {
             let key = c.source.canonicalize().unwrap_or_else(|_| c.source.clone());
             let (src, source_fps) = match sources.get(&key) {
@@ -67,6 +70,7 @@ pub fn compile_with(
                 end: c.end(),
                 dissolve_in: c.dissolve(),
             });
+            modes.push(c.blend_mode);
         }
         let seq = SequenceNode {
             ranges,
@@ -74,12 +78,34 @@ pub fn compile_with(
             width: w,
             height: h,
         };
-        track_outputs.push(g.add(Arc::new(seq), clip_ids));
+        let blend = BlendNode {
+            ranges: seq.ranges.iter().copied().zip(modes).collect(),
+        };
+        track_outputs.push((g.add(Arc::new(seq), clip_ids), blend));
     }
-    let mut out = track_outputs[0];
-    for &fg in &track_outputs[1..] {
-        out = g.add(Arc::new(OverNode), vec![fg, out]);
+    // Stack bottom to top. A matted track takes the track above as its
+    // matte source (hook: other matte sources plug in here), and that track
+    // is consumed.
+    let mut out: Option<NodeId> = None;
+    let mut ti = 0;
+    let mut outputs = track_outputs.into_iter();
+    while let Some((mut layer, blend)) = outputs.next() {
+        if let Some(m) = &tl.tracks[ti].matte {
+            let crate::blend::MatteSource::TrackAbove = m.source;
+            let (matte, _) = outputs.next().context("track matte needs a track above")?;
+            layer = g.add(Arc::new(MatteNode { mode: m.mode }), vec![layer, matte]);
+            ti += 1;
+        }
+        out = Some(match out {
+            None => layer,
+            Some(bg) if blend.ranges.iter().all(|(_, m)| m.is_normal()) => {
+                g.add(Arc::new(OverNode), vec![layer, bg])
+            }
+            Some(bg) => g.add(Arc::new(blend), vec![layer, bg]),
+        });
+        ti += 1;
     }
+    let out = out.expect("at least one track");
     Ok(Compiled {
         graph: g,
         output: out,

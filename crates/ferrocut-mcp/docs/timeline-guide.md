@@ -21,11 +21,11 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 
 - `output`: `width`, `height`, `fps`, optional `gop` (24), `gops_per_chunk` (1), `duration`
   (default: end of the last clip).
-- `tracks`: video tracks, **0 = bottom layer**. Each has a unique `name`, an audio bus `audio`, and
-  `clips`.
+- `tracks`: video tracks, **0 = bottom layer**. Each has a unique `name`, an audio bus `audio`, an
+  optional track `matte`, and `clips`.
 - A **video clip**: `id` (unique), `source` (path relative to the timeline file), `start`
   (timeline), `source_in` (source time of its first frame), `duration`, `opacity`, `transform`,
-  `transition_in`, `audio` (linked audio: gain, pan, mute, fades, J/L offsets). A clip shows source
+  `transition_in`, `blend_mode`, `audio` (linked audio: gain, pan, mute, fades, J/L offsets). A clip shows source
   `[source_in, source_in + duration)` at timeline `[start, start + duration)`.
 - `audio_tracks`: audio-only tracks (music, dialogue) with a `bus` and audio clips
   (`id`, `source`, `start`, `source_in`, `duration`, `audio`).
@@ -41,6 +41,7 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 - J-cuts (`audio.in_offset < 0`) need source before `source_in`; L-cuts need source after.
 - Retimed clips (`speed` != 1 or `time_remap`) must stay inside the media over their whole
   mapped range (picture and audio regions).
+- Opacity in [0, 1], pan in [-1, 1], duck ratio >= 1, loudness target in [-70, 0).
 
 ## Time remapping
 
@@ -55,7 +56,21 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 - Recipes: slow motion `set_speed` `"1/2"` with `ripple: true`; a ramp 1x -> 3x -> 1x is
   `set_keyframes` on `speed` (`[{t:0,v:1,interp:ease_in_out},{t:1,v:3,interp:ease_in_out},{t:2,v:1}]`);
   a 2 s freeze at 5 s is `freeze_frame` `{at: "5", duration: "2"}`.
-- Opacity in [0, 1], pan in [-1, 1], duck ratio >= 1, loudness target in [-70, 0).
+
+## Blend modes and track mattes
+
+- `blend_mode` on a video clip: how its track composites onto everything below while the clip is
+  active (`normal` = over, `add`, `multiply`, `screen`, `overlay`, `soft_light`, `hard_light`,
+  `darken`, `lighten`, `difference`, `exclusion`, `color_dodge`, `color_burn`, `hue`,
+  `saturation`, `color`, `luminosity`). Computed in linear light on premultiplied pixels with the
+  W3C / After Effects formulas; modes defined on [0, 1] clamp their inputs (HDR values > 1 only
+  survive `normal`, `add`, `multiply`, `darken`, `lighten`, `difference`).
+- `matte` on a video track: `{"mode": "alpha" | "alpha_inverted" | "luma" | "luma_inverted"}`.
+  The track directly above becomes the matte (it is not composited); `luma` uses the
+  ACEScg (AP1) luminance of the premultiplied matte, i.e. luminance times alpha. The top track can't have a matte, and a matte
+  source can't have its own matte.
+- Recipe: text through a picture: put the picture on V1, the title on V2 and
+  `set_param` `matte` `{"mode": "alpha"}` on V1 (`track: "V1"`).
 
 ## Ops (edit_apply)
 
@@ -64,7 +79,7 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 | `add_track` | new empty video track (`index` 0 = bottom; default top) or audio track |
 | `add_clip` | clip from a media file; probed; defaults: `start` = end of track, `source_in` 0, `duration` = rest of the media, `id` = file stem |
 | `add_transition` | dissolve into `clip` from the previous clip; `align` `center` (default) / `start` / `end` relative to the cut; uses handles, moves nothing else; adds a matching audio crossfade |
-| `set_param` | any parameter by name on a clip (`clip`), a track's bus (`track`) or the timeline (neither); `null` removes an optional object |
+| `set_param` | any parameter by name on a clip (`clip`), a track (`track`: its bus, or `matte`) or the timeline (neither); `null` removes an optional object |
 | `set_keyframes` | keyframes on an animatable parameter (`mode` replace / merge) |
 | `split`, `trim`, `roll`, `slip`, `slide`, `move` | NLE trims and moves (see each op's schema) |
 | `ripple_delete`, `ripple_insert` | remove / insert and close / open the gap (`all_tracks` = sync lock) |
@@ -75,11 +90,11 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 Parameter names (`timeline_schema` part `params` lists unit, range, default and time base):
 
 - video clip: `opacity`, `transform.position` (`.x`/`.y`), `transform.anchor`, `transform.scale`
-  (uniform or `.x`/`.y`), `transform.rotation`, `transition_in`, `sampling`, `speed`, `time_remap`,
-  `audio.gain_db`, `audio.pan`, `audio.mute`, `audio.fade_in`, `audio.fade_out`,
+  (uniform or `.x`/`.y`), `transform.rotation`, `transition_in`, `sampling`, `blend_mode`, `speed`,
+  `time_remap`, `audio.gain_db`, `audio.pan`, `audio.mute`, `audio.fade_in`, `audio.fade_out`,
   `audio.crossfade_in`, `audio.preserve_pitch`
 - audio clip: the `audio.*` ones, `speed`, `time_remap`
-- track: `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
+- track: `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
   `bus.duck.ratio`, `bus.duck.attack_ms`, `bus.duck.release_ms`, `bus.duck.range_db`
 - timeline: `audio.master_gain_db`, `audio.loudness`, `audio.loudness.target_lufs`,
   `audio.loudness.true_peak_dbtp`, `output.duration`

@@ -19,6 +19,7 @@ use anyhow::{Context, bail, ensure};
 use ferrocut_audio::FadeCurve;
 use ferrocut_core::{Animatable, FrameRate, Rational, RationalTime};
 
+use crate::blend::{BlendMode, MatteSpec};
 use crate::retime::{Sampling, TimeMap};
 use crate::transform::TransformSpec;
 use serde::{Deserialize, Serialize};
@@ -266,6 +267,10 @@ pub struct Track {
     /// The audio bus carrying this track's clips' linked audio.
     #[serde(default, skip_serializing_if = "BusSpec::is_default")]
     pub audio: BusSpec,
+    /// Track matte: this track's picture is cut out by the track above
+    /// (alpha / luma, or inverted), and that track is not composited itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matte: Option<MatteSpec>,
     pub clips: Vec<Clip>,
 }
 
@@ -301,6 +306,10 @@ pub struct Clip {
     /// Source frame sampling when retimed: `nearest` (default) or `frame_blend`.
     #[serde(default, skip_serializing_if = "Sampling::is_default")]
     pub sampling: Sampling,
+    /// How this clip's track composites onto the tracks below while the clip
+    /// is active (see [`crate::blend`]).
+    #[serde(default, skip_serializing_if = "BlendMode::is_normal")]
+    pub blend_mode: BlendMode,
     /// Linked audio (used if the source has an audio stream).
     #[serde(default, skip_serializing_if = "ClipAudio::is_default")]
     pub audio: ClipAudio,
@@ -425,6 +434,19 @@ impl Timeline {
         );
         ensure!(!self.tracks.is_empty(), "timeline has no tracks");
         for (ti, track) in self.tracks.iter().enumerate() {
+            if track.matte.is_some() {
+                ensure!(
+                    ti + 1 < self.tracks.len(),
+                    "track {ti} ({:?}): a track matte needs a video track above it (the matte source)",
+                    track.name
+                );
+                ensure!(
+                    self.tracks[ti + 1].matte.is_none(),
+                    "track {} ({:?}) is the matte for the track below and cannot have a matte itself",
+                    ti + 1,
+                    self.tracks[ti + 1].name
+                );
+            }
             let mut sorted: Vec<&Clip> = track.clips.iter().collect();
             sorted.sort_by_key(|c| c.start);
             for c in &sorted {
