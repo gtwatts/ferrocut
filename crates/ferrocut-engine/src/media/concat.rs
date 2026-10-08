@@ -15,11 +15,40 @@ use ffmpeg_next::{codec, encoder, format, media};
 use super::encode::{pts_to_frame, set_bitexact};
 use super::{init, to_core};
 
-/// The audio master to mux next to the video, one buffer per chunk.
+/// Where the muxer gets the audio master: interleaved stereo f32 samples
+/// `[s0, s1)`, requested in increasing order.
+pub trait AudioFeed {
+    fn read(&mut self, s0: i64, s1: i64) -> anyhow::Result<Vec<f32>>;
+}
+
+/// An in-memory master starting at sample 0.
+pub struct StereoFeed<'a>(pub &'a ferrocut_audio::Stereo);
+
+impl AudioFeed for StereoFeed<'_> {
+    fn read(&mut self, s0: i64, s1: i64) -> anyhow::Result<Vec<f32>> {
+        ensure!(
+            0 <= s0 && s0 <= s1 && s1 as usize <= self.0.len(),
+            "audio {s0}..{s1} outside the buffer"
+        );
+        let mut v = Vec::with_capacity((s1 - s0) as usize * 2);
+        for i in s0 as usize..s1 as usize {
+            v.push(self.0.l[i]);
+            v.push(self.0.r[i]);
+        }
+        Ok(v)
+    }
+}
+
+impl AudioFeed for crate::mixdown::FinalReader<'_> {
+    fn read(&mut self, s0: i64, s1: i64) -> anyhow::Result<Vec<f32>> {
+        crate::mixdown::FinalReader::read(self, s0, s1)
+    }
+}
+
+/// The audio master to mux next to the video.
 pub struct ConcatAudio<'a> {
     pub rate: u32,
-    /// Interleaved stereo f32 per chunk (`chunks[i]` starts at chunk i's first frame).
-    pub chunks: &'a [ferrocut_audio::Stereo],
+    pub feed: &'a mut dyn AudioFeed,
     /// Sample index of output frame `i`'s start (exact, see `audio::frame_sample`).
     pub frame_sample: &'a (dyn Fn(i64) -> i64 + Sync),
     /// Total samples (clamps the last frame's packet).
@@ -34,6 +63,8 @@ pub struct ConcatStats {
     pub video_blake3: String,
     /// blake3 over the PCM payloads in order (interleaved f32le samples).
     pub audio_blake3: Option<String>,
+    /// The same per input chunk (that chunk's frames' samples).
+    pub chunk_audio_blake3: Vec<String>,
 }
 
 /// Add a `pcm_f32le` stereo stream at `rate` Hz.
@@ -65,16 +96,13 @@ pub fn concat(
     start_frames: &[i64],
     fps: FrameRate,
     out: &Path,
-    audio: Option<&ConcatAudio<'_>>,
+    mut audio: Option<&mut ConcatAudio<'_>>,
 ) -> anyhow::Result<ConcatStats> {
     init();
     ensure!(
         !chunks.is_empty() && chunks.len() == start_frames.len(),
         "bad concat input"
     );
-    if let Some(a) = audio {
-        ensure!(a.chunks.len() == chunks.len(), "one audio buffer per chunk");
-    }
     let mut octx = format::output_as(out, "matroska")
         .with_context(|| format!("creating {}", out.display()))?;
     set_bitexact(&mut octx);
@@ -95,6 +123,7 @@ pub fn concat(
     }
     drop(first);
     let audio_idx = audio
+        .as_ref()
         .map(|a| add_pcm_stream(&mut octx, a.rate))
         .transpose()?;
     octx.write_header()?;
@@ -103,7 +132,8 @@ pub fn concat(
     let mut stats = ConcatStats::default();
     let mut vh = blake3::Hasher::new();
     let mut ah = blake3::Hasher::new();
-    for (ci, (path, &start)) in chunks.iter().zip(start_frames).enumerate() {
+    for (path, &start) in chunks.iter().zip(start_frames) {
+        let mut ch = blake3::Hasher::new();
         let mut ictx =
             format::input(path).with_context(|| format!("opening chunk {}", path.display()))?;
         let (idx, ist_tb) = {
@@ -138,21 +168,23 @@ pub fn concat(
             vh.update(pkt.data().unwrap_or_default());
             pkt.write_interleaved(&mut octx)?;
             stats.video_packets += 1;
-            if let (Some(a), Some(ai), Some(atb)) = (audio, audio_idx, ast_tb) {
-                // This frame's samples, relative to the chunk's first sample.
-                let c0 = (a.frame_sample)(start);
+            if let (Some(a), Some(ai), Some(atb)) = (audio.as_deref_mut(), audio_idx, ast_tb) {
+                // This frame's samples.
                 let s0 = (a.frame_sample)(g).min(a.total);
                 let s1 = (a.frame_sample)(g + 1).min(a.total);
                 if s1 > s0 {
-                    let buf = &a.chunks[ci];
-                    let (i0, i1) = ((s0 - c0) as usize, (s1 - c0) as usize);
-                    ensure!(i1 <= buf.len(), "chunk {ci}: audio buffer too short");
-                    let mut data = Vec::with_capacity((i1 - i0) * 8);
-                    for i in i0..i1 {
-                        data.extend_from_slice(&buf.l[i].to_le_bytes());
-                        data.extend_from_slice(&buf.r[i].to_le_bytes());
+                    let pcm = a.feed.read(s0, s1)?;
+                    ensure!(
+                        pcm.len() == (s1 - s0) as usize * 2,
+                        "audio feed returned {} values for {s0}..{s1}",
+                        pcm.len()
+                    );
+                    let mut data = Vec::with_capacity(pcm.len() * 4);
+                    for v in &pcm {
+                        data.extend_from_slice(&v.to_le_bytes());
                     }
                     ah.update(&data);
+                    ch.update(&data);
                     let mut apkt = ffmpeg_next::Packet::copy(&data);
                     let rtb = ferrocut_core::Rational::new(1, a.rate as i64);
                     let at = |s: i64| RationalTime::from_pts(s, rtb).to_pts(to_core(atb));
@@ -167,10 +199,16 @@ pub fn concat(
                 }
             }
         }
+        stats
+            .chunk_audio_blake3
+            .push(ch.finalize().to_hex().to_string());
     }
     octx.write_trailer()?;
     stats.video_blake3 = vh.finalize().to_hex().to_string();
     stats.audio_blake3 = audio.map(|_| ah.finalize().to_hex().to_string());
+    if audio_idx.is_none() {
+        stats.chunk_audio_blake3.clear();
+    }
     Ok(stats)
 }
 

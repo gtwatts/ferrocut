@@ -3,6 +3,8 @@
 use ferrocut_types::{Animatable, Rational};
 use serde::{Deserialize, Serialize};
 
+use crate::effects::Effect;
+
 /// Decoded source audio at the program rate: one (mono) or two (L, R) planes.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SourceAudio {
@@ -90,6 +92,9 @@ pub struct ClipProg {
     /// with a constant-power law (-3 dB at center); stereo sources balance.
     pub pan: Animatable,
     pub fades: Vec<Fade>,
+    /// Clip effects, applied in order after gain, fades and pan (keyframes
+    /// in clip-local time; state starts fresh at `start`).
+    pub effects: Vec<Effect>,
 }
 
 /// Sidechain ducking of a track by the sum of `keys` (other tracks' buses).
@@ -115,6 +120,9 @@ pub struct TrackProg {
     pub pan: Animatable,
     pub mute: bool,
     pub duck: Option<Duck>,
+    /// Track effects, applied in order to the summed clips before track gain
+    /// and balance (pre-fader; keyframes in timeline time).
+    pub effects: Vec<Effect>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -183,7 +191,11 @@ impl Program {
                     ));
                 }
             }
+            crate::effects::validate(&t.effects, self.rate)
+                .map_err(|e| format!("track {:?}: {e}", t.name))?;
             for c in &t.clips {
+                crate::effects::validate(&c.effects, self.rate)
+                    .map_err(|e| format!("clip {:?}: {e}", c.id))?;
                 if c.source >= n_sources {
                     return Err(format!("clip {:?}: bad source index", c.id));
                 }

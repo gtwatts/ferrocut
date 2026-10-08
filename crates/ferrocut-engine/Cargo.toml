@@ -18,6 +18,10 @@ ferrocut-audio.workspace = true
 ferrocut-colorspace = { path = "../ferrocut-colorspace" }
 # SeePlus's H.264/MP4 delivery (runtime-loaded Cisco OpenH264; never vendored).
 ferrocut-deliver = { path = "../ferrocut-deliver" }
+# SeePlus's perception crate (never depends on the engine): the audio
+# mixdown measures loudness with its block-energy chunk records, so the
+# render report and `ferrocut-perceive check` share one format and cache.
+ferrocut-perceive = { path = "../ferrocut-perceive" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 blake3 = "1.8"

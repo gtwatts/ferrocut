@@ -209,6 +209,20 @@ fn op(name: &str, desc: &str, props: Value, required: &[&str], example: Value) -
     })
 }
 
+/// One audio effect (see `ferrocut_engine::audio_fx`).
+pub fn effect() -> Value {
+    let types: Vec<&str> = ferrocut_engine::audio_fx::TYPES
+        .iter()
+        .map(|(t, _)| *t)
+        .collect();
+    json!({
+        "type": "object",
+        "description": "{type, ...params}",
+        "required": ["type"],
+        "properties": { "type": { "enum": types } }
+    })
+}
+
 fn clip_id() -> Value {
     json!({ "type": "string", "minLength": 1, "description": "clip id" })
 }
@@ -323,6 +337,42 @@ pub fn edit_op() -> Value {
             json!({ "op": "unnest", "clip": "intro" }),
         ),
         op(
+            "add_effect",
+            "Insert an audio effect on a clip (`clip`: after its gain/fades/pan, keyframes clip-local) or a track bus (`track`: on the summed clips before bus gain/balance, keyframes in timeline time) at `index` (default: end of the chain). Types and params (defaults in parentheses; every numeric param a rational or {keyframes}): eq {bands: [{kind: peak|low_shelf|high_shelf, freq_hz, gain_db (0), q (0.7071)}]}; high_pass / low_pass {freq_hz, q (0.7071)}; compressor {threshold_db (-20), ratio (4), attack_ms (10), release_ms (100), knee_db (6), makeup_db (0)}; limiter {ceiling_db (-1), release_ms (50)}; gate {threshold_db (-50), range_db (40), attack_ms (1), hold_ms (50), release_ms (100)}.",
+            json!({
+                "clip": clip_id(),
+                "track": { "type": "string", "minLength": 1, "description": "track name (its audio bus)" },
+                "effect": effect(),
+                "index": { "type": "integer", "minimum": 0 }
+            }),
+            &["effect"],
+            json!({ "op": "add_effect", "clip": "interview", "effect": { "type": "compressor", "threshold_db": "-24", "ratio": "3" } }),
+        ),
+        op(
+            "set_effect_param",
+            "Set one parameter of effect `index` in a clip's or track's audio effect chain: `param` is a dotted path inside the effect (threshold_db, bands.1.gain_db); `value` a rational, {keyframes} or null (back to the default).",
+            json!({
+                "clip": clip_id(),
+                "track": { "type": "string", "minLength": 1, "description": "track name (its audio bus)" },
+                "index": { "type": "integer", "minimum": 0 },
+                "param": { "type": "string", "minLength": 1 },
+                "value": { "anyOf": [animatable("parameter value"), { "type": "null" }] }
+            }),
+            &["index", "param", "value"],
+            json!({ "op": "set_effect_param", "track": "Music", "index": 0, "param": "bands.0.gain_db", "value": "-3" }),
+        ),
+        op(
+            "remove_effect",
+            "Remove effect `index` from a clip's or track's audio effect chain.",
+            json!({
+                "clip": clip_id(),
+                "track": { "type": "string", "minLength": 1, "description": "track name (its audio bus)" },
+                "index": { "type": "integer", "minimum": 0 }
+            }),
+            &["index"],
+            json!({ "op": "remove_effect", "clip": "interview", "index": 0 }),
+        ),
+        op(
             "add_track",
             "Add an empty track: kind video (index 0 = bottom layer; default: on top) or audio (default: last). Names must be unique across all tracks.",
             json!({
@@ -414,6 +464,7 @@ fn param_value() -> Value {
             { "type": "array", "minItems": 2, "maxItems": 2, "items": animatable("component") },
             { "type": "boolean" },
             { "type": "object" },
+            { "type": "array", "items": { "type": "object" }, "description": "audio.effects / bus.effects chain" },
             { "type": "null" }
         ]
     })

@@ -2,10 +2,11 @@
 
 use serde::Serialize;
 
-use crate::dynamics::{duck_gains, limiter_gains};
+use crate::dynamics::limiter_gains;
 use crate::loudness::{Measurement, measure};
-use crate::mix::{Stereo, finish, master_sum, render_track};
+use crate::mix::{Stereo, finish, master_gains};
 use crate::program::{Program, SourceAudio};
+use crate::stream::{MixState, premix};
 use crate::{db_to_gain, gain_to_db};
 
 /// Everything stateful, precomputed per sample over the whole program.
@@ -17,6 +18,9 @@ pub struct Control {
     pub norm_gain: f64,
     /// True-peak limiter gain per program sample (only with a loudness target).
     pub limiter: Option<Vec<f32>>,
+    /// The whole program's master bus sum before master gain (see
+    /// [`crate::stream::premix`]).
+    pub premix: Stereo,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -49,37 +53,45 @@ pub const MAX_PASSES: u32 = 8;
 /// Stop once the measured loudness is this close to the target (LU).
 pub const LOUDNESS_TOLERANCE_LU: f64 = 0.02;
 
-/// Run the analysis pass. Deterministic and sequential.
+/// Duck statistics accumulated over ranges: (min gain, samples below -1 dB).
+pub fn duck_stats(g: &[f32]) -> (f32, u64) {
+    let thr = db_to_gain(-1.0) as f32;
+    (
+        g.iter().copied().fold(1.0f32, f32::min),
+        g.iter().filter(|&&x| x < thr).count() as u64,
+    )
+}
+
+/// The report entry of a ducked track from its accumulated [`duck_stats`].
+pub fn duck_report(track: &str, min: f32, below: u64, total: i64) -> DuckReport {
+    DuckReport {
+        track: track.to_string(),
+        max_reduction_db: -gain_to_db(min as f64),
+        ducked_fraction: below as f64 / total.max(1) as f64,
+    }
+}
+
+/// Run the analysis pass over the whole program in memory (the engine's
+/// renderer streams the same stages per chunk instead, see
+/// [`crate::stream`]). Deterministic and sequential.
 pub fn analyze(p: &Program, sources: &[SourceAudio]) -> Result<(Control, AnalysisReport), String> {
     p.validate(sources.len())?;
     let total = p.total.max(0);
     let mut report = AnalysisReport::default();
-    // 1. Sidechain duck curves from the (un-ducked) key track buses.
-    let mut duck: Vec<Option<Vec<f32>>> = vec![None; p.tracks.len()];
-    for (ti, t) in p.tracks.iter().enumerate() {
-        let Some(d) = &t.duck else { continue };
-        let mut key = Stereo::silence(total as usize);
-        for &k in &d.keys {
-            let b = render_track(p, sources, k, 0, total);
-            for i in 0..key.len() {
-                key.l[i] += b.l[i];
-                key.r[i] += b.r[i];
-            }
+    // 1. All buses, sidechain duck curves (from the un-ducked key buses) and
+    //    the master sum, in one sequential pass.
+    let pm = premix(p, sources, 0, total, &mut MixState::initial(p));
+    for (t, g) in p.tracks.iter().zip(&pm.duck) {
+        if let Some(g) = g {
+            let (min, below) = duck_stats(g);
+            report.ducks.push(duck_report(&t.name, min, below, total));
         }
-        let g = duck_gains(&key.l, &key.r, d, p.rate);
-        let min = g.iter().copied().fold(1.0f32, f32::min) as f64;
-        let thr = db_to_gain(-1.0) as f32;
-        report.ducks.push(DuckReport {
-            track: t.name.clone(),
-            max_reduction_db: -gain_to_db(min),
-            ducked_fraction: g.iter().filter(|&&x| x < thr).count() as f64 / g.len().max(1) as f64,
-        });
-        duck[ti] = Some(g);
     }
     let mut ctl = Control {
-        duck,
+        duck: pm.duck,
         norm_gain: 1.0,
         limiter: None,
+        premix: pm.sum,
     };
     let Some(target) = p.loudness else {
         return Ok((ctl, report));
@@ -88,7 +100,8 @@ pub fn analyze(p: &Program, sources: &[SourceAudio]) -> Result<(Control, Analysi
     report.true_peak_ceiling_dbtp = Some(target.true_peak_dbtp);
     // 2. Two-pass normalization: measure, then constant gain + true-peak limiter,
     //    re-measured and corrected until within tolerance.
-    let (sum, mg) = master_sum(p, sources, &ctl.duck, 0, total);
+    let mg = master_gains(p, 0, total);
+    let sum = ctl.premix.clone();
     let normalized = |norm: f64| -> Stereo {
         Stereo {
             l: sum

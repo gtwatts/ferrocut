@@ -725,7 +725,8 @@ pub fn render(
     std::fs::create_dir_all(&chunk_dir)
         .with_context(|| format!("creating {}", chunk_dir.display()))?;
     let plans = plan(tl, c);
-    let audio_plan = crate::audio::prepare(tl).context("preparing audio")?;
+    let audio_plan =
+        crate::audio::prepare(tl, &opts.cache_dir, opts.force).context("preparing audio")?;
     let gpu0 = gpu.get();
     let pool_before = gpu0.pool_stats();
     let recreations_before = gpu.recreations();
@@ -822,21 +823,12 @@ pub fn render(
         }
     };
 
-    // Audio: each chunk's exact sample range, mixed statelessly in parallel.
+    // Audio: mixed, measured and limited per audio chunk by `prepare` (see
+    // `crate::mixdown`); the muxer streams the final chunks from disk.
     check_cancel(&opts.cancel, opts.deadline)?;
     if let Some(pc) = &progress {
         pc.stage(RenderStage::Audio);
     }
-    let t_audio = Instant::now();
-    let audio_chunks: Option<Vec<ferrocut_audio::Stereo>> = audio_plan.as_ref().map(|a| {
-        pool.install(|| {
-            plans
-                .par_iter()
-                .map(|p| a.render_frames(tl, p.start_frame, p.frames))
-                .collect()
-        })
-    });
-    let audio_render_ms = t_audio.elapsed().as_millis();
 
     check_cancel(&opts.cancel, opts.deadline)?;
     if let Some(pc) = &progress {
@@ -851,10 +843,12 @@ pub fn render(
     }
     let tmp_out = out.with_extension("partial.mkv");
     let fs = |i: i64| frame_sample(tl, i);
-    let concat_audio = match (&audio_plan, &audio_chunks) {
-        (Some(a), Some(ch)) => Some(ConcatAudio {
+    let t_audio = Instant::now();
+    let mut feed = audio_plan.as_ref().map(|a| a.reader());
+    let mut concat_audio = match (&audio_plan, feed.as_mut()) {
+        (Some(a), Some(feed)) => Some(ConcatAudio {
             rate: a.program.rate,
-            chunks: ch,
+            feed,
             frame_sample: &fs,
             total: a.program.total,
         }),
@@ -865,8 +859,9 @@ pub fn render(
         &starts,
         tl.output.fps,
         &tmp_out,
-        concat_audio.as_ref(),
+        concat_audio.as_mut(),
     )?;
+    let audio_render_ms = t_audio.elapsed().as_millis();
     std::fs::rename(&tmp_out, out)?;
     let concat_ms = t_concat.elapsed().as_millis();
 
@@ -887,11 +882,9 @@ pub fn render(
             status,
             file_blake3: file_blake3(path)?,
             render_ms: ms[p.index].unwrap_or(0),
-            audio_blake3: audio_chunks.as_ref().map(|ch| {
-                blake3::hash(&ch[p.index].to_f32le_interleaved())
-                    .to_hex()
-                    .to_string()
-            }),
+            audio_blake3: audio_plan
+                .as_ref()
+                .and_then(|_| stats.chunk_audio_blake3.get(p.index).cloned()),
             audio_samples: audio_plan.as_ref().map(|a| {
                 let total = a.program.total;
                 [
@@ -941,25 +934,22 @@ pub fn render(
         chunk_dir: chunk_dir.clone(),
         final_blake3: file_blake3(out)?,
         video_blake3: stats.video_blake3,
-        audio: match (audio_plan, audio_chunks) {
-            (Some(a), Some(ch)) => {
-                let mut all = ferrocut_audio::Stereo::default();
-                ch.iter().for_each(|c| all.append(c));
-                Some(AudioReport {
-                    codec: "pcm_f32le",
-                    sample_rate: a.program.rate,
-                    channels: crate::audio::CHANNELS,
-                    samples: all.len() as i64,
-                    output: ferrocut_audio::measure(&all.l, &all.r, a.program.rate).ok(),
-                    sources: a.info,
-                    analysis: a.analysis,
-                    blake3: stats.audio_blake3.unwrap_or_default(),
-                    decode_ms: a.decode_ms,
-                    analysis_ms: a.analysis_ms,
-                    render_ms: audio_render_ms,
-                })
-            }
-            _ => None,
+        audio: match audio_plan {
+            Some(a) => Some(AudioReport {
+                codec: "pcm_f32le",
+                sample_rate: a.program.rate,
+                channels: crate::audio::CHANNELS,
+                samples: a.program.total,
+                output: Some(a.output),
+                cache: a.cache,
+                sources: a.info,
+                analysis: a.analysis,
+                blake3: stats.audio_blake3.unwrap_or_default(),
+                decode_ms: a.decode_ms,
+                analysis_ms: a.analysis_ms,
+                render_ms: audio_render_ms,
+            }),
+            None => None,
         },
         deliver: None,
     })

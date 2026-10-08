@@ -47,11 +47,12 @@ macro_rules! clip_audio_params {
             ParamSpec::fixed("audio.preserve_pitch", Bool, "", "false", "keep pitch when the clip is retimed (WSOLA time-stretch); false = varispeed"),
             s("speed", ClipLocal, "x", "1", "playback speed: 2 = twice as fast, -1 = reverse, 0 = freeze; keyframes = speed ramp (set_speed keeps the source range and changes the duration; setting this directly does not)").range(-100.0, 100.0),
             s("time_remap", ClipLocal, "s", "null", "AE time remap: keys map clip-local time to source seconds; overrides speed (must be 1); null removes it"),
+            ParamSpec::fixed("audio.effects", Object, "", "[]", "clip audio effects in order, after gain/fades/pan: [{type: eq | high_pass | low_pass | compressor | limiter | gate, ...params}], every numeric param a rational or keyframes (clip-local); prefer add_effect / set_effect_param / remove_effect"),
         ]
     };
 }
 
-const CA: [ParamSpec; 9] = clip_audio_params!();
+const CA: [ParamSpec; 10] = clip_audio_params!();
 
 /// Parameters of a clip on a video track.
 pub const VIDEO_CLIP: &[ParamSpec] = &[
@@ -124,11 +125,12 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
     CA[6],
     CA[7],
     CA[8],
+    CA[9],
 ];
 
 /// Parameters of a clip on an audio track.
 pub const AUDIO_CLIP: &[ParamSpec] = &[
-    CA[0], CA[1], CA[2], CA[3], CA[4], CA[5], CA[6], CA[7], CA[8],
+    CA[0], CA[1], CA[2], CA[3], CA[4], CA[5], CA[6], CA[7], CA[8], CA[9],
 ];
 
 /// Parameters of a track's audio bus (video tracks' linked audio, or audio tracks).
@@ -143,6 +145,13 @@ pub const TRACK: &[ParamSpec] = &[
     s("bus.gain_db", Tl, "dB", "0", "track bus gain"),
     s("bus.pan", Tl, "", "0", "track balance -1 .. 1").range(-1.0, 1.0),
     ParamSpec::fixed("bus.mute", Bool, "", "false", "mute the track's audio"),
+    ParamSpec::fixed(
+        "bus.effects",
+        Object,
+        "",
+        "[]",
+        "track audio effects in order on the summed clips, before bus gain/balance (pre-fader): [{type: eq | high_pass | low_pass | compressor | limiter | gate, ...params}], keyframes in timeline time; prefer add_effect / set_effect_param / remove_effect",
+    ),
     ParamSpec::fixed(
         "bus.duck",
         Object,
@@ -309,6 +318,7 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
         }
         (Bool, _) => v.is_boolean(),
         (Time, _) => v.is_null() || v.is_string() || v.is_i64() || v.is_u64(),
+        (Object, _) if spec.name.ends_with("effects") => v.is_null() || v.is_array(),
         (Object, _) => v.is_null() || v.is_object(),
     };
     ensure!(
@@ -322,6 +332,7 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
             (Vec2, None) => "[x, y] (each a rational or {\"keyframes\": [...]})",
             (ScalarOrVec2, None) => "a rational, {\"keyframes\": [...]} or [x, y]",
             (Bool, _) => "true or false",
+            (Object, _) if spec.name.ends_with("effects") => "an array of effect objects or null",
             (Time, _) => "a rational time in seconds or null",
             (Choice, _) => "one of the strings listed in the parameter's doc",
             _ => "an object or null",

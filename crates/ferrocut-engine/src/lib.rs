@@ -2,6 +2,7 @@
 //! FFmpeg I/O and the wgpu compositor. Owned by Rusty.
 
 pub mod audio;
+pub mod audio_fx;
 pub mod blend;
 pub mod comp;
 pub mod compile;
@@ -12,6 +13,7 @@ pub mod edit;
 pub mod graph;
 pub mod index;
 pub mod media;
+pub mod mixdown;
 pub mod nodes;
 pub mod params;
 pub mod perceive;

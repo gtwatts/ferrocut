@@ -60,6 +60,9 @@ fn every_edit_op_has_a_strict_schema_whose_example_parses() {
         "freeze_frame",
         "nest",
         "unnest",
+        "add_effect",
+        "set_effect_param",
+        "remove_effect",
     ]
     .into_iter()
     .map(String::from)

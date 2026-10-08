@@ -15,14 +15,16 @@ use std::time::Instant;
 
 use anyhow::{Context as _, bail};
 use ferrocut_audio::{
-    AnalysisReport, ClipProg, Control, Duck, Fade, LoudnessTarget, Measurement, Program,
-    SourceAudio, Stereo, TrackProg, analyze, render_range, sample_at,
+    AnalysisReport, ClipProg, Duck, Fade, LoudnessTarget, Measurement, Program, SourceAudio,
+    Stereo, TrackProg, analyze, render_range, sample_at,
 };
 use ferrocut_core::{Rational, RationalTime};
 use serde::Serialize;
 
+use crate::audio_fx::to_effects;
 use crate::comp::{CompStack, is_comp};
-use crate::media::audio::decode_audio;
+use crate::media::audio::{AUDIO_DECODE_VERSION, decode_audio};
+use crate::mixdown::{self, CacheStats, DiskSrc, FinalChunk, FinalReader, PcmMeta, Store};
 use crate::retime::TimeMap;
 use crate::timeline::{BusSpec, ClipAudio, Timeline};
 use ferrocut_audio::retime::StretchBackend;
@@ -39,13 +41,17 @@ pub struct SourceInfo {
     pub samples: usize,
 }
 
-/// A resolved, decoded and analyzed timeline mix.
+/// A resolved, mixed, normalized and limited timeline mix: the final
+/// chunks on disk (see [`crate::mixdown`]).
 pub struct AudioPlan {
     pub program: Program,
-    pub sources: Vec<SourceAudio>,
+    pub sources: Vec<DiskSrc>,
     pub info: Vec<SourceInfo>,
-    pub control: Control,
     pub analysis: AnalysisReport,
+    /// Measured from the final chunks' block-energy records.
+    pub output: Measurement,
+    pub finals: Vec<FinalChunk>,
+    pub cache: CacheStats,
     pub decode_ms: u128,
     pub analysis_ms: u128,
 }
@@ -58,8 +64,11 @@ pub struct AudioReport {
     pub samples: i64,
     pub sources: Vec<SourceInfo>,
     pub analysis: AnalysisReport,
-    /// Measured on the rendered (chunked) master.
+    /// Measured on the rendered master (assembled block-energy records of
+    /// the final chunks, SeePlus's format: what ferrocut-perceive measures).
     pub output: Option<Measurement>,
+    /// Audio chunk cache counters (premix / final chunks, loudness records).
+    pub cache: CacheStats,
     /// blake3 of the master's interleaved f32le samples (= the PCM stream bytes).
     pub blake3: String,
     pub decode_ms: u128,
@@ -87,48 +96,192 @@ fn rat(r: Rational) -> f64 {
 /// A resolved program, its decoded sources and their paths.
 pub type Resolved = (Program, Vec<SourceAudio>, Vec<PathBuf>);
 
+/// Where [`resolve_with`] gets source audio: decoded media, nested comps'
+/// mixes and retimed derivations.
+pub trait AudioLoader {
+    type Src;
+    /// A media file's audio (`None`: no audio stream).
+    fn media(&mut self, path: &Path) -> anyhow::Result<Option<Self::Src>>;
+    /// The mix of a nested comp's resolved program (no loudness target).
+    fn comp(&mut self, program: Program, sources: Vec<Self::Src>) -> anyhow::Result<Self::Src>;
+    /// `base` rendered along source `positions` (one per output sample).
+    fn retimed(
+        &mut self,
+        base: &Self::Src,
+        positions: &[f64],
+        rate: u32,
+        backend: StretchBackend,
+    ) -> anyhow::Result<Self::Src>;
+    fn is_empty(&self, src: &Self::Src) -> bool;
+}
+
+/// In-memory sources (tests, and the reference for the streaming path).
+struct MemLoader<'a> {
+    load: &'a mut dyn FnMut(&Path) -> anyhow::Result<Option<SourceAudio>>,
+}
+
+impl AudioLoader for MemLoader<'_> {
+    type Src = SourceAudio;
+    fn media(&mut self, path: &Path) -> anyhow::Result<Option<SourceAudio>> {
+        (self.load)(path)
+    }
+    /// The comp's program analyzed (ducking) and rendered whole.
+    fn comp(&mut self, program: Program, sources: Vec<SourceAudio>) -> anyhow::Result<SourceAudio> {
+        let (control, _) = analyze(&program, &sources).map_err(anyhow::Error::msg)?;
+        let mix = render_range(&program, &sources, &control, 0, program.total);
+        Ok(SourceAudio {
+            planes: vec![mix.l, mix.r],
+        })
+    }
+    fn retimed(
+        &mut self,
+        base: &SourceAudio,
+        positions: &[f64],
+        rate: u32,
+        backend: StretchBackend,
+    ) -> anyhow::Result<SourceAudio> {
+        Ok(ferrocut_audio::retime::render(
+            base, positions, rate, backend,
+        ))
+    }
+    fn is_empty(&self, src: &SourceAudio) -> bool {
+        src.is_empty()
+    }
+}
+
 /// Build the program. `load` returns a source's audio (`None`: no audio stream).
 /// Returns `None` if nothing on the timeline has audio.
 pub fn resolve(
     tl: &Timeline,
     load: &mut dyn FnMut(&Path) -> anyhow::Result<Option<SourceAudio>>,
 ) -> anyhow::Result<Option<Resolved>> {
-    resolve_in(tl, load, &mut CompStack::new())
+    resolve_with(tl, &mut MemLoader { load })
 }
 
-/// The mix of nested comp `inner` at `rate` as a stereo source: its program
-/// without loudness normalization (the outermost timeline normalizes),
-/// analyzed (ducking) and rendered whole.
-fn comp_audio(
-    inner: &Timeline,
-    rate: u32,
-    load: &mut dyn FnMut(&Path) -> anyhow::Result<Option<SourceAudio>>,
-    stack: &mut CompStack,
-) -> anyhow::Result<Option<SourceAudio>> {
-    let mut inner = inner.clone();
-    inner.audio.sample_rate = rate;
-    inner.audio.loudness = None;
-    let Some((program, sources, _)) = resolve_in(&inner, load, stack)? else {
-        return Ok(None);
-    };
-    let (control, _) = analyze(&program, &sources).map_err(anyhow::Error::msg)?;
-    let mix = render_range(&program, &sources, &control, 0, program.total);
-    Ok(Some(SourceAudio {
-        planes: vec![mix.l, mix.r],
-    }))
-}
-
-fn resolve_in(
+/// [`resolve`] with any [`AudioLoader`].
+#[allow(clippy::type_complexity)]
+pub fn resolve_with<L: AudioLoader>(
     tl: &Timeline,
-    load: &mut dyn FnMut(&Path) -> anyhow::Result<Option<SourceAudio>>,
+    loader: &mut L,
+) -> anyhow::Result<Option<(Program, Vec<L::Src>, Vec<PathBuf>)>> {
+    resolve_in(tl, loader, &mut CompStack::new())
+}
+
+/// Disk-backed sources in the mixdown cache: decoded media keyed by the
+/// file's blake3 (like video sources), comps and retimed audio by their
+/// inputs' keys.
+pub struct DiskLoader<'a> {
+    pub store: &'a Store,
+    pub rate: u32,
+    pub info: Vec<SourceInfo>,
+}
+
+fn file_blake3(path: &Path) -> anyhow::Result<String> {
+    use std::sync::Mutex;
+    type Key = (PathBuf, u64, std::time::SystemTime);
+    static MEMO: Mutex<Option<HashMap<Key, String>>> = Mutex::new(None);
+    let md = std::fs::metadata(path).with_context(|| format!("reading {}", path.display()))?;
+    let key = (path.to_path_buf(), md.len(), md.modified()?);
+    if let Some(h) = MEMO.lock().unwrap().get_or_insert_default().get(&key) {
+        return Ok(h.clone());
+    }
+    let mut h = blake3::Hasher::new();
+    h.update_reader(std::fs::File::open(path)?)?;
+    let h = h.finalize().to_hex().to_string();
+    MEMO.lock()
+        .unwrap()
+        .get_or_insert_default()
+        .insert(key, h.clone());
+    Ok(h)
+}
+
+impl AudioLoader for DiskLoader<'_> {
+    type Src = DiskSrc;
+    fn media(&mut self, path: &Path) -> anyhow::Result<Option<DiskSrc>> {
+        let mut h = blake3::Hasher::new();
+        h.update(mixdown::MIXDOWN_VERSION.as_bytes());
+        h.update(b"\0media\0");
+        h.update(AUDIO_DECODE_VERSION.as_bytes());
+        h.update(file_blake3(path)?.as_bytes());
+        h.update(&self.rate.to_le_bytes());
+        let key = h.finalize().to_hex().to_string();
+        let file = self.store.source_path(&key);
+        let (src, meta) = match DiskSrc::open(&key, &file).filter(|_| !self.store.force) {
+            Some(x) => x,
+            None => {
+                let Some(d) = decode_audio(path, self.rate)? else {
+                    return Ok(None);
+                };
+                let meta = PcmMeta {
+                    codec: d.codec.clone(),
+                    source_rate: d.source_rate,
+                    source_channels: d.source_channels,
+                    ..Default::default()
+                };
+                let src = DiskSrc::write(&key, &file, &d.audio, meta.clone())?;
+                (src, meta)
+            }
+        };
+        self.info.push(SourceInfo {
+            path: path.to_path_buf(),
+            codec: meta.codec,
+            source_rate: meta.source_rate,
+            source_channels: meta.source_channels,
+            samples: src.len as usize,
+        });
+        Ok(Some(src))
+    }
+    fn comp(&mut self, program: Program, sources: Vec<DiskSrc>) -> anyhow::Result<DiskSrc> {
+        let key = mixdown::program_key(&program, &sources);
+        let file = self.store.source_path(&key);
+        match DiskSrc::open(&key, &file).filter(|_| !self.store.force) {
+            Some((s, _)) => Ok(s),
+            None => mixdown::write_unnormalized(&program, &sources, &key, &file),
+        }
+    }
+    fn retimed(
+        &mut self,
+        base: &DiskSrc,
+        positions: &[f64],
+        rate: u32,
+        backend: StretchBackend,
+    ) -> anyhow::Result<DiskSrc> {
+        let mut h = blake3::Hasher::new();
+        h.update(mixdown::MIXDOWN_VERSION.as_bytes());
+        h.update(b"\0retime\0");
+        h.update(ferrocut_audio::VERSION.as_bytes());
+        h.update(base.key.as_bytes());
+        h.update(format!("{backend:?}").as_bytes());
+        h.update(&rate.to_le_bytes());
+        for p in positions {
+            h.update(&p.to_bits().to_le_bytes());
+        }
+        let key = h.finalize().to_hex().to_string();
+        let file = self.store.source_path(&key);
+        if let Some((s, _)) = DiskSrc::open(&key, &file).filter(|_| !self.store.force) {
+            return Ok(s);
+        }
+        let derived = ferrocut_audio::retime::render(&base.load()?, positions, rate, backend);
+        DiskSrc::write(&key, &file, &derived, PcmMeta::default())
+    }
+    fn is_empty(&self, src: &DiskSrc) -> bool {
+        src.len == 0
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn resolve_in<L: AudioLoader>(
+    tl: &Timeline,
+    loader: &mut L,
     stack: &mut CompStack,
-) -> anyhow::Result<Option<Resolved>> {
+) -> anyhow::Result<Option<(Program, Vec<L::Src>, Vec<PathBuf>)>> {
     let rate = tl.audio.sample_rate;
     let s = |t: RationalTime| sample_at(t, rate);
-    let mut sources: Vec<SourceAudio> = Vec::new();
+    let mut sources: Vec<L::Src> = Vec::new();
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut index: HashMap<PathBuf, Option<usize>> = HashMap::new();
-    let mut source_of = |sources: &mut Vec<SourceAudio>,
+    let mut source_of = |loader: &mut L,
+                         sources: &mut Vec<L::Src>,
                          paths: &mut Vec<PathBuf>,
                          path: &Path|
      -> anyhow::Result<Option<usize>> {
@@ -139,14 +292,14 @@ fn resolve_in(
         let loaded = if is_comp(path) {
             let (ckey, inner) = stack.load(path)?;
             stack.push(ckey);
-            let a = comp_audio(&inner, rate, &mut *load, stack);
+            let a = comp_audio(&inner, rate, loader, stack);
             stack.pop();
             a
         } else {
-            load(path)
+            loader.media(path)
         };
         let i = match loaded.with_context(|| format!("audio of {}", path.display()))? {
-            Some(a) if !a.is_empty() => {
+            Some(a) if !loader.is_empty(&a) => {
                 sources.push(a);
                 paths.push(path.to_path_buf());
                 Some(sources.len() - 1)
@@ -212,7 +365,7 @@ fn resolve_in(
             if it.audio.mute {
                 continue;
             }
-            let Some(mut src) = source_of(&mut sources, &mut paths, it.source)? else {
+            let Some(mut src) = source_of(loader, &mut sources, &mut paths, it.source)? else {
                 if it.required {
                     bail!(
                         "clip {}: {} has no audio stream",
@@ -253,7 +406,7 @@ fn resolve_in(
                 } else {
                     StretchBackend::Varispeed
                 };
-                let derived = ferrocut_audio::retime::render(&sources[src], &pos, rate, backend);
+                let derived = loader.retimed(&sources[src], &pos, rate, backend)?;
                 sources.push(derived);
                 paths.push(it.source.to_path_buf());
                 src = sources.len() - 1;
@@ -269,6 +422,7 @@ fn resolve_in(
                 gain_db: it.audio.gain_db.clone(),
                 pan: it.audio.pan.clone(),
                 fades,
+                effects: to_effects(&it.audio.effects),
             });
             ends.push(a1);
         }
@@ -285,6 +439,7 @@ fn resolve_in(
             pan: bus.pan.clone(),
             mute: bus.mute,
             duck: None,
+            effects: to_effects(&bus.effects),
         });
     }
     if !any {
@@ -360,45 +515,75 @@ pub fn retime_positions(
         .collect()
 }
 
-/// Decode, resolve and analyze the timeline's audio (`None`: no audio).
-pub fn prepare(tl: &Timeline) -> anyhow::Result<Option<AudioPlan>> {
-    let t0 = Instant::now();
-    let rate = tl.audio.sample_rate;
-    let mut info = Vec::new();
-    let resolved = resolve(tl, &mut |p| {
-        Ok(decode_audio(p, rate)?.map(|d| {
-            info.push(SourceInfo {
-                path: p.to_path_buf(),
-                codec: d.codec,
-                source_rate: d.source_rate,
-                source_channels: d.source_channels,
-                samples: d.audio.len(),
-            });
-            d.audio
-        }))
-    })?;
-    let Some((program, sources, _paths)) = resolved else {
+/// The mix of nested comp `inner` at `rate` as a stereo source: its program
+/// without loudness normalization (the outermost timeline normalizes).
+fn comp_audio<L: AudioLoader>(
+    inner: &Timeline,
+    rate: u32,
+    loader: &mut L,
+    stack: &mut CompStack,
+) -> anyhow::Result<Option<L::Src>> {
+    let mut inner = inner.clone();
+    inner.audio.sample_rate = rate;
+    inner.audio.loudness = None;
+    let Some((program, sources, _)) = resolve_in(&inner, loader, stack)? else {
         return Ok(None);
     };
+    loader.comp(program, sources).map(Some)
+}
+
+/// Resolve the timeline's audio onto disk-backed sources and run the
+/// streaming, cached mixdown into final chunks under `cache_dir`
+/// (`None`: no audio). `force` ignores cached audio.
+pub fn prepare(tl: &Timeline, cache_dir: &Path, force: bool) -> anyhow::Result<Option<AudioPlan>> {
+    let t0 = Instant::now();
+    let store = Store::new(cache_dir, force);
+    let mut loader = DiskLoader {
+        store: &store,
+        rate: tl.audio.sample_rate,
+        info: Vec::new(),
+    };
+    let Some((program, sources, _paths)) = resolve_with(tl, &mut loader)? else {
+        return Ok(None);
+    };
+    let info = loader.info;
     let decode_ms = t0.elapsed().as_millis();
     let t1 = Instant::now();
-    let (control, analysis) = analyze(&program, &sources).map_err(anyhow::Error::msg)?;
+    let m = mixdown::run(&program, &sources, &store)?;
     Ok(Some(AudioPlan {
         program,
         sources,
         info,
-        control,
-        analysis,
+        analysis: m.analysis,
+        output: m.output,
+        finals: m.finals,
+        cache: m.stats,
         decode_ms,
         analysis_ms: t1.elapsed().as_millis(),
     }))
 }
 
 impl AudioPlan {
+    /// A sequential reader over the final master.
+    pub fn reader(&self) -> FinalReader<'_> {
+        FinalReader::new(&self.finals)
+    }
+
     /// The master for output frames `[start_frame, start_frame + frames)`.
-    pub fn render_frames(&self, tl: &Timeline, start_frame: i64, frames: i64) -> Stereo {
+    pub fn render_frames(
+        &self,
+        tl: &Timeline,
+        start_frame: i64,
+        frames: i64,
+    ) -> anyhow::Result<Stereo> {
         let a = frame_sample(tl, start_frame).min(self.program.total);
         let b = frame_sample(tl, start_frame + frames).min(self.program.total);
-        render_range(&self.program, &self.sources, &self.control, a, b)
+        let v = self.reader().read(a, b)?;
+        let mut s = Stereo::silence(v.len() / 2);
+        for i in 0..s.len() {
+            s.l[i] = v[2 * i];
+            s.r[i] = v[2 * i + 1];
+        }
+        Ok(s)
     }
 }

@@ -85,6 +85,25 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 - Recipe: text through a picture: put the picture on V1, the title on V2 and
   `set_param` `matte` `{"mode": "alpha"}` on V1 (`track: "V1"`).
 
+## Audio effects
+
+- `audio.effects` on a clip (after its gain, fades and pan; keyframes clip-local) and
+  `bus.effects` on a track (on the summed clips before the bus gain/balance, i.e. pre-fader;
+  keyframes in timeline time): an ordered list of `{"type": ..., params}`. Every numeric
+  parameter takes a rational or `{"keyframes": [...]}`; omitted ones take the default.
+  - `eq`: `bands: [{kind: peak | low_shelf | high_shelf (peak), freq_hz, gain_db (0), q (0.7071)}]`
+  - `high_pass`, `low_pass`: `freq_hz`, `q` (0.7071); 12 dB/oct
+  - `compressor`: `threshold_db` (-20), `ratio` (4, >= 1), `attack_ms` (10), `release_ms` (100),
+    `knee_db` (6), `makeup_db` (0); stereo-linked peak detector, soft knee
+  - `limiter`: `ceiling_db` (-1, <= 0), `release_ms` (50); sample-peak brickwall, zero latency
+    (the loudness stage still adds the true-peak limiter on the master)
+  - `gate`: `threshold_db` (-50), `range_db` (40), `attack_ms` (1), `hold_ms` (50), `release_ms` (100)
+- Ops: `add_effect` (`effect`, optional `index`), `set_effect_param` (`index`, `param` such as
+  `threshold_db` or `bands.1.gain_db`, `value` incl. keyframes, `null` = default),
+  `remove_effect` (`index`); each takes `clip` or `track`.
+- Rendering streams the audio in 5 s chunks and caches each one: after an edit only the chunks
+  it touches are re-mixed (the loudness pass re-measures from per-chunk records).
+
 ## Ops (edit_apply)
 
 | Op | What it does |
@@ -101,15 +120,16 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 | `freeze_frame` | hold the frame at `at`: to the clip end (split), or insert a `duration` hold and push later clips |
 | `nest` | move video `clips` (any tracks) into a new comp file `path` and replace them with one clip `id` on the lowest of their tracks |
 | `unnest` | replace a plain comp clip by the comp's clips; extra inner tracks go on new tracks right above |
+| `add_effect`, `set_effect_param`, `remove_effect` | audio effect chain of a clip (`clip`) or track bus (`track`); see Audio effects |
 
 Parameter names (`timeline_schema` part `params` lists unit, range, default and time base):
 
 - video clip: `opacity`, `transform.position` (`.x`/`.y`), `transform.anchor`, `transform.scale`
   (uniform or `.x`/`.y`), `transform.rotation`, `transition_in`, `sampling`, `blend_mode`, `speed`,
   `time_remap`, `audio.gain_db`, `audio.pan`, `audio.mute`, `audio.fade_in`, `audio.fade_out`,
-  `audio.crossfade_in`, `audio.preserve_pitch`
+  `audio.crossfade_in`, `audio.preserve_pitch`, `audio.effects`
 - audio clip: the `audio.*` ones, `speed`, `time_remap`
-- track: `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
+- track: `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.effects`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
   `bus.duck.ratio`, `bus.duck.attack_ms`, `bus.duck.release_ms`, `bus.duck.range_db`
 - timeline: `audio.master_gain_db`, `audio.loudness`, `audio.loudness.target_lufs`,
   `audio.loudness.true_peak_dbtp`, `output.duration`
@@ -130,6 +150,8 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
 - Sound leads picture by 1 s: `jl_cut` with `in_offset: "-1"` on the incoming clip.
 - Music under dialogue: `add_track` audio, `add_clip`, then `set_param` `bus.duck`
   `{"key": ["V1"]}` on the music track.
+- Cleaner dialogue: `add_effect` `{"type": "high_pass", "freq_hz": "80"}` then
+  `{"type": "compressor", "threshold_db": "-24", "ratio": "3"}` on the dialogue clip or track.
 - Keep one spoken line: `transcript_search` the words; each hit has `cut_in`/`cut_out` (source
   times with a handle, on the frame grid). For a clip at `start` S with `source_in` I, the
   timeline time of source time t is `S + t - I`: `split` there and `ripple_delete` the parts

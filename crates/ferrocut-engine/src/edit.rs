@@ -207,6 +207,35 @@ pub enum EditOp {
     Unnest {
         clip: String,
     },
+    /// Insert an audio effect (`{"type": ..., params}`) on a clip or track bus.
+    AddEffect {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<String>,
+        effect: serde_json::Value,
+        /// Position in the chain (default: the end).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<usize>,
+    },
+    /// Set one parameter of effect `index` (`threshold_db`, `bands.1.gain_db`);
+    /// `value` is a rational, `{"keyframes": [...]}`, or null for the default.
+    SetEffectParam {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<String>,
+        index: usize,
+        param: String,
+        value: serde_json::Value,
+    },
+    RemoveEffect {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<String>,
+        index: usize,
+    },
     SetKeyframes {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clip: Option<String>,
@@ -274,6 +303,9 @@ impl EditOp {
             EditOp::FreezeFrame { .. } => "freeze_frame",
             EditOp::Nest { .. } => "nest",
             EditOp::Unnest { .. } => "unnest",
+            EditOp::AddEffect { .. } => "add_effect",
+            EditOp::SetEffectParam { .. } => "set_effect_param",
+            EditOp::RemoveEffect { .. } => "remove_effect",
         }
     }
     fn target(&self) -> String {
@@ -304,6 +336,13 @@ impl EditOp {
             | EditOp::Unnest { clip }
             | EditOp::AddTransition { clip, .. } => clip.clone(),
             EditOp::Nest { path, .. } => path.display().to_string(),
+            EditOp::AddEffect { clip, track, .. }
+            | EditOp::SetEffectParam { clip, track, .. }
+            | EditOp::RemoveEffect { clip, track, .. } => match (clip, track) {
+                (Some(c), _) => format!("{c}.audio.effects"),
+                (None, Some(t)) => format!("track {t:?} effects"),
+                (None, None) => "effects".into(),
+            },
         }
     }
 }
@@ -1210,6 +1249,66 @@ fn apply_one(
             kind: TransitionKind::Dissolve,
             align,
         } => add_transition(tl, clip, *duration, *align)?,
+        EditOp::AddEffect {
+            clip,
+            track,
+            effect,
+            index,
+        } => edit_effects(tl, "add_effect", clip.as_deref(), track.as_deref(), |fx| {
+            serde_json::from_value::<crate::audio_fx::EffectSpec>(effect.clone()).map_err(|e| {
+                anyhow!(
+                    "add_effect: bad effect {effect}: {e} (types: {})",
+                    crate::audio_fx::TYPES
+                        .iter()
+                        .map(|(t, p)| format!("{t}: {p}"))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )
+            })?;
+            let i = index.unwrap_or(fx.len());
+            ensure!(
+                i <= fx.len(),
+                "add_effect: index {i} is past the end ({} effects)",
+                fx.len()
+            );
+            fx.insert(i, effect.clone());
+            Ok(())
+        })?,
+        EditOp::SetEffectParam {
+            clip,
+            track,
+            index,
+            param,
+            value,
+        } => edit_effects(
+            tl,
+            "set_effect_param",
+            clip.as_deref(),
+            track.as_deref(),
+            |fx| {
+                let n = fx.len();
+                let e = fx
+                    .get_mut(*index)
+                    .ok_or_else(|| anyhow!("set_effect_param: no effect {index} ({n} effects)"))?;
+                crate::audio_fx::set_param(e, param, value.clone())?;
+                Ok(())
+            },
+        )?,
+        EditOp::RemoveEffect { clip, track, index } => edit_effects(
+            tl,
+            "remove_effect",
+            clip.as_deref(),
+            track.as_deref(),
+            |fx| {
+                ensure!(
+                    *index < fx.len(),
+                    "remove_effect: no effect {index} ({} effects)",
+                    fx.len()
+                );
+                fx.remove(*index);
+                Ok(())
+            },
+        )?,
         EditOp::SetParam {
             clip,
             track,
@@ -1255,6 +1354,39 @@ fn apply_one(
             )?
         }
     })
+}
+
+/// Edit the effect chain of a clip (`audio.effects`) or track bus (`effects`).
+fn edit_effects(
+    tl: &mut Timeline,
+    kind: &'static str,
+    clip: Option<&str>,
+    track: Option<&str>,
+    f: impl FnOnce(&mut Vec<serde_json::Value>) -> anyhow::Result<()>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    ensure!(
+        clip.is_some() != track.is_some(),
+        "{kind}: give a clip or a track"
+    );
+    let name = if clip.is_some() {
+        "audio.effects"
+    } else {
+        "bus.effects"
+    };
+    let (mut change, refs) = set_param(tl, kind, clip, track, name, |_, cur| {
+        let mut fx = match cur {
+            Some(serde_json::Value::Array(a)) => a.clone(),
+            _ => Vec::new(),
+        };
+        f(&mut fx)?;
+        Ok(if fx.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::Array(fx)
+        })
+    })?;
+    change.kind = kind;
+    Ok((change, refs))
 }
 
 fn add_track(

@@ -602,7 +602,7 @@ fn main() -> anyhow::Result<()> {
             }
             if let Some(a) = &r.audio {
                 println!(
-                    "audio: {} {} Hz x{} {} samples | decode {} ms, analysis {} ms, mix {} ms | blake3 {}",
+                    "audio: {} {} Hz x{} {} samples | sources {} ms, mix+loudness {} ms, mux {} ms | chunks mixed {} reused {} | blake3 {}",
                     a.codec,
                     a.sample_rate,
                     a.channels,
@@ -610,6 +610,8 @@ fn main() -> anyhow::Result<()> {
                     a.decode_ms,
                     a.analysis_ms,
                     a.render_ms,
+                    a.cache.premix_mixed,
+                    a.cache.premix_reused,
                     a.blake3
                 );
                 if let (Some(m), Some(t)) = (&a.output, a.analysis.target_lufs) {
@@ -729,7 +731,7 @@ fn print_edit(r: &project::EditOutcome) {
     }
     if let Some(i) = &r.render {
         println!(
-            "video chunks to re-render: {:?} of {} (audio is re-mixed per render)",
+            "video chunks to re-render: {:?} of {} (audio: only the 5 s audio chunks an edit touches re-mix)",
             i.dirty_chunks, i.total_chunks
         );
     }

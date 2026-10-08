@@ -613,6 +613,7 @@ dependencies = [
  "ferrocut-colorspace",
  "ferrocut-core",
  "ferrocut-deliver",
+ "ferrocut-perceive",
  "ffmpeg-next",
  "half",
  "libc",

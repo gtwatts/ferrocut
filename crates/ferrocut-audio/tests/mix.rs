@@ -75,6 +75,7 @@ fn clip(id: &str, source: usize, start: i64, end: i64, src_offset: i64) -> ClipP
         gain_db: Animatable::Constant(Rational::ZERO),
         pan: Animatable::Constant(Rational::ZERO),
         fades: vec![],
+        effects: vec![],
     }
 }
 
@@ -86,6 +87,7 @@ fn track(name: &str, clips: Vec<ClipProg>) -> TrackProg {
         pan: Animatable::Constant(Rational::ZERO),
         mute: false,
         duck: None,
+        effects: vec![],
     }
 }
 
@@ -323,4 +325,161 @@ fn invalid_duck_is_rejected() {
         d
     });
     assert!(analyze(&p, &src).unwrap_err().contains("not itself ducked"));
+}
+
+fn k(v: &str) -> Animatable {
+    Animatable::Constant(r(v))
+}
+
+/// The demo program with clip and track effects (some keyframed).
+fn fx_program() -> (Program, Vec<SourceAudio>) {
+    let (mut p, src) = demo_program(Some(-16.0));
+    p.tracks[0].effects = vec![
+        Effect::Eq {
+            bands: vec![
+                EqBand {
+                    kind: BandKind::LowShelf,
+                    freq_hz: k("120"),
+                    gain_db: k("-3"),
+                    q: k("0.7"),
+                },
+                EqBand {
+                    kind: BandKind::Peak,
+                    freq_hz: keys(&[("0", "500", Interp::Linear), ("8", "3000", Interp::Linear)]),
+                    gain_db: k("4"),
+                    q: k("1.2"),
+                },
+            ],
+        },
+        Effect::Compressor {
+            threshold_db: k("-18"),
+            ratio: k("3"),
+            attack_ms: k("5"),
+            release_ms: k("120"),
+            knee_db: k("6"),
+            makeup_db: k("2"),
+        },
+    ];
+    p.tracks[1].clips[0].effects = vec![
+        Effect::HighPass {
+            freq_hz: k("80"),
+            q: k("0.7071"),
+        },
+        Effect::Gate {
+            threshold_db: k("-40"),
+            range_db: k("30"),
+            attack_ms: k("1"),
+            hold_ms: k("50"),
+            release_ms: k("100"),
+        },
+        Effect::Limiter {
+            ceiling_db: keys(&[("0", "-1", Interp::Linear), ("4", "-9", Interp::Linear)]),
+            release_ms: k("60"),
+        },
+    ];
+    (p, src)
+}
+
+#[test]
+fn streamed_premix_equals_whole_program() {
+    use ferrocut_audio::stream::{MixState, premix};
+    let (p, src) = fx_program();
+    let (ctl, _) = analyze(&p, &src).unwrap();
+    for cuts in [
+        vec![0, 4800, 9600, 200_000, 240_001, p.total],
+        vec![0, 1, 2, 31, 33, 48_000, 300_007, p.total],
+    ] {
+        let mut st = MixState::initial(&p);
+        let mut sum = Stereo::default();
+        for w in cuts.windows(2) {
+            let pm = premix(&p, &src, w[0], w[1], &mut st);
+            sum.append(&pm.sum);
+            // The state survives an encode/decode round trip (the cache stores it).
+            let words = st.words();
+            st = MixState::from_words(&words).unwrap();
+            assert_eq!(st.words(), words);
+        }
+        assert_eq!(bits(&sum), bits(&ctl.premix));
+    }
+    // Effects change the mix.
+    let (p0, src0) = demo_program(Some(-16.0));
+    let (ctl0, _) = analyze(&p0, &src0).unwrap();
+    assert_ne!(bits(&ctl0.premix), bits(&ctl.premix));
+}
+
+#[test]
+fn effect_free_premix_is_unchanged_by_streaming() {
+    // Without effects the whole-program premix is the old master sum: the
+    // pre-streaming render path (track buses times duck gains in order).
+    let (p, src) = demo_program(None);
+    let (ctl, _) = analyze(&p, &src).unwrap();
+    let mut sum = Stereo::silence(p.total as usize);
+    for ti in 0..p.tracks.len() {
+        let t = render_track(&p, &src, ti, 0, p.total);
+        let d = ctl.duck[ti].as_deref();
+        for i in 0..sum.len() {
+            let g = d.map_or(1.0, |d| d[i]);
+            sum.l[i] += t.l[i] * g;
+            sum.r[i] += t.r[i] * g;
+        }
+    }
+    assert_eq!(bits(&sum), bits(&ctl.premix));
+}
+
+#[test]
+fn chunked_limiter_equals_whole() {
+    use ferrocut_audio::dynamics::{LIMITER_HISTORY, limiter_chunk, limiter_future, limiter_gains};
+    let (p, src) = demo_program(None);
+    let (ctl, _) = analyze(&p, &src).unwrap();
+    let y = render_range(&p, &src, &ctl, 0, p.total);
+    let ceiling = 0.05; // far below the peaks: the limiter works hard
+    let (whole, min_whole) = limiter_gains(&y.l, &y.r, ceiling, RATE);
+    let total = p.total;
+    let mut env = 1.0;
+    let (mut got, mut min_got) = (Vec::new(), 1.0f64);
+    for w in [0, 1000, 1240, 48_000, 48_007, 300_000, total].windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let w0 = (a - LIMITER_HISTORY).max(0);
+        let w1 = (b + limiter_future(RATE)).min(total);
+        let (g, m) = limiter_chunk(
+            &y.l[w0 as usize..w1 as usize],
+            &y.r[w0 as usize..w1 as usize],
+            w0,
+            total,
+            a,
+            b,
+            ceiling,
+            RATE,
+            &mut env,
+        );
+        got.extend(g);
+        min_got = min_got.min(m);
+    }
+    assert_eq!(min_got, min_whole);
+    assert!(
+        whole
+            .iter()
+            .zip(&got)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    );
+    assert_eq!(whole.len(), got.len());
+}
+
+#[test]
+fn invalid_effects_are_rejected() {
+    let (mut p, src) = demo_program(None);
+    p.tracks[0].effects = vec![Effect::LowPass {
+        freq_hz: k("30000"),
+        q: k("0.7"),
+    }];
+    assert!(analyze(&p, &src).unwrap_err().contains("freq_hz"));
+    p.tracks[0].effects = vec![Effect::Compressor {
+        threshold_db: k("-10"),
+        ratio: k("1/2"),
+        attack_ms: k("1"),
+        release_ms: k("1"),
+        knee_db: k("0"),
+        makeup_db: k("0"),
+    }];
+    assert!(analyze(&p, &src).unwrap_err().contains("ratio"));
 }

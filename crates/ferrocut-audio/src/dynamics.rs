@@ -13,6 +13,20 @@ use crate::program::Duck;
 /// evaluated per sample; all-constant parameters take the original fast path
 /// (same arithmetic, same bits).
 pub fn duck_gains(key_l: &[f32], key_r: &[f32], d: &Duck, rate: u32) -> Vec<f32> {
+    duck_gains_at(key_l, key_r, d, rate, 0, &mut 0.0)
+}
+
+/// [`duck_gains`] for a key signal starting at program sample `n0`, entered
+/// with detector envelope `env` (updated to the state after the last sample):
+/// chaining chunks equals one whole-program call, bit for bit.
+pub fn duck_gains_at(
+    key_l: &[f32],
+    key_r: &[f32],
+    d: &Duck,
+    rate: u32,
+    n0: i64,
+    env_io: &mut f64,
+) -> Vec<f32> {
     let fs = rate as f64;
     let c = |a: &Animatable| a.as_constant().map(|v| v.to_f64());
     if let (Some(thr), Some(ratio), Some(att), Some(rel), Some(range)) = (
@@ -25,8 +39,8 @@ pub fn duck_gains(key_l: &[f32], key_r: &[f32], d: &Duck, rate: u32) -> Vec<f32>
         let a_att = (-1.0 / (att / 1000.0 * fs)).exp();
         let a_rel = (-1.0 / (rel / 1000.0 * fs)).exp();
         let slope = 1.0 - 1.0 / ratio;
-        let mut env = 0.0f64;
-        return key_l
+        let mut env = *env_io;
+        let out = key_l
             .iter()
             .zip(key_r)
             .map(|(&l, &r)| {
@@ -42,13 +56,15 @@ pub fn duck_gains(key_l: &[f32], key_r: &[f32], d: &Duck, rate: u32) -> Vec<f32>
                 }
             })
             .collect();
+        *env_io = env;
+        return out;
     }
     let at = |a: &Animatable, n: usize| match a.as_constant() {
         Some(v) => v.to_f64(),
-        None => a.eval(RationalTime(Rational::new(n as i64, rate as i64))),
+        None => a.eval(RationalTime(Rational::new(n0 + n as i64, rate as i64))),
     };
-    let mut env = 0.0f64;
-    key_l
+    let mut env = *env_io;
+    let out = key_l
         .iter()
         .zip(key_r)
         .enumerate()
@@ -72,11 +88,26 @@ pub fn duck_gains(key_l: &[f32], key_r: &[f32], d: &Duck, rate: u32) -> Vec<f32>
                 1.0
             }
         })
-        .collect()
+        .collect();
+    *env_io = env;
+    out
 }
 
 /// Half-length of the true-peak interpolation filter (taps per phase = 2·H).
 const H: usize = 8;
+
+/// Samples of history the limiter needs before a chunk (true-peak filter).
+pub const LIMITER_HISTORY: i64 = H as i64 - 1;
+
+/// Look-ahead of the limiter in samples at `rate`.
+pub fn limiter_lookahead(rate: u32) -> i64 {
+    ((rate as f64 * LIMITER_LOOKAHEAD_S).round() as i64).max(1)
+}
+
+/// Samples of future the limiter needs after a chunk.
+pub fn limiter_future(rate: u32) -> i64 {
+    limiter_lookahead(rate) + H as i64
+}
 
 /// 4x oversampling true-peak estimator (windowed-sinc polyphase, phases 1/4,
 /// 2/4, 3/4 between samples; each phase normalized to unity DC gain).
@@ -129,6 +160,79 @@ impl TruePeak {
         }
         m
     }
+
+    /// [`TruePeak::at`] for absolute sample `n` of a signal whose samples
+    /// `[x0, x0 + x.len())` are in `x`; samples outside count as silence.
+    #[inline]
+    pub fn at_abs(&self, x: &[f32], x0: i64, n: i64) -> f64 {
+        let mut m = (x[(n - x0) as usize] as f64).abs();
+        let lo = n - H as i64 + 1;
+        let hi = x0 + x.len() as i64;
+        for ph in &self.phases {
+            let mut acc = 0.0f64;
+            for (j, c) in ph.iter().enumerate() {
+                let i = lo + j as i64;
+                if i >= x0 && i < hi {
+                    acc += c * x[(i - x0) as usize] as f64;
+                }
+            }
+            m = m.max(acc.abs());
+        }
+        m
+    }
+}
+
+/// [`limiter_gains`] for output samples `[a, b)` of a `total`-sample signal,
+/// given its samples `[y0, y0 + y_l.len())`, which must cover
+/// `[a - LIMITER_HISTORY, b + limiter_future(rate))` clamped to `[0, total)`.
+/// `env` is the release envelope entering sample `a` (1.0 at sample 0) and is
+/// updated to the state after `b - 1`. Chaining chunks equals one
+/// whole-signal [`limiter_gains`] call, bit for bit. Returns the gains and
+/// their minimum.
+#[allow(clippy::too_many_arguments)]
+pub fn limiter_chunk(
+    y_l: &[f32],
+    y_r: &[f32],
+    y0: i64,
+    total: i64,
+    a: i64,
+    b: i64,
+    ceiling: f64,
+    rate: u32,
+    env: &mut f64,
+) -> (Vec<f32>, f64) {
+    let la = limiter_lookahead(rate);
+    let (w0, w1) = (y0, y0 + y_l.len() as i64);
+    assert!(
+        w0 <= (a - LIMITER_HISTORY).max(0) && w1 >= (b + limiter_future(rate)).min(total),
+        "limiter window {w0}..{w1} does not cover {a}..{b}"
+    );
+    let tp = TruePeak::new();
+    let mut hot: Vec<(i64, f64)> = Vec::new();
+    for k in a..(b + la).min(total) {
+        let p = tp.at_abs(y_l, y0, k).max(tp.at_abs(y_r, y0, k));
+        if p > ceiling {
+            hot.push((k, ceiling / p));
+        }
+    }
+    let rel = 1.0 - (-1.0 / (LIMITER_RELEASE_S * rate as f64)).exp();
+    let mut out = Vec::with_capacity((b - a).max(0) as usize);
+    let (mut e, mut min_g, mut first) = (*env, 1.0f64, 0usize);
+    for i in a..b {
+        while first < hot.len() && hot[first].0 < i {
+            first += 1;
+        }
+        let mut ramp = 1.0f64;
+        for &(k, req) in hot[first..].iter().take_while(|(k, _)| *k <= i + la) {
+            let g = req + (1.0 - req) * (k - i) as f64 / la as f64;
+            ramp = ramp.min(g);
+        }
+        e = ramp.min(e + (1.0 - e) * rel);
+        min_g = min_g.min(e);
+        out.push(e as f32);
+    }
+    *env = e;
+    (out, min_g)
 }
 
 /// Look-ahead of the limiter (attack ramp length), seconds.

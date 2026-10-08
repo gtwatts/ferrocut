@@ -29,22 +29,25 @@
 
 pub mod analysis;
 pub mod dynamics;
+pub mod effects;
 pub mod loudness;
 pub mod mix;
 pub mod program;
 pub mod retime;
+pub mod stream;
 
 pub use analysis::{AnalysisReport, Control, analyze};
+pub use effects::{BandKind, Effect, EqBand};
 pub use ferrocut_types::Animatable;
 pub use loudness::{Measurement, measure};
-pub use mix::{Stereo, render_range, render_track};
+pub use mix::{Sources, Stereo, render_range, render_track};
 pub use program::{
     ClipProg, Duck, Fade, FadeCurve, LoudnessTarget, Program, SourceAudio, TrackProg,
 };
 
 /// Part of the engine's audio cache keys: bump when the mix of the same
 /// program changes.
-pub const VERSION: &str = concat!("ferrocut-audio ", env!("CARGO_PKG_VERSION"), " mix.v1");
+pub const VERSION: &str = concat!("ferrocut-audio ", env!("CARGO_PKG_VERSION"), " mix.v2");
 
 /// Linear gain of `db` decibels.
 pub fn db_to_gain(db: f64) -> f64 {

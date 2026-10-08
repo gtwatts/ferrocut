@@ -148,6 +148,10 @@ pub struct BusSpec {
     pub mute: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duck: Option<DuckSpec>,
+    /// Track effects, in order, on the summed clips before the bus gain and
+    /// balance (pre-fader); keyframes in timeline time. See [`crate::audio_fx`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<crate::audio_fx::EffectSpec>,
 }
 
 impl BusSpec {
@@ -196,6 +200,10 @@ pub struct ClipAudio {
     /// otherwise the audio is resampled (varispeed: pitch follows speed).
     #[serde(default, skip_serializing_if = "is_false")]
     pub preserve_pitch: bool,
+    /// Clip effects, in order, after gain, fades and pan; keyframes in
+    /// clip-local time. See [`crate::audio_fx`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<crate::audio_fx::EffectSpec>,
 }
 
 impl ClipAudio {
@@ -571,6 +579,7 @@ impl Timeline {
             .map(|t| (&t.name, &t.audio))
             .chain(self.audio_tracks.iter().map(|t| (&t.name, &t.bus)));
         for (name, bus) in buses.clone() {
+            crate::audio_fx::validate(&bus.effects, a.sample_rate, &format!("track {name:?}"))?;
             check_anim(&bus.gain_db, &format!("track {name:?} audio gain_db"), None)?;
             check_anim(
                 &bus.pan,
@@ -611,6 +620,18 @@ impl Timeline {
                     "track {name:?}: duck range_db must be >= 0"
                 );
             }
+        }
+        let clip_fx = self
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter().map(|c| (&c.id, &c.audio)))
+            .chain(
+                self.audio_tracks
+                    .iter()
+                    .flat_map(|t| t.clips.iter().map(|c| (&c.id, &c.audio))),
+            );
+        for (id, au) in clip_fx {
+            crate::audio_fx::validate(&au.effects, a.sample_rate, &format!("clip {id}: audio"))?;
         }
         for t in &self.tracks {
             let clips: Vec<_> = t

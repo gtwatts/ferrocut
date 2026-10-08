@@ -6,7 +6,7 @@ use std::path::Path;
 
 use ferrocut_audio::Stereo;
 use ferrocut_core::{AdapterPreference, GpuContext, Rational, SharedGpu};
-use ferrocut_engine::media::concat::{ConcatAudio, concat};
+use ferrocut_engine::media::concat::{ConcatAudio, StereoFeed, concat};
 use ferrocut_engine::media::encode::{ChunkEncoder, EncodeSettings};
 use ferrocut_engine::render::RenderOptions;
 use ferrocut_engine::{Timeline, compile, render};
@@ -57,9 +57,9 @@ fn av_source(dir: &Path, name: &str, frames: i64, amp: f32) -> std::path::PathBu
         &[0],
         fps,
         &out,
-        Some(&ConcatAudio {
+        Some(&mut ConcatAudio {
             rate: 48_000,
-            chunks: &[a],
+            feed: &mut StereoFeed(&a),
             frame_sample: &fs,
             total: n as i64,
         }),

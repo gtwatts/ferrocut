@@ -102,7 +102,7 @@ async fn stdio_server_end_to_end() {
             .as_array()
             .unwrap()
             .len(),
-        18
+        21
     );
 
     // Read (relative path: resolved against the server's cwd).
