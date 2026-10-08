@@ -84,6 +84,7 @@ use anyhow::{Context as _, anyhow, bail, ensure};
 use ferrocut_core::{Animatable, Rational, RationalTime};
 use serde::{Deserialize, Serialize};
 
+use crate::markers::{ClipPlacement, Marker, MarkerColor};
 use crate::timeline::{AudioClip, Clip, ClipAudio, Timeline};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +256,63 @@ pub enum EditOp {
         #[serde(default)]
         timeline_time: bool,
     },
+    /// A timeline marker, or a clip marker with `clip` (`time` in source
+    /// seconds, or timeline seconds with `timeline_time`). See
+    /// [`crate::markers`].
+    AddMarker {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        time: RationalTime,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration: Option<RationalTime>,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        name: String,
+        #[serde(default, skip_serializing_if = "MarkerColor::is_default")]
+        color: MarkerColor,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        comment: String,
+        #[serde(default)]
+        timeline_time: bool,
+    },
+    /// Change the given fields of marker `id`.
+    UpdateMarker {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        time: Option<RationalTime>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration: Option<RationalTime>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<MarkerColor>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        comment: Option<String>,
+        #[serde(default)]
+        timeline_time: bool,
+    },
+    RemoveMarker {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        id: String,
+    },
+    /// Point clips at moved / offline media: `clip` + `to` (every clip using
+    /// that clip's source), `from` + `to` (a file, or a directory prefix), or
+    /// `search` (offline sources found by file name under a directory;
+    /// with `clip`, only its source).
+    Relink {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clip: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        search: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,6 +371,10 @@ impl EditOp {
             EditOp::AddEffect { .. } => "add_effect",
             EditOp::SetEffectParam { .. } => "set_effect_param",
             EditOp::RemoveEffect { .. } => "remove_effect",
+            EditOp::AddMarker { .. } => "add_marker",
+            EditOp::UpdateMarker { .. } => "update_marker",
+            EditOp::RemoveMarker { .. } => "remove_marker",
+            EditOp::Relink { .. } => "relink",
         }
     }
     fn target(&self) -> String {
@@ -349,6 +411,20 @@ impl EditOp {
                 (Some(c), _) => format!("{c}.audio.effects"),
                 (None, Some(t)) => format!("track {t:?} effects"),
                 (None, None) => "effects".into(),
+            },
+            EditOp::AddMarker { clip, .. } => match clip {
+                Some(c) => format!("{c} markers"),
+                None => "timeline markers".into(),
+            },
+            EditOp::UpdateMarker { clip, id, .. } | EditOp::RemoveMarker { clip, id } => match clip
+            {
+                Some(c) => format!("{c} marker {id}"),
+                None => format!("timeline marker {id}"),
+            },
+            EditOp::Relink { clip, from, .. } => match (clip, from) {
+                (Some(c), _) => c.clone(),
+                (None, Some(f)) => f.display().to_string(),
+                (None, None) => "offline media".into(),
             },
         }
     }
@@ -1371,7 +1447,312 @@ fn apply_one(
                 },
             )?
         }
+        EditOp::AddMarker {
+            clip,
+            time,
+            id,
+            duration,
+            name,
+            color,
+            comment,
+            timeline_time,
+        } => markers_op(tl, clip.as_deref(), "add_marker", |list, place| {
+            let t = marker_time(*time, *timeline_time, place)?;
+            let id = match id {
+                Some(i) => {
+                    ensure!(
+                        !list.iter().any(|m| m.id == *i),
+                        "marker id {i:?} is already used"
+                    );
+                    i.clone()
+                }
+                None => crate::markers::fresh_id(list),
+            };
+            list.push(Marker {
+                id: id.clone(),
+                time: t,
+                duration: duration.unwrap_or_default(),
+                name: name.clone(),
+                color: *color,
+                comment: comment.clone(),
+            });
+            list.sort_by_key(|m| m.time);
+            Ok(format!("marker {id} {name:?} at {t}"))
+        })?,
+        EditOp::UpdateMarker {
+            clip,
+            id,
+            time,
+            duration,
+            name,
+            color,
+            comment,
+            timeline_time,
+        } => markers_op(tl, clip.as_deref(), "update_marker", |list, place| {
+            let t = match time {
+                Some(t) => Some(marker_time(*t, *timeline_time, place)?),
+                None => None,
+            };
+            let m = list
+                .iter_mut()
+                .find(|m| m.id == *id)
+                .ok_or_else(|| anyhow!("no marker {id:?}"))?;
+            if let Some(t) = t {
+                m.time = t;
+            }
+            if let Some(d) = duration {
+                m.duration = *d;
+            }
+            if let Some(n) = name {
+                m.name = n.clone();
+            }
+            if let Some(c) = color {
+                m.color = *c;
+            }
+            if let Some(c) = comment {
+                m.comment = c.clone();
+            }
+            list.sort_by_key(|m| m.time);
+            Ok(format!("marker {id} updated"))
+        })?,
+        EditOp::RemoveMarker { clip, id } => {
+            markers_op(tl, clip.as_deref(), "remove_marker", |list, _| {
+                let n = list.len();
+                list.retain(|m| m.id != *id);
+                ensure!(list.len() < n, "no marker {id:?}");
+                Ok(format!("marker {id} removed"))
+            })?
+        }
+        EditOp::Relink {
+            clip,
+            from,
+            to,
+            search,
+        } => relink(
+            tl,
+            clip.as_deref(),
+            from.as_deref(),
+            to.as_deref(),
+            search.as_deref(),
+            media,
+        )?,
     })
+}
+
+/// Run `f` on the timeline's markers or on `clip`'s (with its placement).
+/// Markers never change the output: the span is empty.
+fn markers_op(
+    tl: &mut Timeline,
+    clip: Option<&str>,
+    kind: &'static str,
+    f: impl FnOnce(&mut Vec<Marker>, Option<&ClipPlacement>) -> anyhow::Result<String>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    let summary = match clip {
+        None => f(&mut tl.markers, None)?,
+        Some(id) => match locate(tl, id)? {
+            (TrackRef::Video(t), ci) => {
+                let c = &mut tl.tracks[t].clips[ci];
+                let p = ClipPlacement {
+                    start: c.start,
+                    duration: c.duration,
+                    map: c.time_map(),
+                };
+                f(&mut c.markers, Some(&p))?
+            }
+            (TrackRef::Audio(t), ci) => {
+                let c = &mut tl.audio_tracks[t].clips[ci];
+                let p = ClipPlacement {
+                    start: c.start,
+                    duration: c.duration,
+                    map: c.time_map(),
+                };
+                f(&mut c.markers, Some(&p))?
+            }
+        },
+    };
+    Ok((
+        Change {
+            op: 0,
+            kind,
+            summary,
+            span: (z(), z()),
+        },
+        vec![],
+    ))
+}
+
+/// A marker time as stored: timeline time for timeline markers; source
+/// time for clip markers (`timeline_time` converts through the clip).
+fn marker_time(
+    t: RationalTime,
+    timeline_time: bool,
+    place: Option<&ClipPlacement>,
+) -> anyhow::Result<RationalTime> {
+    match (place, timeline_time) {
+        (Some(p), true) => {
+            ensure!(
+                p.start <= t && t < p.start + p.duration,
+                "timeline time {t} is outside the clip ({}..{})",
+                p.start,
+                p.start + p.duration
+            );
+            Ok(p.source_at(t))
+        }
+        _ => Ok(t),
+    }
+}
+
+/// Files named `name` under `dir` (recursive, hidden directories skipped).
+fn find_named(dir: &Path, name: &std::ffi::OsStr, depth: usize, out: &mut Vec<PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+    entries.sort();
+    for p in entries {
+        let hidden = p
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+        if p.is_dir() {
+            if depth > 0 && !hidden {
+                find_named(&p, name, depth - 1, out);
+            }
+        } else if p.file_name() == Some(name) {
+            out.push(p);
+        }
+    }
+}
+
+fn relink(
+    tl: &mut Timeline,
+    clip: Option<&str>,
+    from: Option<&Path>,
+    to: Option<&Path>,
+    search: Option<&Path>,
+    media: &mut MediaLengths<'_>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    let only = match clip {
+        Some(id) => {
+            let (tr, ci) = locate(tl, id)?;
+            let src = match tr {
+                TrackRef::Video(t) => {
+                    let c = &tl.tracks[t].clips[ci];
+                    ensure!(!c.is_generator(), "relink: {id} is a generator clip");
+                    c.source.clone()
+                }
+                TrackRef::Audio(t) => tl.audio_tracks[t].clips[ci].source.clone(),
+            };
+            Some(src)
+        }
+        None => None,
+    };
+    // old -> new for every source that changes.
+    let mut map: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    let sources: Vec<PathBuf> = {
+        let mut v: Vec<PathBuf> = tl.sources_mut().map(|s| s.clone()).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    match (from, to, search) {
+        (None, Some(to), None) => {
+            let old = only.clone().context(
+                "relink: give `clip` + `to`, `from` + `to`, or `search` (+ optional `clip`)",
+            )?;
+            map.push((old, to.to_path_buf()));
+        }
+        (Some(from), Some(to), None) => {
+            ensure!(only.is_none(), "relink: give `clip` or `from`, not both");
+            for s in &sources {
+                if s == from {
+                    map.push((s.clone(), to.to_path_buf()));
+                } else if let Ok(rest) = s.strip_prefix(from) {
+                    map.push((s.clone(), to.join(rest)));
+                }
+            }
+            ensure!(
+                !map.is_empty(),
+                "relink: no clip source is {} or under it",
+                from.display()
+            );
+        }
+        (None, None, Some(dir)) => {
+            let root = media.full(dir);
+            ensure!(
+                root.is_dir(),
+                "relink: search directory {} not found",
+                root.display()
+            );
+            for s in &sources {
+                if only.as_ref().is_some_and(|o| o != s) || media.full(s).exists() {
+                    continue;
+                }
+                let Some(name) = s.file_name() else { continue };
+                let mut found = Vec::new();
+                find_named(&root, name, 8, &mut found);
+                match found.as_slice() {
+                    [one] => {
+                        let rel = one.strip_prefix(&root).unwrap_or(one);
+                        map.push((s.clone(), dir.join(rel)));
+                    }
+                    [] => missing.push(s.display().to_string()),
+                    many => bail!(
+                        "relink: {} matches several files: {}",
+                        s.display(),
+                        many.iter()
+                            .map(|p| p.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                }
+            }
+            ensure!(
+                !map.is_empty(),
+                "relink: no offline source found under {}{}",
+                dir.display(),
+                if missing.is_empty() {
+                    " (no source is offline)".to_string()
+                } else {
+                    format!(" (not found: {})", missing.join(", "))
+                }
+            );
+        }
+        _ => bail!("relink: give `clip` + `to`, `from` + `to`, or `search` (+ optional `clip`)"),
+    }
+    for (_, new) in &map {
+        ensure!(
+            media.placeholder || media.full(new).is_file(),
+            "relink: {} does not exist",
+            media.full(new).display()
+        );
+    }
+    let mut n = 0;
+    for s in tl.sources_mut() {
+        if let Some((_, new)) = map.iter().find(|(o, _)| o == s) {
+            *s = new.clone();
+            n += 1;
+        }
+    }
+    let mut summary = format!(
+        "relink {n} clip(s): {}",
+        map.iter()
+            .map(|(o, n)| format!("{} -> {}", o.display(), n.display()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    if !missing.is_empty() {
+        summary.push_str(&format!("; still offline: {}", missing.join(", ")));
+    }
+    Ok((
+        Change {
+            op: 0,
+            kind: "relink",
+            summary,
+            span: (z(), tl.duration()),
+        },
+        all_tracks(tl),
+    ))
 }
 
 /// Edit the effect chain of a clip (`audio.effects`) or track bus (`effects`).
@@ -1602,6 +1983,7 @@ fn add_clip(
             sampling: Default::default(),
             blend_mode: Default::default(),
             audio: ClipAudio::default(),
+            markers: Vec::new(),
         }),
         TrackRef::Audio(i) => tl.audio_tracks[i].clips.push(AudioClip {
             id: id.clone(),
@@ -1612,6 +1994,7 @@ fn add_clip(
             speed: crate::timeline::one(),
             time_remap: None,
             audio: ClipAudio::default(),
+            markers: Vec::new(),
         }),
     }
     Ok((
@@ -2174,6 +2557,7 @@ fn nest(
         // 3D layers and motion blur look the same inside the comp.
         camera: tl.camera.as_ref().map(|c| c.shifted(-s0.0)),
         motion_blur: tl.motion_blur,
+        markers: Vec::new(),
     };
     for &ti in &used {
         let mut clips: Vec<Clip> = sel

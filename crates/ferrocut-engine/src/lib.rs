@@ -14,6 +14,7 @@ pub mod generator;
 pub mod graph;
 pub mod index;
 pub mod layer3d;
+pub mod markers;
 pub mod media;
 pub mod mixdown;
 pub mod nodes;

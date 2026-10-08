@@ -158,6 +158,30 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 - Rendering streams the audio in 5 s chunks and caches each one: after an edit only the chunks
   it touches are re-mixed (the loudness pass re-measures from per-chunk records).
 
+## Markers
+
+- `markers` on the timeline (time in timeline seconds) and on video/audio clips (time in the
+  clip's **source** seconds, so a marker stays on its frame through trims, slips and moves;
+  after a split each part keeps the markers in its own range): `[{id, time, duration?, name?,
+  color?, comment?}]`, colors `green` (default), `red`, `purple`, `orange`, `yellow`, `white`,
+  `blue`, `cyan`; `duration` > 0 makes a range marker. Timeline markers do not move with
+  ripple edits.
+- Ops `add_marker` / `update_marker` / `remove_marker` (with `clip` for clip markers;
+  `timeline_time: true` converts a timeline time to the clip's source time). `markers_list`
+  returns all of them in timeline time. Markers never change the render (no chunk re-renders),
+  so use them freely to note beats, shots, problems and decisions.
+
+## Media management
+
+- `media_status`: every file the timeline uses, online or offline, the clips using it, and
+  its proxy. `relink` (edit op) points clips at moved media: `clip` + `to`, `from` + `to`
+  (file or directory prefix) or `search` (find offline files by name under a directory).
+- Proxies: `proxy_generate` makes half-resolution DNxHR LB proxies (FFV1 for tiny or alpha
+  media) in `<media dir>/.ferrocut-proxies/`, keyed by the file's content. `render` with
+  `proxies: true` is a draft: it reads proxies where they exist (summary `draft: true`) and
+  caches its chunks apart. Renders without `proxies`, and every `deliver`, use the original
+  full-resolution media: the swap back is automatic.
+
 ## Ops (edit_apply)
 
 | Op | What it does |
@@ -175,6 +199,8 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 | `nest` | move video `clips` (any tracks) into a new comp file `path` and replace them with one clip `id` on the lowest of their tracks |
 | `unnest` | replace a plain comp clip by the comp's clips; extra inner tracks go on new tracks right above |
 | `add_effect`, `set_effect_param`, `remove_effect` | audio effect chain of a clip (`clip`) or track bus (`track`); see Audio effects |
+| `add_marker`, `update_marker`, `remove_marker` | timeline or clip (`clip`) markers; see Markers |
+| `relink` | point clips at moved / offline media; see Media management |
 
 Parameter names (`timeline_schema` part `params` lists unit, range, default and time base):
 

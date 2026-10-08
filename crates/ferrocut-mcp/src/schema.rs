@@ -178,7 +178,8 @@ pub fn clip() -> Value {
             "sampling": sampling(),
             "blend_mode": blend_mode(),
             "audio": clip_audio(),
-            "generator": generator()
+            "generator": generator(),
+            "markers": markers(CLIP_MARKER_TIME)
         },
         "required": ["id", "duration"],
         "oneOf": [ { "required": ["source"] }, { "required": ["generator"] } ],
@@ -483,6 +484,57 @@ pub fn edit_op() -> Value {
             &["param", "keyframes"],
             json!({ "op": "set_keyframes", "clip": "a", "param": "opacity", "keyframes": [{ "t": "0", "v": "0" }, { "t": "1", "v": "1" }] }),
         ),
+        op(
+            "add_marker",
+            "Add a marker: on the timeline (no `clip`; `time` in timeline seconds) or on a clip (`clip`; `time` in the clip's source seconds, or timeline seconds with timeline_time=true, which must fall inside the clip). Optional duration makes a range marker. `id` defaults to m1, m2, ... (unique in that list). Markers annotate (beats, shots, problems, decisions) and never change the render.",
+            json!({
+                "clip": clip_id(),
+                "time": rational("marker time"),
+                "id": { "type": "string", "minLength": 1 },
+                "duration": rational("range length in seconds (default 0)"),
+                "name": { "type": "string" },
+                "color": marker_color(),
+                "comment": { "type": "string" },
+                "timeline_time": { "type": "boolean", "default": false }
+            }),
+            &["time"],
+            json!({ "op": "add_marker", "time": "12", "name": "music drop", "color": "red" }),
+        ),
+        op(
+            "update_marker",
+            "Change the given fields of marker `id` (timeline marker, or `clip`'s marker). time follows add_marker's rules (timeline_time for clip markers).",
+            json!({
+                "clip": clip_id(),
+                "id": { "type": "string", "minLength": 1 },
+                "time": rational("new time"),
+                "duration": rational("new range length (0 = point marker)"),
+                "name": { "type": "string" },
+                "color": marker_color(),
+                "comment": { "type": "string" },
+                "timeline_time": { "type": "boolean", "default": false }
+            }),
+            &["id"],
+            json!({ "op": "update_marker", "id": "m1", "color": "green", "comment": "fixed" }),
+        ),
+        op(
+            "remove_marker",
+            "Remove marker `id` from the timeline, or from `clip`.",
+            json!({ "clip": clip_id(), "id": { "type": "string", "minLength": 1 } }),
+            &["id"],
+            json!({ "op": "remove_marker", "clip": "cam_a", "id": "m2" }),
+        ),
+        op(
+            "relink",
+            "Point clips at moved or offline media (media_status lists offline files). One of: `clip` + `to` (every clip using that clip's source gets `to`); `from` + `to` (a file, or a directory: every source under it keeps its relative path below `to`); `search` (+ optional `clip`): every offline source is looked up by file name under that directory (recursive, hidden folders skipped; a name found twice is an error). Paths are relative to the timeline's directory. New files must exist and be long enough for the clips.",
+            json!({
+                "clip": clip_id(),
+                "from": path("old file or directory"),
+                "to": path("new file (or directory with from)"),
+                "search": path("directory to search for offline files")
+            }),
+            &[],
+            json!({ "op": "relink", "search": "media_moved" }),
+        ),
     ];
     json!({ "oneOf": ops })
 }
@@ -578,7 +630,8 @@ pub fn render() -> Value {
             "check": { "type": "boolean", "default": false, "description": "run the perceptual quality check (ferrocut-perceive) on the result; skipped if the checker isn't installed" },
             "check_args": check_args(),
             "expect_audio": expect_audio(),
-            "deliver": deliver()
+            "deliver": deliver(),
+            "proxies": { "type": "boolean", "default": false, "description": "draft render: read video from half-resolution proxies where they exist (proxy_generate); the summary gains draft=true and the proxies used. Ignored with deliver (a final render always uses the original media). Draft chunks are cached apart from full-resolution ones." }
         }),
         &["timeline", "output"],
     )
@@ -770,6 +823,33 @@ fn bus() -> Value {
     })
 }
 
+fn marker_color() -> Value {
+    json!({ "enum": ferrocut_engine::markers::MarkerColor::ALL, "default": "green", "description": "Premiere marker color" })
+}
+
+/// A marker list (`timeline.markers` or a clip's `markers`).
+fn markers(time: &str) -> Value {
+    json!({
+        "description": "Named, colored annotations (never rendered). Ids are unique within the list.",
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "time": rational(time),
+                "duration": rational("range marker length in seconds (default 0: a point marker)"),
+                "name": { "type": "string" },
+                "color": marker_color(),
+                "comment": { "type": "string" }
+            },
+            "required": ["id", "time"], "additionalProperties": false
+        }
+    })
+}
+
+const CLIP_MARKER_TIME: &str =
+    "source time of the marked frame, >= 0 (stays on that frame through trims/slips/splits)";
+
 fn video_clip() -> Value {
     json!({
         "description": "A clip on a video track: media or a nested comp (`source`; its audio, if any, plays as linked audio on the track's bus) or a generator layer (`generator`).",
@@ -800,7 +880,8 @@ fn video_clip() -> Value {
             "sampling": sampling(),
             "blend_mode": blend_mode(),
             "audio": clip_audio(),
-            "generator": generator()
+            "generator": generator(),
+            "markers": markers(CLIP_MARKER_TIME)
         },
         "required": ["id", "start", "duration"],
         "oneOf": [ { "required": ["source"] }, { "required": ["generator"] } ],
@@ -820,7 +901,8 @@ fn audio_clip() -> Value {
             "duration": rational("seconds, > 0"),
             "speed": speed(),
             "time_remap": time_remap(),
-            "audio": clip_audio()
+            "audio": clip_audio(),
+            "markers": markers(CLIP_MARKER_TIME)
         },
         "required": ["id", "source", "start", "duration"],
         "additionalProperties": false
@@ -898,7 +980,8 @@ pub fn timeline() -> Value {
                 "additionalProperties": false
             },
             "camera": camera(),
-            "motion_blur": motion_blur()
+            "motion_blur": motion_blur(),
+            "markers": markers("timeline time, >= 0 (does not move with ripple edits)")
         },
         "required": ["output", "tracks"],
         "additionalProperties": false
@@ -913,6 +996,31 @@ pub fn timeline_schema() -> Value {
                 "default": "all",
                 "description": "timeline: JSON Schema of the file; edit_ops: schema of edit_apply ops; params: every settable parameter (name, kind, unit, range, default, time base); guide: concise authoring guide (markdown)"
             }
+        }),
+        &[],
+    )
+}
+
+pub fn markers_list() -> Value {
+    object(json!({ "timeline": path(TL) }), &["timeline"])
+}
+
+pub fn media_status() -> Value {
+    object(
+        json!({
+            "timeline": path(TL),
+            "proxies": { "type": "boolean", "default": true, "description": "also look up each online video file's proxy (hashes the files)" }
+        }),
+        &["timeline"],
+    )
+}
+
+pub fn proxy_generate() -> Value {
+    object(
+        json!({
+            "timeline": path("make proxies of every video source of this timeline (nested comps followed)"),
+            "media": { "type": "array", "items": path("media file"), "description": "media files to make proxies of" },
+            "force": { "type": "boolean", "default": false, "description": "re-make existing proxies" }
         }),
         &[],
     )

@@ -169,6 +169,19 @@ fn tools_refuse_paths_outside_the_root() {
         json!({ "timeline": "evil.json", "action": "create", "name": "x" }),
     );
     rejected(&cx, "report_read", json!({ "report": "evil.json" }));
+    rejected(&cx, "markers_list", json!({ "timeline": "evil.json" }));
+    rejected(&cx, "media_status", json!({ "timeline": "evil.json" }));
+    rejected(&cx, "proxy_generate", json!({ "timeline": "evil.json" }));
+    rejected(
+        &cx,
+        "proxy_generate",
+        json!({ "media": ["../outside/a.mkv"] }),
+    );
+    rejected(
+        &cx,
+        "proxy_generate",
+        json!({ "media": ["link_dir/a.mkv"] }),
+    );
     rejected(
         &cx,
         "diff",
@@ -180,6 +193,8 @@ fn tools_refuse_paths_outside_the_root() {
     for tl in ["escape-src.json", "link-src.json"] {
         let e = rejected(&cx, "plan", json!({ "timeline": tl }));
         assert!(e.contains("clip source"), "{e}");
+        rejected(&cx, "media_status", json!({ "timeline": tl }));
+        rejected(&cx, "proxy_generate", json!({ "timeline": tl }));
         rejected(
             &cx,
             "render",
@@ -219,6 +234,20 @@ fn tools_refuse_paths_outside_the_root() {
         "render",
         json!({ "timeline": "tl.json", "output": "out.mkv", "report": "link_dir/r.json" }),
     );
+
+    // Relink: outside targets and search directories.
+    for op in [
+        json!({ "op": "relink", "clip": "a", "to": "../outside/a.mkv" }),
+        json!({ "op": "relink", "from": "a.mkv", "to": "link_dir/a.mkv" }),
+        json!({ "op": "relink", "search": "../outside" }),
+        json!({ "op": "relink", "search": "link_dir" }),
+    ] {
+        rejected(
+            &cx,
+            "edit_apply",
+            json!({ "timeline": "tl.json", "ops": [op] }),
+        );
+    }
 
     // Edits: outside output, and an inserted clip whose source is outside.
     let slip = json!([{ "op": "slip", "clip": "a", "delta": "1/2" }]);

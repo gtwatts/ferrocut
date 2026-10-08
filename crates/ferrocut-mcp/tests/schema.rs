@@ -63,6 +63,10 @@ fn every_edit_op_has_a_strict_schema_whose_example_parses() {
         "add_effect",
         "set_effect_param",
         "remove_effect",
+        "add_marker",
+        "update_marker",
+        "remove_marker",
+        "relink",
     ]
     .into_iter()
     .map(String::from)
@@ -137,6 +141,9 @@ fn every_tool_schema_is_a_strict_object() {
             "diff",
             "plan",
             "render",
+            "markers_list",
+            "media_status",
+            "proxy_generate",
             "report_read",
             "quality_check",
             "log",

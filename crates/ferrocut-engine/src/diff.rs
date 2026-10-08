@@ -132,7 +132,8 @@ pub struct ClipChange {
     /// `moved`, `trimmed_in`, `trimmed_out`, `slipped`, `retimed`,
     /// `track_changed`, `reordered`, `source_changed`, `opacity_changed`,
     /// `transform_changed`, `generator_changed`, `three_d_changed`,
-    /// `motion_blur_changed`, `transition_changed`, `audio_changed`,
+    /// `motion_blur_changed`, `markers_changed` (no output change),
+    /// `transition_changed`, `audio_changed`,
     /// `keyframes_changed`.
     pub tags: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -403,7 +404,12 @@ pub fn diff(a: &Timeline, b: &Timeline) -> TimelineDiff {
         v
     };
     let settings = field_changes(&strip(a), &strip(b), &[]);
-    if settings.iter().any(|f| f.path != "name") {
+    // Name and markers never change the output.
+    let annotation = |path: &str| path.split(['.', '[']).next() == Some("markers");
+    if settings
+        .iter()
+        .any(|f| f.path != "name" && !annotation(&f.path))
+    {
         spans.push(whole);
     }
     summary.settings_changed = settings.len();
@@ -509,12 +515,13 @@ pub fn diff(a: &Timeline, b: &Timeline) -> TimelineDiff {
                     ("generator", "generator_changed"),
                     ("three_d", "three_d_changed"),
                     ("motion_blur", "motion_blur_changed"),
+                    ("markers", "markers_changed"),
                     ("transition_in", "transition_changed"),
                     ("audio", "audio_changed"),
                 ] {
                     if fields
                         .iter()
-                        .any(|f| f.path == root || f.path.starts_with(&format!("{root}.")))
+                        .any(|f| f.path.split(['.', '[']).next() == Some(root))
                     {
                         tags.push(tag);
                     }
@@ -537,7 +544,8 @@ pub fn diff(a: &Timeline, b: &Timeline) -> TimelineDiff {
                     (tags.contains(&"trimmed_in") || tags.contains(&"trimmed_out")) as usize;
                 summary.slipped += tags.contains(&"slipped") as usize;
                 let span = (x.extent.0.min(y.extent.0), x.extent.1.max(y.extent.1));
-                if !(reordered && fields.is_empty()) {
+                let only_markers = !fields.is_empty() && fields.iter().all(|f| annotation(&f.path));
+                if !(reordered && fields.is_empty()) && !(only_markers && !track_changed) {
                     spans.push(span);
                 }
                 out.push(ClipChange {

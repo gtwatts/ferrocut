@@ -162,6 +162,10 @@ pub struct RenderReport {
     /// The delivery file made from this master (`render --deliver`), if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deliver: Option<crate::deliver::DeliverSummary>,
+    /// Proxies read instead of the original media (a draft render, see
+    /// [`crate::compile::compile_proxies`]); empty for a full-resolution render.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub proxies: Vec<PathBuf>,
 }
 
 /// Output frames in flight per chunk worker in the readback ring.
@@ -933,6 +937,7 @@ pub fn render(
         gpu_recreations: gpu.recreations() - recreations_before,
         chunk_dir: chunk_dir.clone(),
         final_blake3: file_blake3(out)?,
+        proxies: Vec::new(),
         video_blake3: stats.video_blake3,
         audio: match audio_plan {
             Some(a) => Some(AudioReport {

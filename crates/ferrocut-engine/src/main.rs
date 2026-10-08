@@ -48,6 +48,11 @@ enum Cmd {
         /// Render on a software (CPU) Vulkan adapter (Mesa lavapipe); same as FERROCUT_ADAPTER=cpu.
         #[arg(long)]
         cpu: bool,
+        /// Draft render: read video from half-resolution proxies where they exist
+        /// (`ferrocut proxy`). Ignored with --deliver: a final render always uses
+        /// the original media.
+        #[arg(long)]
+        proxies: bool,
         /// Run the perceptual quality check (ferrocut-perceive) on the result; writes
         /// <output>.check.json and exits 1 on fail, 2 on checker error (skipped if not installed).
         #[arg(long)]
@@ -108,6 +113,18 @@ enum Cmd {
     Plan { timeline: PathBuf },
     /// Probe a media file: duration, frame rate, size, streams, audio presence (JSON).
     Probe { media: PathBuf },
+    /// Make half-resolution proxies (DNxHR LB, or FFV1 when tiny or with alpha) of
+    /// media files, or of every video source of timelines (nested comps followed),
+    /// in `<media dir>/.ferrocut-proxies/`. `render --proxies` reads them for draft
+    /// renders; final renders always use the original media.
+    Proxy {
+        /// Timeline .json files and/or media files.
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+        /// Re-make proxies that already exist.
+        #[arg(long)]
+        force: bool,
+    },
     /// Build (or read back) the cached media index: whisper.cpp transcript with
     /// word times, and shot boundaries (when SeePlus's detector is available).
     /// Stored in `<media dir>/.ferrocut-index/`, keyed by content hashes.
@@ -454,6 +471,35 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Cmd::Proxy { inputs, force } => {
+            let mut files = Vec::new();
+            for i in &inputs {
+                if ferrocut_engine::comp::is_comp(i) {
+                    let tl = Timeline::load(i)?;
+                    files.extend(ferrocut_engine::media::proxy::video_sources(&tl)?);
+                } else {
+                    files.push(i.clone());
+                }
+            }
+            files.dedup();
+            let mut infos = Vec::new();
+            for f in &files {
+                let t0 = std::time::Instant::now();
+                let p = ferrocut_engine::media::proxy::generate(f, force)?;
+                eprintln!(
+                    "{} {} -> {} ({} {}x{}, {} ms)",
+                    if p.created { "made" } else { "kept" },
+                    f.display(),
+                    p.proxy.display(),
+                    p.codec,
+                    p.width,
+                    p.height,
+                    t0.elapsed().as_millis()
+                );
+                infos.push(p);
+            }
+            println!("{}", serde_json::to_string_pretty(&infos)?);
+        }
         Cmd::Probe { media } => {
             let info = ferrocut_engine::media::probe(&media)?;
             println!("{}", serde_json::to_string_pretty(&info)?);
@@ -481,6 +527,7 @@ fn main() -> anyhow::Result<()> {
             timeout,
             retries,
             cpu,
+            proxies,
             check,
             check_args,
             expect_audio,
@@ -493,7 +540,20 @@ fn main() -> anyhow::Result<()> {
             let started = std::time::Instant::now();
             let jobs_arg = jobs;
             let tl = Timeline::load(&timeline)?;
-            let c = compile(&tl)?;
+            if proxies && deliver.is_some() {
+                eprintln!("proxies: ignored (--deliver is a final render: original media)");
+            }
+            let (c, used_proxies) = if proxies && deliver.is_none() {
+                ferrocut_engine::compile::compile_proxies(&tl)?
+            } else {
+                (compile(&tl)?, Vec::new())
+            };
+            if !used_proxies.is_empty() {
+                eprintln!(
+                    "proxies: DRAFT render from {} proxy file(s)",
+                    used_proxies.len()
+                );
+            }
             // One device for the whole render, from what the graph's nodes declared.
             let gpu = SharedGpu::new(GpuContext::with_requirements(
                 adapter_pref(cpu),
@@ -536,6 +596,7 @@ fn main() -> anyhow::Result<()> {
                     ..RenderOptions::new(cache_dir)
                 },
             )?;
+            r.proxies = used_proxies;
             println!(
                 "chunk  frames       status    key               chunk-file blake3                                                 ms"
             );

@@ -22,6 +22,7 @@ use ferrocut_core::{Animatable, FrameRate, Rational, RationalTime};
 use crate::blend::{BlendMode, MatteSpec};
 use crate::generator::GeneratorSpec;
 use crate::layer3d::{CameraSpec, MotionBlurSpec};
+use crate::markers::Marker;
 use crate::retime::{Sampling, TimeMap};
 use crate::transform::TransformSpec;
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,9 @@ pub struct Timeline {
     /// absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion_blur: Option<MotionBlurSpec>,
+    /// Timeline markers (timeline seconds; see [`crate::markers`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<Marker>,
 }
 
 /// Project audio format and master bus.
@@ -253,6 +257,9 @@ pub struct AudioClip {
     pub time_remap: Option<Animatable>,
     #[serde(default, skip_serializing_if = "ClipAudio::is_default")]
     pub audio: ClipAudio,
+    /// Clip markers (source seconds; see [`crate::markers`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<Marker>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -347,6 +354,9 @@ pub struct Clip {
     /// Linked audio (used if the source has an audio stream).
     #[serde(default, skip_serializing_if = "ClipAudio::is_default")]
     pub audio: ClipAudio,
+    /// Clip markers (source seconds; see [`crate::markers`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<Marker>,
 }
 
 fn path_is_empty(p: &Path) -> bool {
@@ -485,6 +495,13 @@ impl Timeline {
         }
         if let Some(m) = &self.motion_blur {
             m.validate().map_err(|e| anyhow::anyhow!(e))?;
+        }
+        crate::markers::validate(&self.markers, "timeline")?;
+        for c in self.tracks.iter().flat_map(|t| &t.clips) {
+            crate::markers::validate(&c.markers, &format!("clip {}", c.id))?;
+        }
+        for c in self.audio_tracks.iter().flat_map(|t| &t.clips) {
+            crate::markers::validate(&c.markers, &format!("clip {}", c.id))?;
         }
         for (ti, track) in self.tracks.iter().enumerate() {
             if track.matte.is_some() {

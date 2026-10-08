@@ -211,7 +211,7 @@ pub fn tools() -> Vec<Tool> {
         tool(
             "edit_apply",
             "Apply edit ops",
-            "Apply edit ops atomically: build (add_track, add_clip, add_transition, set_param, set_keyframes) and edit (split, trim, ripple_delete, ripple_insert, roll, slip, slide, move, jl_cut, set_speed, freeze_frame) and nest (nest, unnest: nested compositions) and audio effects (add_effect, set_effect_param, remove_effect). Writes the timeline (in place, or to `output`) and appends the ops with before/after hashes to the journal, unless dry_run. Returns per-op change summaries and affected spans, before/after hashes, the journal seq, and with plan=true the output chunks that would re-render. A failing op changes nothing and names the op and reason.",
+            "Apply edit ops atomically: build (add_track, add_clip, add_transition, set_param, set_keyframes) and edit (split, trim, ripple_delete, ripple_insert, roll, slip, slide, move, jl_cut, set_speed, freeze_frame) and nest (nest, unnest: nested compositions) and audio effects (add_effect, set_effect_param, remove_effect) and annotate/manage (add_marker, update_marker, remove_marker, relink). Writes the timeline (in place, or to `output`) and appends the ops with before/after hashes to the journal, unless dry_run. Returns per-op change summaries and affected spans, before/after hashes, the journal seq, and with plan=true the output chunks that would re-render. A failing op changes nothing and names the op and reason.",
             schema::edit_apply(),
             rw(false),
         ),
@@ -234,6 +234,27 @@ pub fn tools() -> Vec<Tool> {
             "Render",
             "Render the timeline to a lossless FFV1/PCM MKV with the incremental chunk cache. Blocks until done. Returns the report JSON path, output hashes, chunk reuse stats (total/reused/rendered chunk indices, reuse ratio, frames), fps and adapter. Use report_read for the full report.",
             schema::render(),
+            rw(false).idempotent(true),
+        ),
+        tool(
+            "markers_list",
+            "List markers",
+            "Every marker of a timeline: timeline markers (scope timeline) and clip markers (scope clip, with clip and track), each with id, name, color, comment, time and duration in timeline time (clip markers are stored in source time, returned as source_time; time is null when the marked frame is outside the clip or the clip is ramped/frozen). Add, change or remove markers with edit_apply (add_marker, update_marker, remove_marker); markers never change the render.",
+            schema::markers_list(),
+            ro().idempotent(true),
+        ),
+        tool(
+            "media_status",
+            "Media status (offline, proxies)",
+            "Every media file and nested comp a timeline's clips use: path, kind (video/audio), online (the file exists), the clips using it, and (proxies=true) its up-to-date proxy. Relink offline media with edit_apply's relink op; make proxies with proxy_generate.",
+            schema::media_status(),
+            ro().idempotent(true),
+        ),
+        tool(
+            "proxy_generate",
+            "Make proxies",
+            "Make half-resolution proxies of media files (`media`) or of every video source of a timeline (`timeline`, nested comps followed): DNxHR LB (FFV1 for frames under 256x120 or with alpha) in <media dir>/.ferrocut-proxies/, keyed by the source's content hash (a changed file gets a new proxy). Existing proxies are kept unless force. render with proxies=true reads them for fast drafts; final renders (no proxies, or deliver) always use the original media.",
+            schema::proxy_generate(),
             rw(false).idempotent(true),
         ),
         tool(
@@ -344,6 +365,26 @@ struct RenderArgs {
     #[serde(default)]
     expect_audio: perceive::ExpectAudio,
     deliver: Option<DeliverArg>,
+    #[serde(default)]
+    proxies: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MediaStatusArgs {
+    timeline: PathBuf,
+    #[serde(default = "d_true")]
+    proxies: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProxyArgs {
+    timeline: Option<PathBuf>,
+    #[serde(default)]
+    media: Vec<PathBuf>,
+    #[serde(default)]
+    force: bool,
 }
 
 /// `render.deliver`: `"mp4"` or `{format, output, qp, audio, jobs}`.
@@ -726,6 +767,17 @@ fn precheck_edit(
 fn edit_apply(cx: &Ctx, a: EditArgs) -> anyhow::Result<Value> {
     let timeline = cx.root.check(&a.timeline)?;
     let output = cx.root.check_opt(a.output)?;
+    // relink's search walks a directory: it must be inside the root too.
+    for op in &a.ops {
+        if let EditOp::Relink {
+            search: Some(d), ..
+        } = op
+        {
+            cx.root
+                .check(&project::dir_of(&timeline).join(d))
+                .context("relink search directory")?;
+        }
+    }
     let opts = EditOptions {
         output,
         dry_run: a.dry_run,
@@ -779,7 +831,7 @@ pub fn summarize(report: &Value) -> Value {
     let (reused, rendered) = (idx("reused"), idx("rendered"));
     let total = chunks.len();
     let audio = &report["audio"];
-    json!({
+    let mut s = json!({
         "output": report["output"],
         "adapter": report["adapter"],
         "engine": report["engine"],
@@ -807,7 +859,73 @@ pub fn summarize(report: &Value) -> Value {
         "min_jobs_in_flight": report["min_jobs_in_flight"],
         "loudness": audio.get("output").cloned().unwrap_or(Value::Null),
         "deliver": report.get("deliver").cloned().unwrap_or(Value::Null),
-    })
+    });
+    if let Some(p) = report.get("proxies") {
+        s["draft"] = json!(true);
+        s["proxies"] = p.clone();
+    }
+    s
+}
+
+fn markers_list(cx: &Ctx, a: TimelineArgs) -> anyhow::Result<Value> {
+    let path = cx.root.check(&a.timeline)?;
+    let tl = read_timeline(&path)?;
+    let m = ferrocut_engine::markers::list(&tl);
+    Ok(json!({ "count": m.len(), "markers": m }))
+}
+
+fn media_status(cx: &Ctx, a: MediaStatusArgs) -> anyhow::Result<Value> {
+    let (_, tl) = cx.root.load_timeline(&a.timeline)?;
+    let st = ferrocut_engine::media::proxy::media_status(&tl, a.proxies);
+    let offline: Vec<String> = st
+        .iter()
+        .filter(|s| !s.online)
+        .map(|s| rel(cx, &s.path))
+        .collect();
+    let sources: Vec<Value> = st
+        .iter()
+        .map(|s| {
+            let mut v = serde_json::to_value(s).unwrap_or_default();
+            v["path"] = json!(rel(cx, &s.path));
+            if let Some(p) = &s.proxy {
+                v["proxy"] = json!(rel(cx, p));
+            }
+            v
+        })
+        .collect();
+    Ok(json!({
+        "sources": sources,
+        "offline": offline,
+        "proxied": st.iter().filter(|s| s.proxy.is_some()).count(),
+    }))
+}
+
+fn proxy_generate(cx: &Ctx, a: ProxyArgs) -> anyhow::Result<Value> {
+    use ferrocut_engine::media::proxy;
+    if a.timeline.is_none() && a.media.is_empty() {
+        bail!("give `timeline` and/or `media`");
+    }
+    let mut files = Vec::new();
+    if let Some(t) = &a.timeline {
+        let (_, tl) = cx.root.load_timeline(t)?;
+        files.extend(proxy::video_sources(&tl)?);
+    }
+    for m in &a.media {
+        files.push(cx.root.check(m)?);
+    }
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|f| seen.insert(f.clone()));
+    let _one_at_a_time = RENDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut out = Vec::new();
+    for f in &files {
+        let p = proxy::generate(f, a.force)?;
+        let mut v = serde_json::to_value(&p)?;
+        v["source"] = json!(rel(cx, &p.source));
+        v["proxy"] = json!(rel(cx, &p.proxy));
+        out.push(v);
+    }
+    let made = out.iter().filter(|v| v["created"] == true).count();
+    Ok(json!({ "proxies": out, "made": made, "kept": out.len() - made }))
 }
 
 fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
@@ -846,7 +964,13 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
         (p, _) => p.clone(),
     };
     let _one_at_a_time = RENDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let c = compile(&tl)?;
+    // A delivery is a final render: always the original media.
+    let draft = a.proxies && deliver.is_none();
+    let (c, used_proxies) = if draft {
+        ferrocut_engine::compile::compile_proxies(&tl)?
+    } else {
+        (compile(&tl)?, Vec::new())
+    };
     let pref = if a.cpu {
         AdapterPreference::Cpu
     } else {
@@ -880,12 +1004,18 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
         },
     )?;
     let mut r = r;
+    r.proxies = used_proxies;
     let report_path = report.unwrap_or_else(|| output.with_extension("report.json"));
     let v = serde_json::to_value(&r)?;
     std::fs::write(&report_path, serde_json::to_string_pretty(&v)?)
         .with_context(|| format!("writing {}", report_path.display()))?;
     let mut s = summarize(&v);
     s["report_path"] = json!(report_path);
+    if a.proxies && !draft {
+        s["proxies"] = json!("ignored: deliver is a final render from the original media");
+    } else if draft && r.proxies.is_empty() {
+        s["proxies"] = json!("none found: rendered from the original media (see proxy_generate)");
+    }
     let mut check_passed = true;
     if a.check {
         let o = perceive::check(
@@ -1129,6 +1259,9 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
         "plan" => args(name, a).and_then(|a| plan_tool(cx, a)),
         "render" => args(name, a).and_then(|a| render_tool(cx, a)),
         "report_read" => args(name, a).and_then(|a| report_read(cx, a)),
+        "markers_list" => args(name, a).and_then(|a| markers_list(cx, a)),
+        "media_status" => args(name, a).and_then(|a| media_status(cx, a)),
+        "proxy_generate" => args(name, a).and_then(|a| proxy_generate(cx, a)),
         "quality_check" => args::<CheckArgs>(name, a).and_then(|a| {
             let render = cx.root.check(&a.render)?;
             let (timeline, _) = cx.root.load_timeline(&a.timeline)?;

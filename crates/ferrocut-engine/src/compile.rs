@@ -204,6 +204,23 @@ fn build(
     Ok(out.expect("at least one track"))
 }
 
+/// Compile for a draft render: video sources that have a proxy (see
+/// [`crate::media::proxy`]) are read from it. Returns the proxies used.
+/// Final renders use [`compile`] (always the original media).
+pub fn compile_proxies(tl: &Timeline) -> anyhow::Result<(Compiled, Vec<PathBuf>)> {
+    let mut used = Vec::new();
+    let c = compile_with(tl, |p, w, h| {
+        let mut s = SourceNode::new(p.clone(), w, h)?;
+        if let Some(px) = crate::media::proxy::find(p, &s.file_hash) {
+            s.file_hash = crate::media::proxy::proxied_hash(&s.file_hash);
+            s.path = px.clone();
+            used.push(px);
+        }
+        Ok(s)
+    })?;
+    Ok((c, used))
+}
+
 pub fn compile(tl: &Timeline) -> anyhow::Result<Compiled> {
     compile_with(tl, |p, w, h| SourceNode::new(p.clone(), w, h))
 }

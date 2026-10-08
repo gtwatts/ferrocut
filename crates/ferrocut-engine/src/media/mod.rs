@@ -5,6 +5,7 @@ pub mod concat;
 pub mod decode;
 pub mod encode;
 pub mod probe;
+pub mod proxy;
 
 pub use probe::{MediaInfo, StreamInfo, probe};
 
