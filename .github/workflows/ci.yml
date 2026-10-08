@@ -40,7 +40,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt
-      - run: cargo fmt --check -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp
+      - run: cargo fmt --check -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp -p ferrocut-build
 
   test:
     name: clippy, tests, CPU render check
@@ -154,7 +154,7 @@ jobs:
         run: cargo run --locked -q -p ferrocut-engine --bin ferrocut -- adapters
 
       - name: Clippy (Rusty's crates, all targets, -D warnings)
-        run: cargo clippy --locked -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp --all-targets -- -D warnings
+        run: cargo clippy --locked -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp -p ferrocut-build --all-targets -- -D warnings
 
       # GPU tests run on lavapipe. Tests that need an adapter and find none print
       # SKIP and return; on this runner lavapipe is always present.

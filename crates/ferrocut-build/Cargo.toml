@@ -1,0 +1,11 @@
+[package]
+name = "ferrocut-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Build-script helpers shared by Ferrocut crates: locate the LGPL FFmpeg via pkg-config and embed relocatable rpaths"
+
+# No dependencies: it runs inside build scripts.
+[dependencies]

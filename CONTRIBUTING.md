@@ -8,7 +8,8 @@ the house rules.
 See [Crate ownership](README.md#crate-ownership).
 
 - **Rusty:** `ferrocut-types`, `ferrocut-core` (shared with SeePlus), `ferrocut-audio`, `ferrocut-engine`,
-  `ferrocut-mcp`.
+  `ferrocut-mcp`, `ferrocut-build` (build-script helpers: FFmpeg lookup + relocatable rpaths, for any crate
+  that links FFmpeg).
 - **SeePlus:** `ferrocut-color`, `ferrocut-colorspace`, `ferrocut-ofx`, `ferrocut-ipc`, `ferrocut-lottie`,
   `ferrocut-html`, `ferrocut-perceive`, `ferrocut-deliver`, and their `scripts/`.
 
@@ -37,8 +38,8 @@ carry a relocatable RUNPATH, so they need no `LD_LIBRARY_PATH`. The `ffmpeg` CLI
 CI is `.github/workflows/ci.yml` on `ubuntu-latest` with no GPU: wgpu runs on Mesa lavapipe. Locally:
 
 ```sh
-cargo fmt --check -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp
-cargo clippy --locked -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp \
+cargo fmt --check -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp -p ferrocut-build
+cargo clippy --locked -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp -p ferrocut-build \
   --all-targets -- -D warnings
 cargo test --workspace --locked --exclude ferrocut-deliver
 cargo test --locked -p ferrocut-deliver --lib --bins   # see "OpenH264" below

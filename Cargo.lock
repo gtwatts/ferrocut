@@ -544,6 +544,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrocut-build"
+version = "0.0.1"
+
+[[package]]
 name = "ferrocut-color"
 version = "0.0.1"
 dependencies = [
@@ -605,6 +609,7 @@ dependencies = [
  "bytemuck",
  "clap",
  "ferrocut-audio",
+ "ferrocut-build",
  "ferrocut-colorspace",
  "ferrocut-core",
  "ferrocut-deliver",
