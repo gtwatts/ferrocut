@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the fixed creative brief with the user's installed, authenticated Codex."""
+"""Run a creative brief with the user's installed, authenticated Codex."""
 import argparse
 import datetime
 import hashlib
@@ -16,13 +16,16 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--work", type=Path, required=True)
 parser.add_argument("--timeout", type=int, default=3600)
 parser.add_argument("--model", help="Explicit user-authorized model for this run only")
+parser.add_argument("--brief", type=Path, help="Creative brief to use instead of the local-only baseline")
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 work = args.work.resolve()
 work.mkdir(parents=True, exist_ok=False)
 evidence = work / "evidence"
 evidence.mkdir()
-brief = root / "eval/creative/agent-editor-60s/BRIEF.md"
+brief = (args.brief or root / "eval/creative/agent-editor-60s/BRIEF.md").resolve()
+if not brief.is_file():
+    raise SystemExit(f"Creative brief does not exist: {brief}")
 shutil.copy2(brief, work / "BRIEF.md")
 config = tomllib.loads((Path.home() / ".codex/config.toml").read_text())
 codex = shutil.which("codex")
@@ -46,7 +49,7 @@ login = subprocess.run([codex, "login", "status"], env=env, capture_output=True,
 if login.returncode or "chatgpt" not in (login.stdout + login.stderr).lower():
     raise SystemExit("An existing ChatGPT Codex login is required; no paid API fallback")
 manifest = {
-    "task": "agent-editor-60s", "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "task": brief.parent.name, "started_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     "source_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
     "brief_sha256": hashlib.sha256(brief.read_bytes()).hexdigest(),
     "codex_version": subprocess.check_output([codex, "--version"], text=True, env=env).strip(),

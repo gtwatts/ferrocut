@@ -300,6 +300,16 @@ inherits installed plugins and confines Ferrocut assets to the work directory;
 it supplies no finished timeline or reference solution. Outputs and raw session
 logs stay local. A successful CLI exit does not certify creative quality.
 
+The [provider-backed brief](eval/creative/agent-editor-60s-toolchain/BRIEF.md)
+tests native Codex image generation, ElevenLabs narration and Ferrocut editing.
+Select it with `--brief eval/creative/agent-editor-60s-toolchain/BRIEF.md` after
+the user authorizes those provider calls. It keeps prompts, generated assets,
+voice/model settings, request receipts and the native edit history. Provider
+availability must be checked in the actual session; an installed skill is not
+proof that generation worked. Both briefs require rendered previews, image
+inspection and a meaningful revision before final delivery. Frame inspection
+does not establish continuous playback or audio listening capability.
+
 ```toml
 [mcp_servers.ferrocut]
 command = "/home/gordontwatts/Documents/projects/ferrocut/target/release/ferrocut-mcp"
