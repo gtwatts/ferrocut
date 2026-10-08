@@ -14,7 +14,9 @@ struct OutParams {
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(3) var dst: texture_storage_2d<rgba8unorm, write>;
 
-// fc_* color functions: `ferrocut_colorspace::wgsl()`, prepended at pipeline creation.
+// fc_* color functions: `ferrocut_colorspace::wgsl()`, prepended at pipeline
+// creation. FC_OUTPUT_MATRIX / FC_OUTPUT_ENCODE are replaced by the names that
+// `ferrocut_colorspace::named` resolves (see `compositor::color_fns`).
 
 @compute @workgroup_size(16, 16)
 fn output_rec709(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -27,7 +29,7 @@ fn output_rec709(@builtin(global_invocation_id) id: vec3<u32>) {
         c = textureLoad(src, q, 0);
     }
     // Premultiplied over opaque black is just the premultiplied color.
-    let lin = clamp(fc_acescg_to_rec709(c.rgb), vec3<f32>(0.0), vec3<f32>(1.0));
-    let v = fc_linear_to_bt709(lin);
+    let lin = clamp(FC_OUTPUT_MATRIX(c.rgb), vec3<f32>(0.0), vec3<f32>(1.0));
+    let v = FC_OUTPUT_ENCODE(lin);
     textureStore(dst, vec2<i32>(id.xy), vec4<f32>(v.b, v.g, v.r, 1.0));
 }

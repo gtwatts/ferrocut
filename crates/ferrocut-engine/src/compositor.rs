@@ -82,6 +82,47 @@ fn init_buffer(
     buf
 }
 
+/// Color spaces the input/output kernels convert between, by the names frames
+/// are tagged with: decoded video is BT.709-OETF Rec.709 ("Camera Rec.709"),
+/// working frames are [`ColorSpace::acescg`], and the master is encoded back
+/// to Camera Rec.709.
+pub const SOURCE_SPACE: &str = ferrocut_colorspace::named::names::CAMERA_REC709;
+pub const OUTPUT_SPACE: &str = ferrocut_colorspace::named::names::CAMERA_REC709;
+
+/// The `fc_*` WGSL function names (from `ferrocut_colorspace::wgsl()`) that the
+/// kernels call, resolved through the name-keyed `ferrocut_colorspace::named` API.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColorFns {
+    pub input_decode: &'static str,
+    pub input_matrix: &'static str,
+    pub output_matrix: &'static str,
+    pub output_encode: &'static str,
+}
+
+impl ColorFns {
+    /// `ferrocut_colorspace::wgsl()` followed by `kernel` with its
+    /// `FC_INPUT_*` / `FC_OUTPUT_*` placeholders replaced.
+    pub fn shader(&self, kernel: &str) -> String {
+        let k = kernel
+            .replace("FC_INPUT_DECODE", self.input_decode)
+            .replace("FC_INPUT_MATRIX", self.input_matrix)
+            .replace("FC_OUTPUT_MATRIX", self.output_matrix)
+            .replace("FC_OUTPUT_ENCODE", self.output_encode);
+        format!("{}\n{}", ferrocut_colorspace::wgsl(), k)
+    }
+}
+
+pub fn color_fns() -> Result<ColorFns, ferrocut_colorspace::named::UnknownSpace> {
+    use ferrocut_colorspace::named;
+    let working = ColorSpace::acescg();
+    Ok(ColorFns {
+        input_decode: named::transfer(SOURCE_SPACE)?.wgsl_decode_fn(),
+        input_matrix: named::wgsl_matrix_fn(SOURCE_SPACE, working.name())?,
+        output_matrix: named::wgsl_matrix_fn(working.name(), OUTPUT_SPACE)?,
+        output_encode: named::transfer(OUTPUT_SPACE)?.wgsl_encode_fn(),
+    })
+}
+
 pub fn compositor_slot() -> NodeHash {
     NodeHash::of("engine.compositor", &[])
 }
@@ -134,26 +175,17 @@ fn check_compatible(a: &Frame, b: &Frame) -> Result<(), NodeError> {
 impl Compositor {
     pub fn new(gpu: &GpuContext) -> Self {
         let dev = &gpu.device;
+        let fns = color_fns().expect("built-in color space names resolve");
         let comp = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("composite.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{}\n{}",
-                    ferrocut_colorspace::wgsl(),
-                    include_str!("shaders/composite.wgsl")
-                )
-                .into(),
+                fns.shader(include_str!("shaders/composite.wgsl")).into(),
             ),
         });
         let out = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("output.wgsl"),
             source: wgpu::ShaderSource::Wgsl(
-                format!(
-                    "{}\n{}",
-                    ferrocut_colorspace::wgsl(),
-                    include_str!("shaders/output.wgsl")
-                )
-                .into(),
+                fns.shader(include_str!("shaders/output.wgsl")).into(),
             ),
         });
         let xf = dev.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -673,5 +705,32 @@ impl ReadbackRing {
             self.complete_oldest(gpu, sink)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn color_fns_resolve_by_name_to_the_same_kernels() {
+        // Same functions the kernels hard-coded before the name-keyed API,
+        // so the generated WGSL (and every output hash) is unchanged.
+        let f = color_fns().unwrap();
+        assert_eq!(
+            f,
+            ColorFns {
+                input_decode: "fc_bt709_to_linear",
+                input_matrix: "fc_rec709_to_acescg",
+                output_matrix: "fc_acescg_to_rec709",
+                output_encode: "fc_linear_to_bt709",
+            }
+        );
+        for k in [
+            include_str!("shaders/composite.wgsl"),
+            include_str!("shaders/output.wgsl"),
+        ] {
+            assert!(!f.shader(k).contains("FC_INPUT_") && !f.shader(k).contains("FC_OUTPUT_"));
+        }
     }
 }

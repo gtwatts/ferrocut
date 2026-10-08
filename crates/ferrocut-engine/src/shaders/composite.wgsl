@@ -50,6 +50,9 @@ fn load_b(id: vec2<u32>) -> vec4<f32> {
 
 // Color math (fc_* functions, OCIO-matching matrices) comes from
 // `ferrocut_colorspace::wgsl()`, prepended to this file at pipeline creation.
+// FC_INPUT_DECODE / FC_INPUT_MATRIX are replaced by the fc_* function names
+// that `ferrocut_colorspace::named` resolves for the source and working
+// space names (see `compositor::color_fns`).
 
 // Decoded 8-bit Rec.709 RGBA (straight alpha) -> linear ACEScg, premultiplied.
 // Source and destination share one window, so no origin math.
@@ -58,7 +61,7 @@ fn input_rec709(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!in_bounds(id.xy)) { return; }
     let c = textureLoad(src_a, vec2<i32>(id.xy), 0);
     // Rec.709 video, scene-referred: inverse BT.709 OETF, then Rec.709 -> ACEScg.
-    let lin = fc_rec709_to_acescg(fc_bt709_to_linear(c.rgb));
+    let lin = FC_INPUT_MATRIX(FC_INPUT_DECODE(c.rgb));
     textureStore(dst, vec2<i32>(id.xy), vec4<f32>(lin * c.a, c.a));
 }
 
