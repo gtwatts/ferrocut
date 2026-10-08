@@ -1,0 +1,6 @@
+{
+  "point": "target",
+  "source_clip": "source",
+  "target_clip": "reticle",
+  "mode": "attach"
+}

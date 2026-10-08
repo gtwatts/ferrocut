@@ -201,6 +201,7 @@ pub fn clip() -> Value {
             "audio": clip_audio(),
             "generator": generator(),
             "markers": markers(CLIP_MARKER_TIME),
+            "masks": crate::native_schema::masks(),
             "effects": video_effects(),
             "adjustment": { "type": "boolean", "default": false, "description": "adjustment layer: no source; its effects apply to the composite of the tracks below while it is active, mixed by its opacity and its track's matte. Its track holds only adjustment clips; no transform, 3D, blend mode, speed or transition." }
         },
@@ -359,6 +360,11 @@ pub fn generator() -> Value {
                 "type": "object",
                 "properties": { "type": {"const":"shape"}, "shape": crate::native_schema::shape() },
                 "required": ["type","shape"], "additionalProperties": false
+            },
+            {
+                "type":"object",
+                "properties":{"type":{"const":"vector_group"},"group":crate::native_schema::vector_group()},
+                "required":["type","group"],"additionalProperties":false
             },
             {
                 "type": "object",
@@ -1061,6 +1067,7 @@ fn video_clip() -> Value {
             "audio": clip_audio(),
             "generator": generator(),
             "markers": markers(CLIP_MARKER_TIME),
+            "masks": crate::native_schema::masks(),
             "effects": video_effects(),
             "adjustment": { "type": "boolean", "default": false, "description": "adjustment layer: no source; its effects apply to the composite of the tracks below while it is active, mixed by its opacity and its track's matte. Its track holds only adjustment clips; no transform, 3D, blend mode, speed or transition." }
         },

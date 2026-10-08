@@ -1518,12 +1518,13 @@ where
                 if clip.three_d
                     || clip.motion_blur
                     || !clip.effects.is_empty()
+                    || !clip.masks.is_empty()
                     || clip.blend_mode != crate::blend::BlendMode::Normal
                 {
                     self.report.loss(
                         "clip_compositing",
                         &clip.id,
-                        "3D, motion blur, non-normal blend and clip effects omitted",
+                        "3D, motion blur, masks, non-normal blend and clip effects omitted",
                     );
                 }
                 let start = to_tick(clip.start)?;

@@ -1,0 +1,18 @@
+{
+  "counts": {
+    "stable": {
+      "missing": 206,
+      "partial": 182,
+      "integrated": 54,
+      "verified": 1
+    },
+    "beta_watchlist": {
+      "missing": 9,
+      "partial": 4,
+      "integrated": 0,
+      "verified": 0
+    }
+  },
+  "total": 456,
+  "counts_are_not_parity_percentages": true
+}

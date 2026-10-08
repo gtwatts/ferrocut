@@ -1,7 +1,7 @@
 //! Agent entry points for actual reused engines, with project-root checks.
 
 use ferrocut_core::RationalTime;
-use ferrocut_engine::{interchange_io, scopes, storytold};
+use ferrocut_engine::{interchange_io, scopes, storytold, tracking, tracking_io};
 use rmcp::model::{Tool, ToolAnnotations};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -87,6 +87,33 @@ pub(crate) fn tools() -> Vec<Tool> {
             ),
             rw(),
         ),
+        crate::tool(
+            "tracking_analyze",
+            "Measure source point motion",
+            "Measure seeded point translation with EffectCraft's CPU NCC/LK tracker and save a new analysis JSON. Original decoded pixels, no resizing. Reports measured confidence and lost points; no adaptation or invented success. Settings are bounded to 16 points, 2400 frames, 8M pixels. Never overwrites output. Full source hashes checked before and after analysis. Cooperative timeout is observed between frames; cancellation writes no analysis file. Use tracking_keyframes to plan editable attachment or translation stabilization.",
+            object(
+                json!({
+                    "path":{"type":"string","minLength":1},"output":{"type":"string","minLength":1},
+                    "settings":crate::native_schema::tracking_settings(),
+                    "timeout_seconds":{"type":"number","minimum":1,"maximum":3600,"default":60}
+                }),
+                &["path", "output", "settings"],
+            ),
+            rw(),
+        ),
+        crate::tool(
+            "tracking_keyframes",
+            "Plan motion attachment or stabilization edits",
+            "Read a saved analysis and native timeline, verify source identity, then return ordinary set_keyframes edit operations without changing the timeline. Attach follows point displacement from its seed; stabilize computes actual EffectCraft translation corrections (transparent exposed borders). Selected track must be complete. Supports exact nonzero constant source speed including reverse; nonlinear remap and transformed/effected source pictures are rejected. Apply ops through edit_apply for validation, undo and cache invalidation.",
+            object(
+                json!({
+                    "analysis":{"type":"string","minLength":1},"timeline":{"type":"string","minLength":1},
+                    "options":crate::native_schema::tracking_keyframe_options()
+                }),
+                &["analysis", "timeline", "options"],
+            ),
+            ro(),
+        ),
     ]
 }
 
@@ -148,6 +175,26 @@ enum ConnectedFormat {
     Otio,
     Fcp7,
 }
+
+fn tracking_timeout() -> f64 {
+    60.0
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrackingArgs {
+    path: PathBuf,
+    output: PathBuf,
+    settings: tracking::TrackingSettings,
+    #[serde(default = "tracking_timeout")]
+    timeout_seconds: f64,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrackingKeysArgs {
+    analysis: PathBuf,
+    timeline: PathBuf,
+    options: tracking_io::KeyframeOptions,
+}
 impl ConnectedFormat {
     fn id(&self) -> &'static str {
         match self {
@@ -172,6 +219,32 @@ pub(crate) fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Valu
             let mut result = scopes::read(&path, a.at, &a.options)?;
             result["path"] = json!(a.path);
             Ok(result)
+        }),
+        "tracking_analyze" => crate::args::<TrackingArgs>(name, a).and_then(|a| {
+            anyhow::ensure!(
+                a.timeout_seconds.is_finite() && (1.0..=3600.0).contains(&a.timeout_seconds),
+                "timeout_seconds must be 1..3600"
+            );
+            let cancel = ferrocut_core::CancelToken::new();
+            let deadline =
+                std::time::Instant::now() + std::time::Duration::from_secs_f64(a.timeout_seconds);
+            tracking_io::analyze_file(
+                &a.path,
+                &a.output,
+                &a.settings,
+                &cancel,
+                |_| {
+                    if std::time::Instant::now() >= deadline {
+                        cancel.cancel();
+                    }
+                },
+                &mut |p| cx.root.check(p),
+            )
+        }),
+        "tracking_keyframes" => crate::args::<TrackingKeysArgs>(name, a).and_then(|a| {
+            tracking_io::keyframes_file(&a.analysis, &a.timeline, &a.options, &mut |p| {
+                cx.root.check(p)
+            })
         }),
         "timeline_import" => crate::args::<ImportArgs>(name, a).and_then(|a| {
             let mut v = interchange_io::import_file(

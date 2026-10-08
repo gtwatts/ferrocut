@@ -361,6 +361,9 @@ pub struct Clip {
     /// Clip markers (source seconds; see [`crate::markers`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<Marker>,
+    /// Ordered native masks in source time, before video effects and transform.
+    #[serde(default, skip_serializing_if = "crate::masks::MaskStack::is_empty")]
+    pub masks: crate::masks::MaskStack,
     /// Video effects in order (see [`crate::fx`]), keyframes in clip-local
     /// time. They run on the clip's picture before its transform; the clip
     /// opacity applies after them.
@@ -626,6 +629,7 @@ impl Timeline {
                             (c.transform.is_some(), "transform"),
                             (c.three_d, "three_d"),
                             (c.motion_blur, "motion_blur"),
+                            (!c.masks.is_empty(), "masks"),
                             (c.transition_in.is_some(), "transition_in"),
                             (!c.blend_mode.is_normal(), "blend_mode"),
                             (
@@ -655,6 +659,9 @@ impl Timeline {
                         c.id
                     ),
                 }
+                c.masks
+                    .validate()
+                    .map_err(|e| anyhow::anyhow!("clip {}: masks: {e}", c.id))?;
                 crate::fx::validate_list(&c.effects, &format!("clip {}", c.id))
                     .map_err(|e| anyhow::anyhow!(e))?;
                 c.opacity

@@ -356,8 +356,7 @@ fn spec_of(owner: &Owner, rel: &[Seg]) -> (Option<ParamSpec>, Option<usize>) {
         return (crate::fx::param_spec(kind, p), comp);
     }
     if owner.kind == OwnerKind::VideoClip
-        && matches!(rel, [Seg::Key(g),Seg::Key(s),Seg::Key(o),Seg::Idx(_),..]
-            if g == "generator" && s == "shape" && o == "operators")
+        && matches!(rel.first(), Some(Seg::Key(k)) if k == "generator" || k == "masks")
     {
         let path = if comp.is_some() {
             &rel[..rel.len() - 1]
@@ -365,9 +364,9 @@ fn spec_of(owner: &Owner, rel: &[Seg]) -> (Option<ParamSpec>, Option<usize>) {
             rel
         };
         return (
-            crate::params::lookup(PScope::VideoClip, &segs_name(path))
+            crate::params::resolve_path(PScope::VideoClip, &segs_name(path))
                 .ok()
-                .map(|(s, _)| *s),
+                .map(|(s, _, _)| *s),
             comp,
         );
     }
@@ -401,7 +400,7 @@ fn base_of(owner: &Owner, rel: &[Seg], spec: Option<&ParamSpec>) -> TimeBase {
     }
     if is_clip(owner.kind) {
         match rel.first() {
-            Some(Seg::Key(k)) if k == "generator" => TimeBase::Source,
+            Some(Seg::Key(k)) if k == "generator" || k == "masks" => TimeBase::Source,
             _ => TimeBase::ClipLocal,
         }
     } else {

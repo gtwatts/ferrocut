@@ -2195,6 +2195,7 @@ fn add_clip(
             audio: ClipAudio::default(),
             markers: Vec::new(),
             effects: Vec::new(),
+            masks: Default::default(),
             adjustment,
         }),
         TrackRef::Audio(i) => tl.audio_tracks[i].clips.push(AudioClip {
@@ -2367,7 +2368,7 @@ fn set_param(
         }
         (None, None) => (Scope::Timeline, None),
     };
-    let (spec, comp) = params::lookup(scope, name)?;
+    let (spec, comp, path) = params::resolve_path(scope, name)?;
     ensure!(
         !(scope == (Scope::Track { audio_track: true }) && spec.name == "matte"),
         "matte applies to video tracks only"
@@ -2385,11 +2386,11 @@ fn set_param(
         Some((TrackRef::Audio(i), None)) => serde_json::to_value(&tl.audio_tracks[i])?,
         None => serde_json::to_value(&*tl)?,
     };
-    let cur = params::get(&obj, scope, spec, comp);
+    let cur = params::get_path(&obj, &path, comp);
     let before = cur.clone().unwrap_or(serde_json::Value::Null);
     let value = make(spec, cur.as_ref())?;
-    params::set(&mut obj, scope, spec, comp, value.clone(), frame)?;
-    params::check_range(&obj, scope, spec)?;
+    params::set_path(&mut obj, spec, comp, value.clone(), frame, &path)?;
+    params::check_range_path(&obj, spec, &path)?;
     let bad = |e: serde_json::Error| anyhow!("{name}: invalid value {value}: {e}");
     let span = match tr {
         Some((TrackRef::Video(i), Some(ci))) => {
@@ -2429,7 +2430,7 @@ fn set_param(
             Some((TrackRef::Audio(i), None)) => serde_json::to_value(&tl.audio_tracks[i])?,
             None => serde_json::to_value(&*tl)?,
         };
-        params::get(&obj, scope, spec, comp).unwrap_or(serde_json::Value::Null)
+        params::get_path(&obj, &path, comp).unwrap_or(serde_json::Value::Null)
     };
     let target = match (clip, track) {
         (Some(c), _) => c.to_string(),

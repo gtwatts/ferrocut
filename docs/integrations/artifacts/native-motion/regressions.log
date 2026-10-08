@@ -1,0 +1,799 @@
+   Compiling ferrocut-mcp v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-mcp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.24s
+     Running unittests src/lib.rs (target/debug/deps/ferrocut_core-e25a21f50080e645)
+
+running 1 test
+test gpu::tests::classifies_wgpu_errors ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/alloc_scope.rs (target/debug/deps/alloc_scope-8a09f226af306493)
+
+running 2 tests
+test budget_overrun_is_retryable_oom_and_poisons_the_pool ... ok
+test invalid_object_fallout_counts_as_oom_only_after_an_oom ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
+
+     Running tests/upload_pool.rs (target/debug/deps/upload_pool-e7eea7c1bc03370e)
+
+running 2 tests
+test upload_never_reuses_a_texture_unsubmitted_work_reads ... ok
+test uploads_are_pooled_reused_and_budgeted ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running unittests src/lib.rs (target/debug/deps/ferrocut_engine-c1d97e4afbd933c4)
+
+running 45 tests
+test audio_fx::tests::defaults_and_round_trip ... ok
+test audio_fx::tests::set_param_paths ... ok
+test blend::tests::opaque_modes_match_textbook_values ... ok
+test blend::tests::transparent_source_leaves_the_backdrop ... ok
+test compositor::tests::color_fns_resolve_by_name_to_the_same_kernels ... ok
+test expr::tests::noise_is_smooth_bounded_and_seeded ... ok
+test expr::tests::rationals_are_exact_decimals_when_possible ... ok
+test fx::native::tests::windows_and_regions ... ok
+test generator::tests::json_defaults_and_validation ... ok
+test generator::tests::keyframed_colors_and_display_vs_linear ... ok
+test layer3d::tests::camera_moves_and_fov ... ok
+test layer3d::tests::default_3d_layer_is_the_2d_layer ... ok
+test layer3d::tests::depth_perspective_and_rotations ... ok
+test layer3d::tests::plan_windows ... ok
+test layer3d::tests::shutter_times_are_exact_and_centered ... ok
+test nodes::tests::chunks_are_gop_aligned_and_cover_everything ... ok
+test nodes::tests::dissolve_mix_is_exact_and_interior ... ok
+test nodes::tests::editing_overlay_only_touches_its_frames ... ok
+test nodes::tests::frame_keys_are_stable ... ok
+test nodes::tests::slipping_second_clip_keeps_first_clip_frames ... ok
+test params::tests::keyframes_merge_and_shift ... ok
+test params::tests::registry_names_are_unique_and_resolve ... ok
+test params::tests::sets_components_with_defaults_and_removes_with_null ... ok
+test params::tests::track_bus_field_depends_on_track_kind ... ok
+test render::tests::cancellation_and_deadline_stop_before_the_attempt ... ok
+test render::tests::contiguous_runs_are_ordered_and_balanced ... ok
+test render::tests::gpu_faults_are_not_retried_per_frame ... ok
+test render::tests::permanent_and_cancelled_are_never_retried ... ok
+test render::tests::retryable_gives_up_after_bound ... ok
+test render::tests::retryable_is_retried_until_success ... ok
+test retime::tests::constant_reverse_and_freeze_are_exact ... ok
+test retime::tests::eased_ramp_is_monotone_and_close_to_linear_area ... ok
+test retime::tests::linear_ramp_integrates_exactly ... ok
+test retime::tests::remap_curve_and_sampling ... ok
+test timeline::tests::parses_and_measures ... ok
+test timeline::tests::rejects_dissolve_without_handles ... ok
+test timeline::tests::rejects_overlap_without_transition ... ok
+test timeline::tests::rejects_unknown_fields_and_float_time ... ok
+test transform::tests::ae_convention ... ok
+test transform::tests::defaults_are_identity ... ok
+test transform::tests::mip_levels_start_past_the_kernel_cap ... ok
+test transform::tests::pixel_aspect_keeps_shapes_square_on_screen ... ok
+test transform::tests::plan_windows_and_filter_scale ... ok
+test transform::tests::spec_json_and_keyframes ... ok
+test vram::tests::sizing_rule ... ok
+
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running unittests src/main.rs (target/debug/deps/ferrocut-95d229debc17f763)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/audio.rs (target/debug/deps/audio-2375ca1dc6fd1fe7)
+
+running 2 tests
+test j_and_l_cuts_are_sample_exact_and_chunking_invariant ... ok
+test loudness_normalization_hits_target ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.80s
+
+     Running tests/blend.rs (target/debug/deps/blend-c1a0784eabfe16c5)
+
+running 4 tests
+test blend_mode_and_matte_validation ... ok
+test blend_mode_changes_only_the_clips_frames ... ok
+test kernels_match_the_cpu_reference_on_every_adapter ... ok
+test normal_blend_is_bit_identical_to_over ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.81s
+
+     Running tests/build_ops.rs (target/debug/deps/build_ops-b8ebd9987a044902)
+
+running 5 tests
+test add_clip_checks_streams_files_overlap_and_names ... ok
+test add_transition_uses_handles_and_moves_nothing_else ... ok
+test builds_a_sequence_from_nothing ... ok
+test set_param_and_keyframes_reach_every_parameter ... ok
+test set_param_errors_name_the_problem ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/captions.rs (target/debug/deps/captions-ac833f83cb232b2e)
+
+running 8 tests
+test caption_cli_import_export_and_existing_output_protection ... ok
+test captions_use_normal_atomic_edits_dry_run_and_undo ... ok
+test exact_srt_crlf_bom_unicode_and_multiline_round_trip ... ok
+test export_quantization_is_explicit_and_cannot_collapse_cues ... ok
+test malformed_or_unsupported_subtitles_report_instead_of_losing_data ... ok
+test overlaps_round_trip_but_single_track_import_refuses_them ... ok
+test webvtt_comments_short_clocks_named_ids_and_entities ... ok
+test webvtt_reserved_identifiers_cannot_silently_turn_cues_into_comments ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/deliver.rs (target/debug/deps/deliver-ce6f882bc31f314b)
+
+running 3 tests
+test cancelled_delivery_never_starts ... ok
+test deterministic_across_jobs_with_idrs_on_render_chunks ... ok
+test without_openh264_delivery_fails_permanently_and_downloads_nothing ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+
+     Running tests/e2e.rs (target/debug/deps/e2e-1a2771afc0b88bf5)
+
+running 5 tests
+test deterministic_and_incremental ... ok
+test gpu_faults_are_classified_and_recovered ... ok
+test out_of_vram_backs_off_jobs_then_fails_clearly ... ok
+test retries_permanent_errors_and_cancellation ... ok
+test sequential_nodes_get_contiguous_forward_runs ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.04s
+
+     Running tests/edit.rs (target/debug/deps/edit-beec1236c72904d7)
+
+running 10 tests
+test each_op_does_what_it_says ... ok
+test errors_are_clear ... ok
+test invalid_scripts_never_half_apply ... ok
+test keyframes_stay_put_on_the_timeline ... ok
+test ops_round_trip_as_json ... ok
+test ripple_delete_keeps_order_and_no_overlaps ... ok
+test ripple_insert_keeps_order_and_no_overlaps ... ok
+test roll_preserves_total_duration ... ok
+test slide_preserves_track_duration ... ok
+test slip_preserves_position_and_duration ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/edit_render.rs (target/debug/deps/edit_render-9d9ef13823defaf9)
+
+running 1 test
+test slip_and_roll_rerender_only_affected_chunks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.14s
+
+     Running tests/effectcraft.rs (target/debug/deps/effectcraft-4b8003e607f89033)
+
+running 17 tests
+test actual_gpu_readback_upload_and_worker_recreation_match_cpu_pixels ... ok
+test cancellation_is_checked_before_during_copies_and_after_the_upstream_call ... ok
+test complete_catalogue_is_unique_and_every_connected_default_reaches_upstream ... ok
+test curves_and_fixed_enums_render_real_changes_with_clear_malformed_errors ... ok
+test every_connected_effect_accepts_a_nondefault_typed_control_and_matches_reference ... ok
+test exposure_linear_bypass_preserves_hdr_negative_and_premultiplied_alpha ... ok
+test extreme_clock_shifts_are_fallible_including_i64_min_and_coprime_denominators ... ok
+test extreme_clocks_hash_without_panics_and_adapter_time_bounds_fail_cleanly ... ok
+test failed_extreme_clock_split_and_trim_leave_the_input_and_prior_edits_untouched ... ok
+test hostile_pixels_parameters_bounds_and_workloads_fail_without_inert_fallback ... ok
+test intrinsic_time_seed_animation_frame_rate_and_parameter_edits_change_cache_keys ... ok
+test nondefault_parameters_and_normalized_points_match_upstream_at_two_resolutions ... ok
+test padding_prediction_preserves_overscan_for_nondefault_spatial_effects ... ok
+test split_and_in_trim_preserve_constant_procedural_noise_phase_and_hashes ... ok
+test timeline_edit_expressions_retime_and_split_preserve_numeric_effect_clocks ... ok
+test unrepresentable_effect_clocks_return_contextual_permanent_render_errors ... ok
+test warm_frame_cache_does_not_hide_static_effect_clock_errors ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.91s
+
+     Running tests/effects.rs (target/debug/deps/effects-f71d735c4f94f0dc)
+
+running 8 tests
+test adjustment_layers_apply_to_the_composite_below ... ok
+test adjustment_layers_follow_their_matte ... ok
+test clip_effects_render_like_the_stack_on_the_clip ... ok
+test edit_ops_build_and_change_stacks ... ok
+test every_effect_matches_across_adapters ... ok
+test gaussian_blur_matches_the_cpu_reference_at_the_edges ... ok
+test plugin_effects_get_their_working_space_and_errors_keep_their_kind ... ok
+test regions_of_interest_do_not_change_pixels ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.77s
+
+     Running tests/expressions.rs (target/debug/deps/expressions-e4b8e02a5abf51c2)
+
+running 8 tests
+test basic_variables_and_interpolation ... ok
+test edits_keep_expressions_in_place ... ok
+test errors_are_precise ... ok
+test expressions_are_part_of_cache_keys ... ok
+test loops_follow_after_effects ... ok
+test references_and_cycles ... ok
+test sandbox_limits_hold ... ok
+test wiggle_is_deterministic_bounded_and_seeded_per_parameter ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+
+     Running tests/finishing.rs (target/debug/deps/finishing-9ceacaacdc6e47ca)
+
+running 11 tests
+test animated_edits_invalidate_only_changed_frames_and_render_in_source_order ... ok
+test clip_track_and_adjustment_finishing_share_the_same_rendered_behavior ... ok
+test encoded_to_linear_stack_conversion_saturates_instead_of_overflowing ... ok
+test expression_driven_video_grade_survives_split_and_preserves_frame_keys ... ok
+test extreme_gamma_and_zero_gain_stay_finite_at_half_float_storage_limits ... ok
+test gpu_matches_independent_references_with_alpha_hdr_and_partial_windows ... ok
+test keyed_layer_reveals_the_background_through_the_actual_compiler ... ok
+test keying_repremultiplies_soft_edges_and_despill_preserves_luma ... ok
+test neutral_grades_and_disabled_effects_return_the_original_frame ... ok
+test parameter_bounds_working_spaces_and_nonfinite_samples_are_checked ... ok
+test worker_pipeline_cache_is_device_specific_and_cancellation_is_respected ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.88s
+
+     Running tests/frames.rs (target/debug/deps/frames-8703eb16c209a541)
+
+running 6 tests
+test device_requirements_union_and_fallback ... ok
+test graph_reframes_and_flushes_for_legacy_nodes ... ok
+test output_crops_overscan_and_blacks_out_uncovered_pixels ... ok
+test over_and_dissolve_respect_data_windows ... ok
+test pixel_aspect_mismatch_is_a_permanent_error ... ok
+test pool_reuses_textures_on_the_same_thread ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+
+     Running tests/generator.rs (target/debug/deps/generator-c17348ce4be490e7)
+
+running 4 tests
+test add_clip_generators_and_param_ops ... ok
+test generator_timelines_render_without_media ... ok
+test kernel_matches_the_cpu_reference_on_every_adapter ... ok
+test keys_follow_parameters_and_survive_splits_and_trims ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+     Running tests/index.rs (target/debug/deps/index-96cc86e1d7188c9e)
+
+running 6 tests
+test index_is_cached_by_content_and_falls_back_to_cpu ... ok
+test padded_ranges_snap_out_to_frames_and_clamp ... ok
+test parses_whisper_tokens_into_words ... ok
+test real_whisper_finds_the_gatekeepers_line ... ok
+test search_finds_phrases_exactly_and_approximately ... ok
+test shot_hook_uses_the_registered_detector ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.19s
+
+     Running tests/interchange.rs (target/debug/deps/interchange-ade23a652adb1376)
+
+running 17 tests
+test broadcast_fractional_frame_rate_roundtrips_keep_exact_native_edit_times ... ok
+test checked_tick_bridge_preserves_broadcast_and_audio_time_and_rejects_precision_overflow ... ok
+test image_sequence_reference_alternative_urls_reject_custom_protocols_and_encoded_controls ... ok
+test imported_source_requirements_include_full_dissolve_sound_and_skip_generated_nests ... ok
+test linked_sound_is_preserved_once_as_independent_native_audio ... ok
+test malformed_oversized_unvalidated_formats_and_sequence_selection_error_cleanly ... ok
+test native_clip_masks_are_reported_as_interchange_loss_instead_of_silently_dropped ... ok
+test nested_timeline_resolver_roundtrip_produces_safe_sibling_documents ... ok
+test omitted_generators_retimes_unprobed_media_and_trailing_duration_are_reported ... ok
+test opacity_motion_keys_use_source_origin_and_preserve_native_geometry ... ok
+test original_otio_and_fcp7_roundtrip_preserves_gaps_tracks_paths_and_source_edits ... ok
+test otio_preserves_audio_automation_bus_controls_and_additive_overlapping_lanes ... ok
+test otio_preserves_subframe_edits_while_fcp7_reports_rounding ... ok
+test overlapping_native_dissolve_converts_to_adjacent_edits_and_back ... ok
+test sequence_and_source_markers_preserve_color_range_comments_and_origin ... ok
+test source_reference_protocols_are_checked_before_upstream_path_resolution ... ok
+test unresolved_nested_sources_report_loss_and_cycles_error_without_io ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/journal.rs (target/debug/deps/journal-499dfb9c2044e1c5)
+
+running 8 tests
+test branches_checkout_and_merge ... ok
+test canonical_hash_ignores_formatting_and_key_order ... ok
+test diff_classifies_changes ... ok
+test diff_reports_chunks_to_rerender ... ok
+test dry_run_writes_nothing ... ok
+test journal_is_append_only_chained_and_deterministic ... ok
+test output_elsewhere_journals_beside_output ... ok
+test undo_restores_each_state_exactly ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/layer3d.rs (target/debug/deps/layer3d-69242618aa5e5753)
+
+running 7 tests
+test blur_switches_keep_keys_until_both_are_on_and_still_frames_keep_theirs ... ok
+test default_camera_3d_layer_looks_like_the_2d_layer ... ok
+test kernel_matches_the_cpu_reference_on_every_adapter ... ok
+test layers_behind_the_camera_are_not_drawn ... ok
+test motion_blur_smears_and_keeps_coverage ... ok
+test painters_sort_draws_far_layers_first_and_2d_layers_split_runs ... ok
+test validation_and_edit_ops ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+
+     Running tests/markers.rs (target/debug/deps/markers-b1e0c313f3727caa)
+
+running 4 tests
+test clip_markers_follow_their_frame_through_edits ... ok
+test marker_ops_store_timeline_and_source_times ... ok
+test markers_never_change_frame_keys_or_rerender ... ok
+test relink_by_clip_by_prefix_and_by_search ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/masks.rs (target/debug/deps/masks-7d36fca4b3de1767)
+
+running 18 tests
+test cancellation_kind_is_preserved_before_planning_during_rows_and_after_render ... ok
+test compiled_reverse_masks_preserve_frame_keys_and_premultiplied_gpu_pixels_after_split_trim ... ok
+test compound_contours_holes_and_open_paths_respect_fill_rules ... ok
+test cubic_bezier_pixels_match_a_dense_independent_curve_reference ... ok
+test ellipse_rounded_rectangle_polygon_star_and_quadratics_render_native_curves ... ok
+test every_combine_pair_uses_correct_first_mask_initialization_and_fractional_coverage ... ok
+test feather_expansion_inversion_and_opacity_match_independent_pixel_math ... ok
+test horizontal_spans_preserve_large_feather_expansion_and_negative_roi_pixels ... ok
+test hostile_region_geometry_animation_expressions_and_work_fail_with_useful_errors ... ok
+test indexed_mask_edits_and_source_expressions_bake_into_the_same_native_clock ... ok
+test invalid_sampled_mask_has_a_distinct_key_and_cannot_reuse_a_warm_valid_gpu_frame ... ok
+test native_masks_precede_blur_and_follow_the_layer_transform_on_gpu ... ok
+test no_active_masks_and_empty_regions_are_pass_through_with_metadata_preserved ... ok
+test rational_animation_and_safe_property_visitors_produce_deterministic_evaluated_cache_bytes ... ok
+test reverse_source_clock_split_and_trim_preserve_exact_mask_animation_without_key_shifts ... ok
+test strict_serialization_and_cpu_storage_reject_malformed_values ... ok
+test subpixel_rectangle_coverage_matches_analytic_distance_in_negative_overscan ... ok
+test useful_uhd_ellipse_feather_stays_inside_the_row_work_budget ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.54s
+
+     Running tests/mixdown.rs (target/debug/deps/mixdown-206dc6c9786d6b92)
+
+running 6 tests
+test bad_effects_are_rejected_at_load ... ok
+test effect_ops_edit_the_chains ... ok
+test records_are_ferrocut_perceive_records ... ok
+test rejected_loudness_passes_leave_header_only_stubs ... ok
+test streamed_mixdown_matches_in_memory_reference ... ok
+test unchanged_audio_chunks_are_reused ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.03s
+
+     Running tests/native_text_timeline.rs (target/debug/deps/native_text_timeline-113f60f1029f1a02)
+
+running 8 tests
+test agent_add_text_content_keys_and_whole_range_array_produce_real_output ... ok
+test constant_speed_and_time_remap_drive_text_keys_in_source_seconds ... ok
+test font_bytes_invalidate_only_frames_that_use_that_asset ... ok
+test journaled_text_revisions_dry_run_invalid_batch_and_undo_preserve_exact_project_state ... ok
+test keyframed_typography_keeps_source_animation_through_split_and_in_trim ... ok
+test relative_font_assets_survive_directory_relocation_and_edit_output_relocation ... ok
+test source_time_expressions_follow_retiming_and_remain_equivalent_after_split ... ok
+test timeline_time_keyframe_edits_convert_through_actual_speed_and_remap ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.57s
+
+     Running tests/nest.rs (target/debug/deps/nest-860b363ab3048f3e)
+
+running 6 tests
+test cycles_and_size_mismatches_are_errors ... ok
+test inner_edits_change_only_the_outer_frames_that_show_them ... ok
+test nest_validation ... ok
+test nest_writes_a_comp_and_unnest_restores_the_clips ... ok
+test nested_audio_matches_the_flat_mix ... ok
+test unnest_trims_to_the_shown_part ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/perceive.rs (target/debug/deps/perceive-bc373e3b460591b8)
+
+running 8 tests
+test cli_check_exit_codes ... ok
+test errors_are_errors ... ok
+test expect_audio_is_passed_through_or_falls_back_to_allow_no_audio ... ok
+test fail_lists_problems_with_reason_range_measured_threshold ... ok
+test missing_checker_is_skipped_not_failed ... ok
+test pass_passes_arguments_through ... ok
+test usage_errors_on_extra_args_return_the_checkers_help ... ok
+test warnings_are_kept_on_pass ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+     Running tests/proxy.rs (target/debug/deps/proxy-797d9fa309a419bd)
+
+running 2 tests
+test proxies_are_half_size_cached_by_content_and_codec_by_size ... ok
+test sources_status_and_draft_vs_final_renders ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.31s
+
+     Running tests/retime.rs (target/debug/deps/retime-e60c9b6db923992b)
+
+running 5 tests
+test frame_keys_follow_the_time_map ... ok
+test freeze_frame_hold_and_insert ... ok
+test linked_audio_follows_speed ... ok
+test ops_on_retimed_clips_keep_content_in_place ... ok
+test set_speed_keeps_the_source_range ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/source_expressions.rs (target/debug/deps/source_expressions-0e3c510836d1a5fc)
+
+running 4 tests
+test ambiguous_repeated_source_and_expression_timing_combinations_fail_with_guidance ... ok
+test cross_clip_source_reads_reject_unbaked_timing_but_local_reads_remain_valid ... ok
+test frozen_source_expression_can_hold_a_source_function_but_not_changing_timeline_state ... ok
+test source_time_comp_time_and_cross_clock_param_follow_forward_reverse_and_remap ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+     Running tests/storytold_controls.rs (target/debug/deps/storytold_controls-ffaa2ca90c8cc38d)
+
+running 7 tests
+test anisotropic_scale_arrays_never_deserialize_as_uniform_expressions ... ok
+test indexed_operator_numeric_and_component_edits_use_existing_typed_slots ... ok
+test indexed_set_keyframes_converts_timeline_seconds_to_source_seconds ... ok
+test invalid_operator_edit_is_atomic_and_cannot_create_sparse_or_wrong_fields ... ok
+test native_ffv1_duration_includes_the_last_frame_for_interchange_ranges ... ok
+test operator_expression_value_defaults_and_source_clock_are_preserved ... ok
+test upstream_file_url_unicode_authorities_never_slice_inside_utf8 ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/storytold_scopes.rs (target/debug/deps/storytold_scopes-4916115296300b3d)
+
+running 4 tests
+test known_code_values_and_primary_colorimetry ... ok
+test lossless_file_decode_and_source_time_bounds ... ok
+test malformed_buffers_dimensions_and_unbounded_options_fail ... ok
+test spatial_waveform_and_exact_histogram_ramp ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/streaming.rs (target/debug/deps/streaming-7dcead55cd6ae5ef)
+
+running 1 test
+test render_memory_does_not_grow_with_media_length ... adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))
+ffmpeg:  9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)
+adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))
+ffmpeg:  9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.38s
+
+     Running tests/text.rs (target/debug/deps/text-035faca107eef692)
+
+running 19 tests
+test animated_text_is_seekable_and_frame_hashes_follow_evaluated_values ... ok
+test antialiased_outside_stroke_expands_all_glyph_edges ... ok
+test bad_font_bytes_face_index_and_output_geometry_fail_before_render ... ok
+test empty_spaces_and_zero_opacity_render_transparent_frames ... ok
+test explicit_arabic_fallback_shapes_and_reorders_logical_clusters ... ok
+test explicit_font_content_changes_hashes_and_existing_nodes_keep_snapshot_pixels ... ok
+test fractional_range_weights_ligatures_without_changing_shaping ... ok
+test invalid_layout_paint_and_selector_parameters_fail_structurally ... ok
+test kerning_ligatures_and_combining_sequences_use_real_shaping ... ok
+test line_selector_targets_visual_wrapped_lines ... ok
+test parameter_enumeration_and_asset_rewrite_cover_nested_animation ... ok
+test per_word_offset_and_color_keep_source_geometry_editable ... ok
+test render_node_uploads_identical_working_pixels_and_reuses_worker_font_state ... ok
+test schema_is_strict_and_structural_validation_does_not_open_fonts ... ok
+test text_opacity_is_applied_once_after_outline_and_fill_compositing ... ok
+test tracking_line_height_and_vertical_alignment_are_independent ... ok
+test transparent_background_and_linear_premultiplied_fill_match_generator_color ... ok
+test word_selector_hides_a_whole_word_and_character_selector_keeps_combining_cluster ... ok
+test wrapping_and_paragraph_alignment_have_measurable_geometry ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.49s
+
+     Running tests/time_rounding.rs (target/debug/deps/time_rounding-385b0b6de16e8d09)
+
+running 3 tests
+test mux_pts_and_seeks_round_trip ... ok
+test round_matches_av_rescale_rnd_near_inf ... ok
+test to_pts_matches_av_rescale_q_rnd ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/tracking.rs (target/debug/deps/tracking-27cdd915de0be828)
+
+running 15 tests
+test actual_tracker_follows_integer_translation_and_reports_measured_confidence ... ok
+test already_cancelled_does_not_call_frame_provider ... ok
+test blank_seed_has_explicit_no_texture_outcome_and_no_confidence ... ok
+test cancellation_returns_only_complete_committed_frames_with_progress ... ok
+test exact_ntsc_source_grid_and_serialized_results_are_repeatable ... ok
+test file_decoder_tracks_real_lossless_media_and_rejects_resize_or_end_hold ... ok
+test full_file_hash_streams_all_bytes_and_honors_cancellation ... ok
+test loaded_results_reject_forged_success_gaps_confidence_and_identity ... ok
+test lost_point_gets_inactive_samples_while_other_point_continues ... ok
+test occlusion_stops_point_without_reporting_previous_position_as_a_match ... ok
+test seed_only_does_not_claim_measured_tracking ... ok
+test structural_limits_and_malformed_frames_fail_before_unsafe_upstream_inputs ... ok
+test subpixel_refinement_measures_fractional_image_motion ... ok
+test upstream_gaussian_corrections_reduce_jitter_without_changing_time_grid ... ok
+test upstream_lock_corrections_hold_selected_point_at_middle_frame ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+     Running tests/transform.rs (target/debug/deps/transform-f039487d14e85381)
+
+running 7 tests
+test data_window_does_not_change_the_result ... ok
+test integer_translation_is_an_exact_copy ... ok
+test keyframed_parameters_drive_frame_keys ... ok
+test minification_keeps_coverage_and_color ... ok
+test pixel_aspect_is_respected ... ok
+test rotation_by_90_degrees_matches_the_cpu ... ok
+test transform_is_deterministic ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+     Running tests/transform_mip.rs (target/debug/deps/transform_mip-e611b6adf604fedc)
+
+running 2 tests
+test box_pre_pass_keeps_color_coverage_and_is_deterministic ... ok
+test stripes_past_8x_are_filtered_not_aliased ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+
+     Running tests/vector.rs (target/debug/deps/vector-ebc96c2dc01aaf55)
+
+running 15 tests
+test cubic_paths_and_even_odd_holes_are_real_geometry ... ok
+test empty_clipped_and_zero_width_geometry_is_transparent ... ok
+test fill_and_stroke_composite_in_linear_premultiplied_working_space ... ok
+test geometry_and_style_animation_evaluate_at_source_time ... ok
+test gradients_match_existing_generator_color_and_alpha_semantics ... ok
+test hashes_sample_values_and_preserve_geometry_style_and_dimensions ... ok
+test malformed_shape_requests_fail_before_rasterization ... ok
+test multiple_gradient_stops_hard_edges_and_radial_alpha_are_supported ... ok
+test path_control_points_and_gradient_stops_can_be_animated ... ok
+test rectangle_coverage_is_exact_and_subpixels_are_antialiased ... ok
+test rounded_rectangles_clamp_radius_and_ellipses_keep_correct_area ... ok
+test shape_timelines_bake_expressions_and_supply_animated_alpha_track_mattes ... ok
+test stroke_caps_dashes_and_animated_offsets_change_coverage ... ok
+test stroke_joins_and_animated_miter_limit_change_corner_geometry ... ok
+test vector_color_is_not_quantized_to_rgba8 ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/vector_instances.rs (target/debug/deps/vector_instances-5d65ec366d4209c0)
+
+running 19 tests
+test above_and_below_copy_order_control_overlapping_gradient_colors ... ok
+test animated_group_and_repeat_controls_sample_exact_source_time ... ok
+test animated_radial_copy_count_and_offset_match_independent_marker_positions ... ok
+test anisotropic_stroke_transforms_outline_instead_of_average_width ... ok
+test default_single_group_preserves_existing_shape_pixels ... ok
+test fractional_copies_and_opacity_ramp_match_analytic_alpha ... ok
+test item_order_and_group_opacity_use_linear_premultiplied_paint_composition ... ok
+test malformed_numeric_and_recursive_inputs_have_bounded_failures ... ok
+test multiplicative_expansion_pixel_work_and_transform_growth_are_rejected ... ok
+test native_group_controls_split_trim_retime_and_cache_preserve_source_animation ... ok
+test nested_transform_product_and_opacity_have_exact_area_reference ... ok
+test node_upload_preserves_alpha_and_honors_cancellation_and_deadline ... ok
+test radial_gradients_inverse_map_anisotropic_and_rotated_group_coordinates ... ok
+test repeater_anchor_rotation_scale_and_negative_offset_transform_geometry ... ok
+test sampled_cache_hashes_reuse_held_values_and_include_intrinsic_wiggle ... ok
+test transformed_stroke_geometry_has_a_shared_per_frame_budget ... ok
+test transforming_one_subgroup_preserves_all_sibling_pixels ... ok
+test visitors_match_every_nested_component_and_allow_typed_leaf_edits ... ok
+test zero_and_partial_first_copies_and_empty_groups_are_defined ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+
+     Running tests/vector_operators.rs (target/debug/deps/vector_operators-34d4204700ce4b26)
+
+running 15 tests
+test animated_operators_survive_timeline_edits_split_retime_and_cache_reuse ... ok
+test boolean_empty_operands_keep_subtraction_and_intersection_identity ... ok
+test each_numeric_operator_samples_animation_and_held_values_reuse_keys ... ok
+test invalid_parameters_topology_and_expansion_are_rejected_before_expensive_work ... ok
+test merge_boolean_modes_match_analytic_overlapping_rectangles ... ok
+test mutable_numeric_visitor_matches_expression_and_edit_paths ... ok
+test offset_outlines_open_paths_and_preserves_native_fractional_alpha ... ok
+test omitted_operators_preserve_original_pixels_and_serialization ... ok
+test polygon_and_star_have_analytic_area_and_editable_animated_radii ... ok
+test pucker_bloat_zigzag_twist_and_operator_order_change_native_geometry ... ok
+test round_corners_and_offset_have_geometric_coverage_references ... ok
+test simultaneous_and_individual_trim_respect_contour_order ... ok
+test trim_is_arc_length_based_animated_and_wraps_offset ... ok
+test vector_node_honors_cancellation_deadlines_and_preserves_gpu_alpha ... ok
+test wiggle_uses_source_time_seed_and_intrinsic_cache_discrimination ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
+
+     Running unittests src/lib.rs (target/debug/deps/ferrocut_mcp-70df7d6eb6ef9a01)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/ferrocut_mcp-893854b24bab23f6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/deliver.rs (target/debug/deps/deliver-f7407813ebf862a4)
+
+running 5 tests
+test deliver_progress_has_one_more_step ... ok
+test openh264_tool_without_network ... ok
+test render_deliver_outside_root_is_refused_before_rendering ... ok
+test render_deliver_without_codec_says_how_to_enable_and_downloads_nothing ... ok
+test render_with_deliver_mp4 ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.94s
+
+     Running tests/media.rs (target/debug/deps/media-e2c4003677b100d1)
+
+running 1 test
+test markers_relink_status_and_draft_render ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.74s
+
+     Running tests/motion_tools.rs (target/debug/deps/motion_tools-d1b0d32cd5a4d028)
+
+running 7 tests
+test analysis_io_is_guarded_strict_and_does_not_overwrite ... ok
+test masks_and_nested_repeater_schemas_round_trip_and_reject_misspellings ... ok
+test new_tracking_tool_schemas_match_real_strict_arguments ... ok
+test reverse_speed_and_source_canvas_conversion_generate_sorted_exact_local_times ... ok
+test saved_analysis_is_bound_to_current_source_bytes_and_root ... ok
+test tracking_keys_reject_wrong_source_partial_tracks_and_ambiguous_source_timing ... ok
+test tracking_measurements_become_real_editable_keys_and_undo_restores_timeline ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.50s
+
+     Running tests/native_graphics.rs (target/debug/deps/native_graphics-c3d90b2989c00ba3)
+
+running 5 tests
+test dry_run_and_committed_edits_check_new_font_assets_before_writing ... ok
+test font_assets_and_fallbacks_obey_root_checks_including_nested_compositions ... ok
+test native_text_and_shape_timelines_validate_before_and_after_serialization ... ok
+test schemas_reject_missing_misspelled_or_mistyped_native_fields ... ok
+test text_content_byte_limit_and_schema_count_limits_are_explicit ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 78.01s
+
+     Running tests/progress.rs (target/debug/deps/progress-0bd62391feba6855)
+
+running 2 tests
+test render_progress_and_cancellation ... ferrocut-mcp: project root /tmp/.tmp4lbbVQ
+ok
+test root_from_env_and_flag ... ferrocut-mcp: project root /tmp/.tmplQ2b2M/proj
+ferrocut-mcp: project root /tmp/.tmplQ2b2M/proj/sub
+ferrocut-mcp: project root /tmp/.tmplQ2b2M/proj
+ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.57s
+
+     Running tests/sandbox.rs (target/debug/deps/sandbox-cebfb24e859387f9)
+
+running 2 tests
+test root_resolves_inside_and_rejects_escapes ... ok
+test tools_refuse_paths_outside_the_root ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/schema.rs (target/debug/deps/schema-df170625178b2b31)
+
+running 3 tests
+test every_edit_op_has_a_strict_schema_whose_example_parses ... ok
+test every_tool_schema_is_a_strict_object ... ok
+test rational_pattern_matches_what_the_engine_parses ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.24s
+
+     Running tests/stdio.rs (target/debug/deps/stdio-305b5920d548c23f)
+
+running 3 tests
+test docs_resources_over_stdio ... ferrocut-mcp: project root /tmp/.tmpclqHFH
+ok
+test stdio_server_end_to_end ... ferrocut-mcp: project root /tmp/.tmpnJcpVw
+ok
+test transcript_tools_over_stdio ... ferrocut-mcp: project root /tmp/.tmpExX0w4
+ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.16s
+
+     Running tests/storytold.rs (target/debug/deps/storytold-b79ef554ab3840e7)
+
+running 10 tests
+test discovery_and_paged_catalog_match_the_executable_registry ... ok
+test hostile_foreign_source_urls_return_errors_without_panics_or_files ... ok
+test import_export_dry_runs_new_files_and_explicit_loss_permission ... ok
+test import_export_paths_and_nested_assets_cannot_escape_the_project_root ... ok
+test import_losses_require_permission_and_invalid_selection_never_writes ... ok
+test import_missing_or_unprobeable_media_requires_explicit_loss_permission ... Truncating packet of size 13344 to 17
+[matroska,webm @ 0x7137580804c0] EBML header parsing failed
+Truncating packet of size 13344 to 17
+[matroska,webm @ 0x7137580804c0] EBML header parsing failed
+Truncating packet of size 13344 to 17
+[matroska,webm @ 0x7137580804c0] EBML header parsing failed
+ok
+test import_probes_actual_source_ranges_before_publication ... ok
+test nested_import_resolves_siblings_and_refuses_collisions_before_publication ... ok
+test scopes_decode_inside_root_and_reject_outside_symlink_and_time ... ok
+test tool_schemas_annotations_and_runtime_arguments_are_strict ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.43s
+
+     Running tests/timeline_schema.rs (target/debug/deps/timeline_schema-88e3546693808d0b)
+
+running 5 tests
+test every_example_and_task_timeline_validates_and_engine_output_too ... ok
+test media_probe_reports_streams_inside_the_root_only ... ok
+test schema_rejects_what_the_engine_rejects ... ok
+test schema_tool_and_resources ... ok
+test timelines_built_with_every_op_validate ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 22.41s
+
+     Running unittests src/lib.rs (target/debug/deps/ferrocut_types-91e072ce05a99197)
+
+running 24 tests
+test cancel::tests::child_follows_parent_not_vice_versa ... ok
+test error::tests::gpu_faults_are_retryable_and_labelled ... ok
+test image::tests::rect_union_and_intersect ... ok
+test keyframe::tests::deterministic_and_hash_stable ... ok
+test keyframe::tests::easing_is_monotone ... ok
+test keyframe::tests::exact_at_keyframes_for_every_interpolation ... ok
+test keyframe::tests::expressions_roundtrip_shift_and_hash ... ok
+test keyframe::tests::json_forms_and_validation ... ok
+test keyframe::tests::linear_hold_and_presets ... ok
+test manifest::tests::content_and_name_changes_change_the_digest ... ok
+test manifest::tests::order_independent_and_location_independent ... ok
+test manifest::tests::rejects_escapes_and_missing_files ... ok
+test param::tests::finds_components_and_checks_ranges ... ok
+test shot::tests::json_shape ... ok
+test time::tests::arithmetic_and_ordering ... ok
+test time::tests::extreme_decimal_inputs_return_values_or_errors_without_panicking ... ok
+test time::tests::floor_ceil_round ... ok
+test time::tests::halves_round_away_from_zero ... ok
+test time::tests::normalizes ... ok
+test time::tests::ntsc_frames_are_exact ... ok
+test time::tests::overflow_is_an_error_not_a_wrap ... ok
+test time::tests::parse_and_serde ... ok
+test time::tests::pts_round_trip_recovers_frame_index ... ok
+test time::tests::to_pts_halves_match_near_inf ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+   Doc-tests ferrocut_core
+
+running 2 tests
+test crates/ferrocut-core/src/effect.rs - effect (line 8) ... ignored
+test crates/ferrocut-core/src/gpu.rs - gpu::with_alloc_scope (line 667) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.25s; merged doctests compilation took 0.24s
+   Doc-tests ferrocut_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests ferrocut_mcp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests ferrocut_types
+
+running 1 test
+test crates/ferrocut-types/src/manifest.rs - manifest (line 22) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.16s; merged doctests compilation took 0.15s

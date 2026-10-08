@@ -299,3 +299,131 @@ pub fn shape() -> Value {
     );
     schema
 }
+
+pub fn masks() -> Value {
+    let mut geometry = geometry();
+    geometry["oneOf"][4]["properties"]["commands"]["maxItems"] = json!(256);
+    json!({"type":"array","maxItems":64,"default":[],
+        "description":"Ordered source-time masks before clip effects and transform. Feather is isotropic signed-distance feather. First subtract/intersect/darken starts opaque; additive modes start transparent. Not supported on adjustment layers.",
+        "items":object(json!({
+            "geometry":geometry,
+            "mode":{"enum":["none","add","subtract","intersect","lighten","darken","difference"],"default":"add"},
+            "inverted":{"type":"boolean","default":false},
+            "enabled":{"type":"boolean","default":true},
+            "opacity":default(animatable("mask opacity fraction 0..1, source time"),json!(1)),
+            "feather":default(animatable("isotropic feather width in pixels 0..512, source time"),json!(0)),
+            "expansion":default(animatable("signed expansion in pixels -512..512, source time"),json!(0)),
+            "fill_rule":{"enum":["nonzero","even_odd"],"default":"nonzero"}
+        }), &["geometry"])
+    })
+}
+
+fn group_transform() -> Value {
+    object(
+        json!({
+            "anchor":default(pair("local vector pivot"),json!([0,0])),
+            "position":default(pair("group translation in pixels"),json!([0,0])),
+            "scale":default(pair("axis scale percent"),json!([100,100])),
+            "rotation":default(animatable("clockwise degrees"),json!(0)),
+            "skew":default(animatable("skew degrees -85..85"),json!(0)),
+            "skew_axis":default(animatable("skew axis degrees"),json!(0)),
+            "opacity":default(animatable("per-descendant opacity percent, 0..100; group is not isolated"),json!(100))
+        }),
+        &[],
+    )
+}
+
+fn repeat() -> Value {
+    object(
+        json!({
+            "copies":default(animatable("0..128 copies; fractional final copy fades"),json!(3)),
+            "offset":default(animatable("copy transform exponent offset"),json!(0)),
+            "anchor":default(pair("copy pivot"),json!([0,0])),
+            "position":default(pair("per-copy translation"),json!([100,0])),
+            "scale":default(pair("per-copy scale percent, strictly positive"),json!([100,100])),
+            "rotation":default(animatable("per-copy clockwise degrees"),json!(0)),
+            "start_opacity":default(animatable("first copy opacity percent 0..100"),json!(100)),
+            "end_opacity":default(animatable("last copy opacity percent 0..100"),json!(100)),
+            "composite":{"enum":["above","below"],"default":"below"}
+        }),
+        &[],
+    )
+}
+
+/// Unroll the engine's finite nesting bound; no remote or unresolved schema refs.
+pub fn vector_group() -> Value {
+    fn group(depth: usize) -> Value {
+        let mut items = vec![object(
+            json!({"type":{"const":"shape"},"shape":shape()}),
+            &["type", "shape"],
+        )];
+        if depth < 8 {
+            items.push(object(
+                json!({"type":{"const":"group"},"group":group(depth+1)}),
+                &["type", "group"],
+            ));
+        }
+        object(
+            json!({
+                "items":{"type":"array","maxItems":128,"items":{"oneOf":items}},
+                "transform":default(group_transform(),json!({})),
+                "repeat":nullable(repeat())
+            }),
+            &["items"],
+        )
+    }
+    let mut result = group(1);
+    result["description"] = json!(
+        "Editable native vector groups and repeaters, painted bottom to top. Numeric animation is source time. Bounds across the whole tree: depth 8, 128 nodes, 512 expanded draws and work budgets checked by the engine. Group opacity multiplies descendant paints without isolation."
+    );
+    result
+}
+
+pub fn tracking_settings() -> Value {
+    let pixel_pair = json!({"type":"array","minItems":2,"maxItems":2,"items":crate::schema::rational("original decoded source pixels")});
+    let size = |min, max| json!({"type":"array","minItems":2,"maxItems":2,"items":{"type":"integer","minimum":min,"maximum":max}});
+    object(
+        json!({
+            "start":crate::schema::rational("nonnegative source seconds"),
+            "fps":crate::schema::rational("positive sample rate, at most 240; exact rational"),
+            "width":{"type":"integer","minimum":16,"maximum":4096},
+            "height":{"type":"integer","minimum":16,"maximum":4096},
+            "frame_count":{"type":"integer","minimum":1,"maximum":2400},
+            "points":{"type":"array","minItems":1,"maxItems":16,"items":object(json!({
+                "id":{"type":"string","minLength":1,"maxLength":128},
+                "center":pixel_pair,
+                "feature_size":size(5,63),
+                "search_size":size(9,191)
+            }), &["id","center","feature_size","search_size"])},
+            "min_confidence":crate::schema::rational("normalized correlation percent 1..100; not a calibrated probability"),
+            "subpixel":{"type":"boolean"}
+        }),
+        &[
+            "start",
+            "fps",
+            "width",
+            "height",
+            "frame_count",
+            "points",
+            "min_confidence",
+            "subpixel",
+        ],
+    )
+}
+
+pub fn tracking_keyframe_options() -> Value {
+    object(
+        json!({
+            "point":{"type":"string","minLength":1,"maxLength":128},
+            "source_clip":{"type":"string","minLength":1},
+            "target_clip":{"type":"string","minLength":1},
+            "mode":{"enum":["attach","stabilize"]},
+            "stabilization":nullable(object(json!({
+                "mode":{"enum":["smooth","lock"]},
+                "smoothness":crate::schema::rational("upstream smoothing amount 0..100")
+            }), &["mode","smoothness"])),
+            "offset":{"type":"array","minItems":2,"maxItems":2,"items":crate::schema::rational("extra output-pixel translation"),"default":[0,0]}
+        }),
+        &["point", "source_clip", "target_clip", "mode"],
+    )
+}

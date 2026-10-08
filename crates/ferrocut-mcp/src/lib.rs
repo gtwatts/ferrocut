@@ -1192,6 +1192,24 @@ pub struct DocResource {
 pub fn resources() -> Vec<DocResource> {
     vec![
         DocResource {
+            uri: "docs://integrations/native-masks.md",
+            name: "native-masks",
+            description: "Editable source-time mask stacks: combination, feather, expansion, bounds and pixel evidence.",
+            mime: "text/markdown",
+        },
+        DocResource {
+            uri: "docs://integrations/vector-instances.md",
+            name: "vector-instances",
+            description: "Native nested shape groups and repeaters: transforms, opacity, copy ordering, source clocks and bounds.",
+            mime: "text/markdown",
+        },
+        DocResource {
+            uri: "docs://integrations/tracking.md",
+            name: "tracking",
+            description: "Measured point tracking and translation stabilization: source binding, confidence, editable keys and limits.",
+            mime: "text/markdown",
+        },
+        DocResource {
             uri: "docs://integrations/storytold.md",
             name: "storytold-integration",
             description: "Reused FilmCraft/EffectCraft core engines: discovery, effect/shape clocks, interchange loss reports, scopes, evidence and limits.",
@@ -1246,6 +1264,15 @@ pub fn resources() -> Vec<DocResource> {
 pub fn read_doc(uri: &str) -> Option<String> {
     let pretty = |v: Value| serde_json::to_string_pretty(&v).unwrap_or_default();
     Some(match uri {
+        "docs://integrations/native-masks.md" => {
+            include_str!("../../../docs/integrations/native-masks.md").to_string()
+        }
+        "docs://integrations/vector-instances.md" => {
+            include_str!("../../../docs/integrations/vector-instances.md").to_string()
+        }
+        "docs://integrations/tracking.md" => {
+            include_str!("../../../docs/integrations/tracking.md").to_string()
+        }
         "docs://integrations/storytold.md" => {
             include_str!("../../../docs/integrations/STORYTOLD.md").to_string()
         }

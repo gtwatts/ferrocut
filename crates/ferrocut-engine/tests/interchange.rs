@@ -111,6 +111,22 @@ fn original_otio_and_fcp7_roundtrip_preserves_gaps_tracks_paths_and_source_edits
 }
 
 #[test]
+fn native_clip_masks_are_reported_as_interchange_loss_instead_of_silently_dropped() {
+    let mut tl = simple();
+    tl.tracks[0].clips[0].masks = serde_json::from_value(json!([
+        {"geometry":{"type":"ellipse","center":[320,180],"radius":[100,80]},"feather":8}
+    ]))
+    .unwrap();
+    for format in [Format::Otio, Format::Fcp7Xml] {
+        let exported = interchange::export_timeline(&tl, format, &options(false)).unwrap();
+        assert!(exported.report.has_losses());
+        assert!(exported.report.entries.iter().any(|entry|
+            entry.feature=="clip_compositing" && entry.message.contains("masks")),
+            "mask loss missing: {:?}",exported.report.entries);
+    }
+}
+
+#[test]
 fn opacity_motion_keys_use_source_origin_and_preserve_native_geometry() {
     let mut value = serde_json::to_value(simple()).unwrap();
     value["tracks"][0]["clips"][0]["opacity"] = json!({"keyframes":[{"t":"0","v":"0.25"},{"t":"1","v":"0.75","interp":"hold"},{"t":"2","v":"1"}]});

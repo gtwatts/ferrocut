@@ -1,0 +1,67 @@
+{
+  "output": "/tmp/ferrocut-motion-repro-20261008/timeline.json",
+  "dry_run": false,
+  "written": true,
+  "changes": [
+    {
+      "op": 0,
+      "kind": "set_param",
+      "summary": "title generator.text.content: \"MOTION, UNDER CONTROL.\" -> \"EDITED, STILL NATIVE.\"",
+      "span": [
+        "0",
+        "2"
+      ]
+    },
+    {
+      "op": 1,
+      "kind": "set_param",
+      "summary": "reticle generator.group.items.1.group.repeat.copies: \"12\" -> \"18\"",
+      "span": [
+        "0",
+        "2"
+      ]
+    },
+    {
+      "op": 2,
+      "kind": "set_param",
+      "summary": "reticle generator.group.items.1.group.repeat.rotation: \"30\" -> \"20\"",
+      "span": [
+        "0",
+        "2"
+      ]
+    },
+    {
+      "op": 3,
+      "kind": "set_param",
+      "summary": "source masks.0.feather: \"12\" -> \"6\"",
+      "span": [
+        "0",
+        "2"
+      ]
+    }
+  ],
+  "before": "16cca074c63f5bb2b99759aa8e91524199e011f4cd55de0bed7c616502838d78",
+  "after": "558410b0637afe97d0a70e3f558fc770c5b55235398366f9c4ece3dfe1975b4f",
+  "journal_seq": 2,
+  "sources_absolutized": false,
+  "render": {
+    "total_chunks": 2,
+    "total_frames": 32,
+    "chunk_frames": 16,
+    "dirty_chunks": [
+      0,
+      1
+    ],
+    "dirty_frames": 32,
+    "reused_chunks": 0,
+    "ranges": [
+      {
+        "start_frame": 0,
+        "end_frame": 32,
+        "start": "0",
+        "end": "2"
+      }
+    ],
+    "audio": "audio is re-mixed on every render (not chunk-cached)"
+  }
+}

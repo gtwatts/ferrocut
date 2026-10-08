@@ -1,0 +1,954 @@
+{
+  "name": "Ferrocut native motion tools showcase",
+  "output": {
+    "width": 640,
+    "height": 360,
+    "fps": "16",
+    "gop": 16,
+    "gops_per_chunk": 1,
+    "duration": "2"
+  },
+  "tracks": [
+    {
+      "name": "Matte background",
+      "clips": [
+        {
+          "id": "background",
+          "generator": {
+            "type": "solid",
+            "color": [
+              "1/40",
+              "1/25",
+              "11/200",
+              "1"
+            ]
+          },
+          "start": "0",
+          "source_in": "0",
+          "duration": "2",
+          "opacity": "1",
+          "transition_in": null
+        }
+      ]
+    },
+    {
+      "name": "Measured source",
+      "clips": [
+        {
+          "id": "source",
+          "source": "/tmp/ferrocut-motion-repro-20261008/motion-source.mkv",
+          "start": "0",
+          "source_in": "0",
+          "duration": "2",
+          "opacity": "1",
+          "transform": {
+            "position": [
+              {
+                "keyframes": [
+                  {
+                    "t": "0",
+                    "v": "384"
+                  },
+                  {
+                    "t": "1/16",
+                    "v": "380"
+                  },
+                  {
+                    "t": "1/8",
+                    "v": "376"
+                  },
+                  {
+                    "t": "3/16",
+                    "v": "372"
+                  },
+                  {
+                    "t": "1/4",
+                    "v": "368"
+                  },
+                  {
+                    "t": "5/16",
+                    "v": "364"
+                  },
+                  {
+                    "t": "3/8",
+                    "v": "360"
+                  },
+                  {
+                    "t": "7/16",
+                    "v": "356"
+                  },
+                  {
+                    "t": "1/2",
+                    "v": "352"
+                  },
+                  {
+                    "t": "9/16",
+                    "v": "348"
+                  },
+                  {
+                    "t": "5/8",
+                    "v": "344"
+                  },
+                  {
+                    "t": "11/16",
+                    "v": "340"
+                  },
+                  {
+                    "t": "3/4",
+                    "v": "336"
+                  },
+                  {
+                    "t": "13/16",
+                    "v": "332"
+                  },
+                  {
+                    "t": "7/8",
+                    "v": "328"
+                  },
+                  {
+                    "t": "15/16",
+                    "v": "324"
+                  },
+                  {
+                    "t": "1",
+                    "v": "320"
+                  },
+                  {
+                    "t": "17/16",
+                    "v": "316"
+                  },
+                  {
+                    "t": "9/8",
+                    "v": "312"
+                  },
+                  {
+                    "t": "19/16",
+                    "v": "308"
+                  },
+                  {
+                    "t": "5/4",
+                    "v": "304"
+                  },
+                  {
+                    "t": "21/16",
+                    "v": "300"
+                  },
+                  {
+                    "t": "11/8",
+                    "v": "296"
+                  },
+                  {
+                    "t": "23/16",
+                    "v": "292"
+                  },
+                  {
+                    "t": "3/2",
+                    "v": "288"
+                  },
+                  {
+                    "t": "25/16",
+                    "v": "284"
+                  },
+                  {
+                    "t": "13/8",
+                    "v": "280"
+                  },
+                  {
+                    "t": "27/16",
+                    "v": "276"
+                  },
+                  {
+                    "t": "7/4",
+                    "v": "272"
+                  },
+                  {
+                    "t": "29/16",
+                    "v": "268"
+                  },
+                  {
+                    "t": "15/8",
+                    "v": "264"
+                  },
+                  {
+                    "t": "31/16",
+                    "v": "260"
+                  }
+                ]
+              },
+              {
+                "keyframes": [
+                  {
+                    "t": "0",
+                    "v": "212"
+                  },
+                  {
+                    "t": "1/16",
+                    "v": "210"
+                  },
+                  {
+                    "t": "1/8",
+                    "v": "208"
+                  },
+                  {
+                    "t": "3/16",
+                    "v": "206"
+                  },
+                  {
+                    "t": "1/4",
+                    "v": "204"
+                  },
+                  {
+                    "t": "5/16",
+                    "v": "202"
+                  },
+                  {
+                    "t": "3/8",
+                    "v": "200"
+                  },
+                  {
+                    "t": "7/16",
+                    "v": "198"
+                  },
+                  {
+                    "t": "1/2",
+                    "v": "196"
+                  },
+                  {
+                    "t": "9/16",
+                    "v": "194"
+                  },
+                  {
+                    "t": "5/8",
+                    "v": "192"
+                  },
+                  {
+                    "t": "11/16",
+                    "v": "190"
+                  },
+                  {
+                    "t": "3/4",
+                    "v": "188"
+                  },
+                  {
+                    "t": "13/16",
+                    "v": "186"
+                  },
+                  {
+                    "t": "7/8",
+                    "v": "184"
+                  },
+                  {
+                    "t": "15/16",
+                    "v": "182"
+                  },
+                  {
+                    "t": "1",
+                    "v": "180"
+                  },
+                  {
+                    "t": "17/16",
+                    "v": "178"
+                  },
+                  {
+                    "t": "9/8",
+                    "v": "176"
+                  },
+                  {
+                    "t": "19/16",
+                    "v": "174"
+                  },
+                  {
+                    "t": "5/4",
+                    "v": "172"
+                  },
+                  {
+                    "t": "21/16",
+                    "v": "170"
+                  },
+                  {
+                    "t": "11/8",
+                    "v": "168"
+                  },
+                  {
+                    "t": "23/16",
+                    "v": "166"
+                  },
+                  {
+                    "t": "3/2",
+                    "v": "164"
+                  },
+                  {
+                    "t": "25/16",
+                    "v": "162"
+                  },
+                  {
+                    "t": "13/8",
+                    "v": "160"
+                  },
+                  {
+                    "t": "27/16",
+                    "v": "158"
+                  },
+                  {
+                    "t": "7/4",
+                    "v": "156"
+                  },
+                  {
+                    "t": "29/16",
+                    "v": "154"
+                  },
+                  {
+                    "t": "15/8",
+                    "v": "152"
+                  },
+                  {
+                    "t": "31/16",
+                    "v": "150"
+                  }
+                ]
+              }
+            ]
+          },
+          "transition_in": null,
+          "audio": {
+            "mute": true
+          },
+          "masks": [
+            {
+              "geometry": {
+                "type": "ellipse",
+                "center": [
+                  "320",
+                  "180"
+                ],
+                "radius": [
+                  "310",
+                  "147"
+                ]
+              },
+              "mode": "add",
+              "inverted": false,
+              "opacity": "1",
+              "feather": "12",
+              "expansion": "0",
+              "fill_rule": "nonzero",
+              "enabled": true
+            },
+            {
+              "geometry": {
+                "type": "ellipse",
+                "center": [
+                  "510",
+                  "250"
+                ],
+                "radius": [
+                  "38",
+                  "38"
+                ]
+              },
+              "mode": "subtract",
+              "inverted": false,
+              "opacity": "1",
+              "feather": "4",
+              "expansion": {
+                "keyframes": [
+                  {
+                    "t": "0",
+                    "v": "0"
+                  },
+                  {
+                    "t": "2",
+                    "v": "12"
+                  }
+                ]
+              },
+              "fill_rule": "nonzero",
+              "enabled": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Tracked native vector",
+      "clips": [
+        {
+          "id": "reticle",
+          "generator": {
+            "type": "vector_group",
+            "group": {
+              "items": [
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "ellipse",
+                      "center": [
+                        "0",
+                        "0"
+                      ],
+                      "radius": [
+                        "68",
+                        "68"
+                      ]
+                    },
+                    "fill": null,
+                    "stroke": {
+                      "paint": {
+                        "type": "solid",
+                        "color": [
+                          "8/25",
+                          "47/50",
+                          "18/25",
+                          "1"
+                        ]
+                      },
+                      "width": "3/2",
+                      "cap": "butt",
+                      "join": "miter",
+                      "miter_limit": "4",
+                      "dashes": [],
+                      "dash_offset": "0"
+                    },
+                    "fill_rule": "nonzero"
+                  }
+                },
+                {
+                  "type": "group",
+                  "group": {
+                    "items": [
+                      {
+                        "type": "shape",
+                        "shape": {
+                          "geometry": {
+                            "type": "ellipse",
+                            "center": [
+                              "76",
+                              "0"
+                            ],
+                            "radius": [
+                              "3",
+                              "3"
+                            ]
+                          },
+                          "fill": {
+                            "type": "solid",
+                            "color": [
+                              "1",
+                              "41/50",
+                              "19/50",
+                              "1"
+                            ]
+                          },
+                          "stroke": null,
+                          "fill_rule": "nonzero"
+                        }
+                      }
+                    ],
+                    "transform": {
+                      "anchor": [
+                        "0",
+                        "0"
+                      ],
+                      "position": [
+                        "0",
+                        "0"
+                      ],
+                      "scale": [
+                        "100",
+                        "100"
+                      ],
+                      "rotation": "0",
+                      "skew": "0",
+                      "skew_axis": "0",
+                      "opacity": "100"
+                    },
+                    "repeat": {
+                      "copies": "12",
+                      "offset": "0",
+                      "anchor": [
+                        "0",
+                        "0"
+                      ],
+                      "position": [
+                        "0",
+                        "0"
+                      ],
+                      "scale": [
+                        "100",
+                        "100"
+                      ],
+                      "rotation": "30",
+                      "start_opacity": "100",
+                      "end_opacity": "25",
+                      "composite": "below"
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "path",
+                      "commands": [
+                        {
+                          "type": "move_to",
+                          "point": [
+                            "-8",
+                            "0"
+                          ]
+                        },
+                        {
+                          "type": "line_to",
+                          "point": [
+                            "8",
+                            "0"
+                          ]
+                        },
+                        {
+                          "type": "move_to",
+                          "point": [
+                            "0",
+                            "-8"
+                          ]
+                        },
+                        {
+                          "type": "line_to",
+                          "point": [
+                            "0",
+                            "8"
+                          ]
+                        }
+                      ]
+                    },
+                    "fill": null,
+                    "stroke": {
+                      "paint": {
+                        "type": "solid",
+                        "color": [
+                          "1",
+                          "1",
+                          "1",
+                          "1"
+                        ]
+                      },
+                      "width": "1",
+                      "cap": "butt",
+                      "join": "miter",
+                      "miter_limit": "4",
+                      "dashes": [],
+                      "dash_offset": "0"
+                    },
+                    "fill_rule": "nonzero"
+                  }
+                }
+              ],
+              "transform": {
+                "anchor": [
+                  "0",
+                  "0"
+                ],
+                "position": [
+                  "197",
+                  "173"
+                ],
+                "scale": [
+                  "100",
+                  "100"
+                ],
+                "rotation": "0",
+                "skew": "0",
+                "skew_axis": "0",
+                "opacity": "100"
+              }
+            }
+          },
+          "start": "0",
+          "source_in": "0",
+          "duration": "2",
+          "opacity": "0",
+          "transform": {
+            "position": [
+              {
+                "keyframes": [
+                  {
+                    "t": "0",
+                    "v": "320"
+                  },
+                  {
+                    "t": "1/16",
+                    "v": "324"
+                  },
+                  {
+                    "t": "1/8",
+                    "v": "328"
+                  },
+                  {
+                    "t": "3/16",
+                    "v": "332"
+                  },
+                  {
+                    "t": "1/4",
+                    "v": "336"
+                  },
+                  {
+                    "t": "5/16",
+                    "v": "340"
+                  },
+                  {
+                    "t": "3/8",
+                    "v": "344"
+                  },
+                  {
+                    "t": "7/16",
+                    "v": "348"
+                  },
+                  {
+                    "t": "1/2",
+                    "v": "352"
+                  },
+                  {
+                    "t": "9/16",
+                    "v": "356"
+                  },
+                  {
+                    "t": "5/8",
+                    "v": "360"
+                  },
+                  {
+                    "t": "11/16",
+                    "v": "364"
+                  },
+                  {
+                    "t": "3/4",
+                    "v": "368"
+                  },
+                  {
+                    "t": "13/16",
+                    "v": "372"
+                  },
+                  {
+                    "t": "7/8",
+                    "v": "376"
+                  },
+                  {
+                    "t": "15/16",
+                    "v": "380"
+                  },
+                  {
+                    "t": "1",
+                    "v": "384"
+                  },
+                  {
+                    "t": "17/16",
+                    "v": "388"
+                  },
+                  {
+                    "t": "9/8",
+                    "v": "392"
+                  },
+                  {
+                    "t": "19/16",
+                    "v": "396"
+                  },
+                  {
+                    "t": "5/4",
+                    "v": "400"
+                  },
+                  {
+                    "t": "21/16",
+                    "v": "404"
+                  },
+                  {
+                    "t": "11/8",
+                    "v": "408"
+                  },
+                  {
+                    "t": "23/16",
+                    "v": "412"
+                  },
+                  {
+                    "t": "3/2",
+                    "v": "416"
+                  },
+                  {
+                    "t": "25/16",
+                    "v": "420"
+                  },
+                  {
+                    "t": "13/8",
+                    "v": "424"
+                  },
+                  {
+                    "t": "27/16",
+                    "v": "428"
+                  },
+                  {
+                    "t": "7/4",
+                    "v": "432"
+                  },
+                  {
+                    "t": "29/16",
+                    "v": "436"
+                  },
+                  {
+                    "t": "15/8",
+                    "v": "440"
+                  },
+                  {
+                    "t": "31/16",
+                    "v": "444"
+                  }
+                ]
+              },
+              {
+                "keyframes": [
+                  {
+                    "t": "0",
+                    "v": "180"
+                  },
+                  {
+                    "t": "1/16",
+                    "v": "182"
+                  },
+                  {
+                    "t": "1/8",
+                    "v": "184"
+                  },
+                  {
+                    "t": "3/16",
+                    "v": "186"
+                  },
+                  {
+                    "t": "1/4",
+                    "v": "188"
+                  },
+                  {
+                    "t": "5/16",
+                    "v": "190"
+                  },
+                  {
+                    "t": "3/8",
+                    "v": "192"
+                  },
+                  {
+                    "t": "7/16",
+                    "v": "194"
+                  },
+                  {
+                    "t": "1/2",
+                    "v": "196"
+                  },
+                  {
+                    "t": "9/16",
+                    "v": "198"
+                  },
+                  {
+                    "t": "5/8",
+                    "v": "200"
+                  },
+                  {
+                    "t": "11/16",
+                    "v": "202"
+                  },
+                  {
+                    "t": "3/4",
+                    "v": "204"
+                  },
+                  {
+                    "t": "13/16",
+                    "v": "206"
+                  },
+                  {
+                    "t": "7/8",
+                    "v": "208"
+                  },
+                  {
+                    "t": "15/16",
+                    "v": "210"
+                  },
+                  {
+                    "t": "1",
+                    "v": "212"
+                  },
+                  {
+                    "t": "17/16",
+                    "v": "214"
+                  },
+                  {
+                    "t": "9/8",
+                    "v": "216"
+                  },
+                  {
+                    "t": "19/16",
+                    "v": "218"
+                  },
+                  {
+                    "t": "5/4",
+                    "v": "220"
+                  },
+                  {
+                    "t": "21/16",
+                    "v": "222"
+                  },
+                  {
+                    "t": "11/8",
+                    "v": "224"
+                  },
+                  {
+                    "t": "23/16",
+                    "v": "226"
+                  },
+                  {
+                    "t": "3/2",
+                    "v": "228"
+                  },
+                  {
+                    "t": "25/16",
+                    "v": "230"
+                  },
+                  {
+                    "t": "13/8",
+                    "v": "232"
+                  },
+                  {
+                    "t": "27/16",
+                    "v": "234"
+                  },
+                  {
+                    "t": "7/4",
+                    "v": "236"
+                  },
+                  {
+                    "t": "29/16",
+                    "v": "238"
+                  },
+                  {
+                    "t": "15/8",
+                    "v": "240"
+                  },
+                  {
+                    "t": "31/16",
+                    "v": "242"
+                  }
+                ]
+              }
+            ]
+          },
+          "transition_in": null
+        }
+      ]
+    },
+    {
+      "name": "Title",
+      "clips": [
+        {
+          "id": "title",
+          "generator": {
+            "type": "text",
+            "text": {
+              "content": "TRANSLATION, STABILIZED.",
+              "font": "/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+              "font_index": 0,
+              "font_size": "27",
+              "tracking": "0",
+              "position": [
+                "30",
+                "18"
+              ],
+              "align": "left",
+              "vertical_align": "top",
+              "wrap": "word_or_glyph",
+              "fill": [
+                "1",
+                "47/50",
+                "4/5",
+                "1"
+              ],
+              "opacity": "1"
+            }
+          },
+          "start": "0",
+          "source_in": "0",
+          "duration": "2",
+          "opacity": "1",
+          "transition_in": null
+        }
+      ]
+    },
+    {
+      "name": "Subtitle",
+      "clips": [
+        {
+          "id": "subtitle",
+          "generator": {
+            "type": "text",
+            "text": {
+              "content": "NATIVE MASKS  /  REPEATERS  /  MEASURED TRACKING",
+              "font": "/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+              "font_index": 0,
+              "font_size": "11",
+              "tracking": "0",
+              "position": [
+                "32",
+                "53"
+              ],
+              "align": "left",
+              "vertical_align": "top",
+              "wrap": "word_or_glyph",
+              "fill": [
+                "39/100",
+                "17/20",
+                "77/100",
+                "1"
+              ],
+              "opacity": "1"
+            }
+          },
+          "start": "0",
+          "source_in": "0",
+          "duration": "2",
+          "opacity": "1",
+          "transition_in": null
+        }
+      ]
+    },
+    {
+      "name": "Footer",
+      "clips": [
+        {
+          "id": "footer",
+          "generator": {
+            "type": "text",
+            "text": {
+              "content": "SOURCE PIXELS / EXACT TIME / EDITABLE KEYFRAMES",
+              "font": "/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+              "font_index": 0,
+              "font_size": "11",
+              "tracking": "0",
+              "position": [
+                "32",
+                "326"
+              ],
+              "align": "left",
+              "vertical_align": "top",
+              "wrap": "word_or_glyph",
+              "fill": [
+                "13/20",
+                "37/50",
+                "39/50",
+                "1"
+              ],
+              "opacity": "1"
+            }
+          },
+          "start": "0",
+          "source_in": "0",
+          "duration": "2",
+          "opacity": "1",
+          "transition_in": null
+        }
+      ]
+    }
+  ]
+}

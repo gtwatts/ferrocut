@@ -767,6 +767,155 @@ impl VectorSpec {
         self.rasterize_checked(t, width, height, &|| Ok(()))
     }
 
+    /// Paint a native shape into a shared premultiplied ACEScg float buffer.
+    /// Used only by vector groups; the legacy single-shape renderer below is
+    /// unchanged. Curves and local stroke outlines are transformed before
+    /// antialiased coverage, and gradient samples are mapped back to local space.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn paint_transformed_checked(
+        &self,
+        t: RationalTime,
+        width: u32,
+        height: u32,
+        transform: &effectcraft_geom::Mat3,
+        opacity: f32,
+        pixels: &mut [[f32; 4]],
+        geometry_budget: &mut usize,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<(), String> {
+        check()?;
+        self.validate()?;
+        let count = (width as usize)
+            .checked_mul(height as usize)
+            .filter(|n| *n > 0 && *n <= MAX_VECTOR_PIXELS)
+            .ok_or("invalid vector group buffer dimensions")?;
+        if pixels.len() != count || !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return Err("invalid vector group buffer or opacity".into());
+        }
+        if !transform.is_affine()
+            || !transform
+                .0
+                .iter()
+                .flatten()
+                .all(|v| v.is_finite() && v.abs() <= 1e6)
+        {
+            return Err("invalid bounded affine vector group transform".into());
+        }
+        if opacity == 0.0 || transform.determinant() == 0.0 {
+            return Ok(());
+        }
+        let inverse = transform
+            .inverse()
+            .ok_or("vector group transform cannot be inverted")?;
+        if !inverse.0.iter().flatten().all(|v| v.is_finite()) {
+            return Err("vector group inverse transform is not finite".into());
+        }
+        let Some(path) = self.operated_path(t, check)? else {
+            return Ok(());
+        };
+        let mut transformed = |path: &Path| -> Result<Option<Path>, String> {
+            let paths = native_paths(path);
+            validate_paths(&paths, MAX_OPERATOR_ELEMENTS)?;
+            let elements = paths.iter().map(|p| p.elements().len()).sum::<usize>();
+            *geometry_budget = geometry_budget
+                .checked_sub(elements)
+                .ok_or("vector instance transformed geometry exceeds complexity budget")?;
+            // Calling the retained EffectCraft implementation transforms actual
+            // Bezier control points, preserving curved geometry and winding.
+            let paths = effectcraft_path::transform(&paths, transform);
+            skia_paths(&paths)
+        };
+        if let Some(fill) = &self.fill {
+            check()?;
+            if let Some(path) = transformed(&path)? {
+                let mut mask = Mask::new(width, height).ok_or("invalid vector mask dimensions")?;
+                let rule = match self.fill_rule {
+                    VectorFillRule::Nonzero => FillRule::Winding,
+                    VectorFillRule::EvenOdd => FillRule::EvenOdd,
+                };
+                mask.fill_path(&path, rule, true, Transform::identity());
+                shade_transformed(
+                    pixels,
+                    &mask,
+                    &PaintAt::new(fill, t)?,
+                    width,
+                    &inverse,
+                    opacity,
+                    check,
+                )?;
+            }
+        }
+        if let Some(stroke) = &self.stroke {
+            check()?;
+            let stroke_width = nonnegative(&stroke.width, t)?;
+            if stroke_width > 0.0 {
+                let dashes: Vec<f32> = stroke
+                    .dashes
+                    .iter()
+                    .map(|a| nonnegative(a, t))
+                    .collect::<Result<_, _>>()?;
+                if dashes.is_empty() || dashes.iter().any(|d| *d > 0.0) {
+                    let dash = if dashes.is_empty() {
+                        None
+                    } else {
+                        validate_dash_budget(&path, &dashes)?;
+                        Some(
+                            StrokeDash::new(dashes, scalar(&stroke.dash_offset, t)?)
+                                .ok_or("stroke dashes cannot be represented")?,
+                        )
+                    };
+                    let style = Stroke {
+                        width: stroke_width,
+                        miter_limit: nonnegative(&stroke.miter_limit, t)?.max(1.0),
+                        line_cap: match stroke.cap {
+                            VectorCap::Butt => LineCap::Butt,
+                            VectorCap::Round => LineCap::Round,
+                            VectorCap::Square => LineCap::Square,
+                        },
+                        line_join: match stroke.join {
+                            VectorJoin::Miter => LineJoin::Miter,
+                            VectorJoin::Round => LineJoin::Round,
+                            VectorJoin::Bevel => LineJoin::Bevel,
+                        },
+                        dash,
+                    };
+                    let centerline = match &style.dash {
+                        Some(dash) => path.dash(dash, 1.0),
+                        None => Some(path.clone()),
+                    };
+                    if let Some(centerline) = centerline {
+                        // Outline in local space first: anisotropic scaling must
+                        // stretch the full stroke, including caps and joins.
+                        let outline = centerline
+                            .stroke(&style, 1.0)
+                            .ok_or("stroke outline could not be constructed")?;
+                        if let Some(outline) = transformed(&outline)? {
+                            let mut mask =
+                                Mask::new(width, height).ok_or("invalid vector mask dimensions")?;
+                            mask.fill_path(
+                                &outline,
+                                FillRule::Winding,
+                                true,
+                                Transform::identity(),
+                            );
+                            shade_transformed(
+                                pixels,
+                                &mask,
+                                &PaintAt::new(&stroke.paint, t)?,
+                                width,
+                                &inverse,
+                                opacity,
+                                check,
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+        check()?;
+        Ok(())
+    }
+
     fn rasterize_checked(
         &self,
         t: RationalTime,
@@ -1564,6 +1713,10 @@ impl PaintAt {
 
     fn pixel(&self, x: u32, y: u32) -> [f32; 4] {
         let p = [x as f32 + 0.5, y as f32 + 0.5];
+        self.pixel_at(p)
+    }
+
+    fn pixel_at(&self, p: [f32; 2]) -> [f32; 4] {
         let position = match self.kind {
             PaintKind::Solid(c) => return c,
             PaintKind::Linear(a, b) => {
@@ -1615,6 +1768,42 @@ fn shade(pixels: &mut [[f32; 4]], mask: &Mask, paint: &PaintAt, width: u32) {
         let src = c.map(|v| v * alpha);
         *dst = [0, 1, 2, 3].map(|k| src[k] + dst[k] * (1.0 - src[3]));
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shade_transformed(
+    pixels: &mut [[f32; 4]],
+    mask: &Mask,
+    paint: &PaintAt,
+    width: u32,
+    inverse: &effectcraft_geom::Mat3,
+    opacity: f32,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<(), String> {
+    for (i, (&coverage, dst)) in mask.data().iter().zip(pixels).enumerate() {
+        if i % 65_536 == 0 {
+            check()?;
+        }
+        if coverage == 0 {
+            continue;
+        }
+        let local = inverse.apply(effectcraft_geom::vec2(
+            (i % width as usize) as f64 + 0.5,
+            (i / width as usize) as f64 + 0.5,
+        ));
+        if !local.x.is_finite()
+            || !local.y.is_finite()
+            || local.x.abs() > f32::MAX as f64
+            || local.y.abs() > f32::MAX as f64
+        {
+            return Err("vector group paint coordinates are not representable".into());
+        }
+        let c = paint.pixel_at([local.x as f32, local.y as f32]);
+        let alpha = coverage as f32 / 255.0 * opacity;
+        let src = c.map(|v| v * alpha);
+        *dst = [0, 1, 2, 3].map(|k| src[k] + dst[k] * (1.0 - src[3]));
+    }
+    Ok(())
 }
 
 /// Native vector source node; clip source-time mapping is applied by ClipNode.

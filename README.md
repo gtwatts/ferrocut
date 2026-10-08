@@ -15,6 +15,11 @@ video scopes. Agents discover exact controls through `capabilities` and the page
 `effects_catalog`; the [editable integration example](examples/storytold-showcase.json)
 uses the reused engines through Ferrocut's normal renderer.
 
+The [native motion milestone](docs/integrations/NATIVE_MOTION.md) adds animated
+mask stacks, nested shape groups/repeaters, measured point tracking and translation
+stabilization. [Reproduce its full agent workflow](scripts/motion-showcase.py),
+including editable revisions, cached repeats and exact-byte undo.
+
 Brief: Obsidian vault `Pi Memory/Projects/cutline-research-brief-2026-10-07.md` (written before the rename to Ferrocut).
 
 License: Apache-2.0 (see `LICENSE`).

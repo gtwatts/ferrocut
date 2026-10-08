@@ -1,0 +1,49 @@
+{
+  "engine": "ferrocut-engine 0.0.1 render.v3",
+  "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+  "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+  "output": "/tmp/ferrocut-motion-repro-20261008/motion-stabilized.mkv",
+  "total_frames": 32,
+  "chunk_frames": 16,
+  "jobs": 1,
+  "chunks": [
+    {
+      "index": 0,
+      "start_frame": 0,
+      "frames": 16,
+      "key": "aca4195cd708ce7c62ac72ff6ea724479819aacc254521580617310754a531cb",
+      "status": "rendered",
+      "file_blake3": "95c71a17bff8c9a1bdaa40277aa8f102f23b5824d6ccaaf5a5e655595ed870e6",
+      "render_ms": 2442
+    },
+    {
+      "index": 1,
+      "start_frame": 16,
+      "frames": 16,
+      "key": "fc00253af238639ff5740dc68b310755fa906969cd73af8c48d2b34b8fd24f2d",
+      "status": "rendered",
+      "file_blake3": "35244e0552c3b523eddf5471c72a9179ff05c2319bef614cfc423773df7eee27",
+      "render_ms": 2263
+    }
+  ],
+  "rendered_frames": 32,
+  "reused_frames": 0,
+  "render_wall_ms": 4706,
+  "concat_ms": 2,
+  "total_ms": 4724,
+  "render_fps": 6.799830004249894,
+  "retries": 0,
+  "gpu_submissions": 32,
+  "textures_allocated": 172,
+  "textures_reused": 376,
+  "sequential": false,
+  "worker_tasks": 2,
+  "sequential_resets": 0,
+  "chunk_restarts": 0,
+  "gpu_recreations": 0,
+  "oom_backoffs": 0,
+  "min_jobs_in_flight": 1,
+  "chunk_dir": "/tmp/ferrocut-motion-repro-20261008/cache/chunks/f22f3505ddfab3ee",
+  "final_blake3": "f8eac0975ad943c6edf41c8894d00e561e2a8cb66fcd890d4818c25a05e212fe",
+  "video_blake3": "421b4871a386125b98c386fb5080941881010ca990aadb1db3c271d3d1e2e316"
+}

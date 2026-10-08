@@ -5,6 +5,11 @@ source is retained in Ferrocut and selected capabilities execute through native
 Ferrocut adapters. Existing timelines, edit batches, expression evaluation and
 render caches remain the authoring model.
 
+This report records the first adoption milestone. The subsequent
+[native motion milestone](NATIVE_MOTION.md) adds mask stacks, grouped shapes,
+repeaters and measured point tracking/translation stabilization, with its own
+current verification and reproducible workflow.
+
 ## Source and executable features
 
 | Component | Retained source | Connected in this build |
@@ -13,8 +18,8 @@ render caches remain the authoring model.
 | EffectCraft `6943872`, version 0.6.0 | 31 core packages | 170 CPU effects; polygon/star; nine ordered path operations |
 
 Nineteen upstream packages form the build dependency closure. The remaining
-source packages include codecs, containers, editor commands, audio DSP, export,
-text, tracking, renderers and format readers. These are available for subsequent
+source packages include broader codecs, containers, editor commands, audio DSP,
+export, text, tracking, renderers and format readers. These are available for subsequent
 adapters; **retained source is not an enabled or verified feature**. Run
 `ferrocut capabilities` for the package inventory and connection boundaries.
 
@@ -118,7 +123,7 @@ documented boundaries. The latter include protocol/root escapes, loss gates,
 source probing, generated-nest collisions and new-file refusal. Tests overlap
 with the broader regression run; their totals must not be added together.
 
-The final serial engine/MCP/core/types regression command passed **357 tests,
+The first-milestone serial engine/MCP/core/types regression command passed **357 tests,
 zero failures, one ignored doctest** ([full log](artifacts/regressions.log)).
 All-target Clippy for those four packages passed with warnings denied. Scoped
 formatting, source-provenance verification, ledger validation and the ledger's
@@ -140,8 +145,8 @@ expansion are bounded; oversized cases return an error. Cancellation is checked
 between copies and upstream calls; a monolithic upstream kernel cannot be
 interrupted mid-call. Real-time performance has not been established.
 
-Shape groups and repeaters, cross-frame/layer effect hosting, model-backed
-tracking/roto, native codec replacement and remaining retained engines still need
+Cross-frame/layer effect hosting, model-backed tracking/roto, native codec
+replacement and remaining retained engines still need
 adapters and demanding production tests. FCP7 has narrower edit representation;
 anisotropic scale, subframe timing, track names and unsupported processing are
 reported as losses. No external Premiere/Resolve import acceptance has been

@@ -1,0 +1,10 @@
+{
+  "point": "target",
+  "source_clip": "source",
+  "target_clip": "source",
+  "mode": "stabilize",
+  "stabilization": {
+    "mode": "lock",
+    "smoothness": 50
+  }
+}

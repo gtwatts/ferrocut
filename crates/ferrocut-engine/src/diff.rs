@@ -513,6 +513,7 @@ pub fn diff(a: &Timeline, b: &Timeline) -> TimelineDiff {
                     ("opacity", "opacity_changed"),
                     ("transform", "transform_changed"),
                     ("generator", "generator_changed"),
+                    ("masks", "masks_changed"),
                     ("three_d", "three_d_changed"),
                     ("motion_blur", "motion_blur_changed"),
                     ("markers", "markers_changed"),

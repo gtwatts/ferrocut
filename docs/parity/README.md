@@ -26,6 +26,9 @@ acceptance checks. It is a capability roadmap, not a claim of Adobe parity.
   reusable component candidates, model differences and unverified runtime claims.
 - [Executed FilmCraft/EffectCraft integration](../integrations/STORYTOLD.md):
   retained engines, connected agent controls, adapter tests and rendered evidence.
+- [Native motion milestone](../integrations/NATIVE_MOTION.md): animated masks,
+  nested groups/repeaters, measured tracking/stabilization, editable revisions,
+  scoped validation and exact-byte undo.
 - [Executed native milestone](EXECUTION.md): actual tests, inspected render,
   title revision/cache/undo evidence and unresolved baseline failures.
 

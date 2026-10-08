@@ -259,6 +259,8 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
     ParamSpec::fixed("generator.text.animators", Object, "", "[]", "ordered range animators [{selector:{unit:characters|words|lines,start,end},position?,opacity?,fill?}]; edit the list as a unit"),
     ParamSpec::fixed("generator.text.fallback_fonts", Object, "", "[]", "ordered explicit project fallback font paths; no system-font discovery"),
     ParamSpec::fixed("generator.shape", Object, "", "null", "editable vector payload {geometry,fill?,stroke?,fill_rule?}; numeric keys in source time"),
+    ParamSpec::fixed("generator.group", Object, "", "null", "native vector_group payload {items,transform?,repeat?}; bottom-to-top vector items, source-time numeric controls"),
+    ParamSpec::fixed("masks", Object, "", "[]", "ordered source-time native mask stack [{geometry,mode?,inverted?,opacity?,feather?,expansion?,fill_rule?,enabled?}]; before clip effects and transform"),
     ParamSpec::fixed("generator.shape.geometry", Object, "", "null", "rectangle | ellipse | polygon | star | path with move_to,line_to,quad_to,cubic_to,close commands"),
     ParamSpec::fixed("generator.shape.operators", Object, "", "[]", "ordered trim, round_corners, offset, pucker_bloat, zigzag, twist, wiggle, reverse, merge operations; numeric animation in source time"),
     s("generator.shape.geometry.points", Src, "", "5", "polygon/star point count").range(3.0, 256.0),
@@ -521,12 +523,296 @@ pub fn registry_json() -> Value {
         "timeline": TIMELINE,
         "video_effects": crate::fx::registry_json(),
         "expressions": crate::expr::language_json(),
+        "vector_group_parameters": GROUP_PARAMS,
+        "mask_parameters": MASK_PARAMS,
+        "indexed_native_paths": "masks.<index>.<property>; generator.group.[items.<index>.group.]transform/repeat.<property>; generator.group.items.<index>.shape.<shape property>. Indices address existing items; no sparse arrays. Nested group depth at most 8.",
         "shape_operator_parameters": operator_specs().iter().filter(|p| p.name.starts_with("generator.shape.operators.0.")).map(|p| {
             let mut v = serde_json::to_value(p).unwrap_or(Value::Null);
             v["name"] = json!(p.name.replacen(".0.", ".<index>.", 1));
             v
         }).collect::<Vec<_>>(),
     })
+}
+
+const GROUP_PARAMS: &[ParamSpec] = &[
+    ParamSpec::fixed(
+        "generator.group.items",
+        Object,
+        "",
+        "[]",
+        "bottom-to-top shape/group items; edit this list as a unit",
+    ),
+    ParamSpec::fixed(
+        "generator.group.transform",
+        Object,
+        "",
+        "{}",
+        "native vector group transform; scale and opacity use percent",
+    ),
+    ParamSpec::fixed(
+        "generator.group.repeat",
+        Object,
+        "",
+        "null",
+        "optional repeated instances; null removes repetition",
+    ),
+    s(
+        "generator.group.transform.anchor",
+        Src,
+        "px",
+        "[0,0]",
+        "local vector pivot",
+    )
+    .with_kind(Vec2)
+    .range(-1e6, 1e6),
+    s(
+        "generator.group.transform.position",
+        Src,
+        "px",
+        "[0,0]",
+        "group translation",
+    )
+    .with_kind(Vec2)
+    .range(-1e6, 1e6),
+    s(
+        "generator.group.transform.scale",
+        Src,
+        "%",
+        "[100,100]",
+        "group axis scale percent",
+    )
+    .with_kind(Vec2)
+    .range(-10000.0, 10000.0),
+    s(
+        "generator.group.transform.rotation",
+        Src,
+        "deg",
+        "0",
+        "group rotation",
+    )
+    .range(-360000.0, 360000.0),
+    s(
+        "generator.group.transform.skew",
+        Src,
+        "deg",
+        "0",
+        "group skew",
+    )
+    .range(-85.0, 85.0),
+    s(
+        "generator.group.transform.skew_axis",
+        Src,
+        "deg",
+        "0",
+        "group skew axis",
+    )
+    .range(-360000.0, 360000.0),
+    s(
+        "generator.group.transform.opacity",
+        Src,
+        "%",
+        "100",
+        "per-instance group opacity",
+    )
+    .range(0.0, 100.0),
+    s(
+        "generator.group.repeat.copies",
+        Src,
+        "",
+        "3",
+        "copy count; fractional final copy has fractional opacity",
+    )
+    .range(0.0, 128.0),
+    s(
+        "generator.group.repeat.offset",
+        Src,
+        "",
+        "0",
+        "copy transform offset",
+    )
+    .range(-128.0, 128.0),
+    s(
+        "generator.group.repeat.anchor",
+        Src,
+        "px",
+        "[0,0]",
+        "copy pivot",
+    )
+    .with_kind(Vec2)
+    .range(-1e6, 1e6),
+    s(
+        "generator.group.repeat.position",
+        Src,
+        "px",
+        "[100,0]",
+        "per-copy translation",
+    )
+    .with_kind(Vec2)
+    .range(-1e6, 1e6),
+    s(
+        "generator.group.repeat.scale",
+        Src,
+        "%",
+        "[100,100]",
+        "per-copy axis scale percent; positive",
+    )
+    .with_kind(Vec2)
+    .range(0.01, 1000.0),
+    s(
+        "generator.group.repeat.rotation",
+        Src,
+        "deg",
+        "0",
+        "per-copy rotation",
+    )
+    .range(-360000.0, 360000.0),
+    s(
+        "generator.group.repeat.start_opacity",
+        Src,
+        "%",
+        "100",
+        "first copy opacity",
+    )
+    .range(0.0, 100.0),
+    s(
+        "generator.group.repeat.end_opacity",
+        Src,
+        "%",
+        "100",
+        "last copy opacity",
+    )
+    .range(0.0, 100.0),
+    ParamSpec::choice(
+        "generator.group.repeat.composite",
+        &["above", "below"],
+        "\"below\"",
+        "above paints later copies on top; below keeps the original on top",
+    ),
+];
+
+const MASK_PARAMS: &[ParamSpec] = &[
+    ParamSpec::fixed(
+        "masks.geometry",
+        Object,
+        "",
+        "null",
+        "native vector mask geometry in output pixels",
+    ),
+    s("masks.opacity", Src, "", "1", "mask opacity fraction").range(0.0, 1.0),
+    s(
+        "masks.feather",
+        Src,
+        "px",
+        "0",
+        "isotropic signed-distance feather",
+    )
+    .range(0.0, 512.0),
+    s("masks.expansion", Src, "px", "0", "signed mask expansion").range(-512.0, 512.0),
+    ParamSpec::fixed(
+        "masks.inverted",
+        Bool,
+        "",
+        "false",
+        "invert this mask coverage",
+    ),
+    ParamSpec::fixed("masks.enabled", Bool, "", "true", "enable this mask"),
+    ParamSpec::choice(
+        "masks.fill_rule",
+        &["nonzero", "even_odd"],
+        "\"nonzero\"",
+        "mask fill rule",
+    ),
+    ParamSpec::choice(
+        "masks.mode",
+        &[
+            "none",
+            "add",
+            "subtract",
+            "intersect",
+            "lighten",
+            "darken",
+            "difference",
+        ],
+        "\"add\"",
+        "ordered mask combination",
+    ),
+];
+
+/// Resolve bounded indexed native paths without allocating permanent metadata
+/// for attacker-controlled names. Metadata keeps a canonical template name;
+/// the separately returned path addresses the actual existing JSON item.
+pub fn resolve_path(
+    scope: Scope,
+    name: &str,
+) -> anyhow::Result<(&'static ParamSpec, Option<usize>, Vec<String>)> {
+    let ordinary_error = match lookup(scope, name) {
+        Ok((spec, comp)) => return Ok((spec, comp, segments(scope, spec))),
+        Err(error) => error,
+    };
+    if scope != Scope::VideoClip
+        || !(name.starts_with("masks.") || name.starts_with("generator.group."))
+    {
+        return Err(ordinary_error);
+    }
+    ensure!(
+        scope == Scope::VideoClip && name.len() <= 1024,
+        "unknown parameter {name:?}"
+    );
+    let parts: Vec<&str> = name.split('.').collect();
+    let canonical;
+    let bank;
+    if parts.first() == Some(&"masks") {
+        ensure!(
+            parts.len() >= 3 && parts[1].parse::<usize>().is_ok_and(|i| i < 64),
+            "mask index must be 0..63"
+        );
+        if parts[2] == "geometry" && parts.len() > 3 {
+            canonical = format!("generator.shape.{}", parts[2..].join("."));
+            bank = VIDEO_CLIP;
+        } else {
+            canonical = format!("masks.{}", parts[2..].join("."));
+            bank = MASK_PARAMS;
+        }
+    } else {
+        ensure!(
+            parts.starts_with(&["generator", "group"]),
+            "unknown parameter {name:?}"
+        );
+        let mut rest = &parts[2..];
+        let mut depth = 1;
+        loop {
+            if rest.first() != Some(&"items") || rest.len() < 3 {
+                break;
+            }
+            ensure!(
+                rest[1].parse::<usize>().is_ok_and(|i| i < 128),
+                "vector item index must be 0..127"
+            );
+            if rest[2] == "group" {
+                depth += 1;
+                ensure!(depth <= 8, "vector group depth exceeds 8");
+                rest = &rest[3..];
+            } else {
+                break;
+            }
+        }
+        if rest.starts_with(&["items"]) && rest.len() >= 4 && rest[2] == "shape" {
+            canonical = format!("generator.shape.{}", rest[3..].join("."));
+            bank = VIDEO_CLIP;
+        } else {
+            canonical = format!("generator.group.{}", rest.join("."));
+            bank = GROUP_PARAMS;
+        }
+    }
+    let (spec, comp) = param::find(bank, &canonical)
+        .or_else(|| param::find(operator_specs(), &canonical))
+        .ok_or_else(|| anyhow!("unknown native parameter {name:?}; discover mask_parameters/vector_group_parameters"))?;
+    let end = parts.len() - usize::from(comp.is_some());
+    Ok((
+        spec,
+        comp,
+        parts[..end].iter().map(|s| s.to_string()).collect(),
+    ))
 }
 
 /// Look `name` up in `scope`'s registry (with a helpful error).
@@ -723,12 +1009,16 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
 
 /// Current value of a parameter in `obj` (`None`: unset = its default).
 pub fn get(obj: &Value, scope: Scope, spec: &ParamSpec, comp: Option<usize>) -> Option<Value> {
+    get_path(obj, &segments(scope, spec), comp)
+}
+
+pub fn get_path(obj: &Value, path: &[String], comp: Option<usize>) -> Option<Value> {
     let mut cur = obj;
-    for k in segments(scope, spec) {
+    for k in path {
         cur = if cur.is_array() {
             cur.get(k.parse::<usize>().ok()?)?
         } else {
-            cur.get(&k)?
+            cur.get(k)?
         };
     }
     match comp {
@@ -749,9 +1039,21 @@ pub fn set(
     value: Value,
     frame: (u32, u32),
 ) -> anyhow::Result<()> {
+    set_path(obj, spec, comp, value, frame, &segments(scope, spec))
+}
+
+pub fn set_path(
+    obj: &mut Value,
+    spec: &ParamSpec,
+    comp: Option<usize>,
+    value: Value,
+    frame: (u32, u32),
+    path: &[String],
+) -> anyhow::Result<()> {
     check_value_shape(spec, comp, &value)?;
-    let segs = segments(scope, spec);
-    let (last, parents) = segs.split_last().expect("non-empty name");
+    let (last, parents) = path
+        .split_last()
+        .ok_or_else(|| anyhow!("empty parameter path"))?;
     let mut cur = obj;
     for k in parents {
         if cur.is_array() {
@@ -807,10 +1109,14 @@ pub fn set(
 
 /// Range-check the (parsed-back) value of an animatable/numeric parameter.
 pub fn check_range(obj: &Value, scope: Scope, spec: &ParamSpec) -> anyhow::Result<()> {
+    check_range_path(obj, spec, &segments(scope, spec))
+}
+
+pub fn check_range_path(obj: &Value, spec: &ParamSpec, path: &[String]) -> anyhow::Result<()> {
     if spec.min.is_none() && spec.max.is_none() {
         return Ok(());
     }
-    let Some(v) = get(obj, scope, spec, None) else {
+    let Some(v) = get_path(obj, path, None) else {
         return Ok(());
     };
     let vals: Vec<Value> = match v {

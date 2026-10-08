@@ -159,6 +159,16 @@ fn build(
                 source_fps,
             };
             let mut top = g.add(Arc::new(clip), vec![src]);
+            if !c.masks.is_empty() {
+                top = g.add(
+                    Arc::new(crate::mask_node::MaskNode {
+                        masks: c.masks.clone(),
+                        start: c.start,
+                        map: c.time_map(),
+                    }),
+                    vec![top],
+                );
+            }
             if has_fx {
                 let node = EffectNode {
                     stack: EffectStack::new(format!("clip {}", c.id), &c.effects, c.start)?

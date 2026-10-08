@@ -1,0 +1,18 @@
+{
+  "output": "/tmp/ferrocut-motion-repro-20261008",
+  "schema": "ferrocut.native-motion-showcase/1",
+  "source": "original synthetic native vector animation; not real-footage tracking validation",
+  "frames": 32,
+  "minimum_measured_confidence": 100.0,
+  "maximum_axis_error_pixels": 0.0,
+  "repeat_exact": true,
+  "undo_exact": true,
+  "files": {
+    "motion-source.mkv": "b85e9c6a85fd8f38054a32c9e5921071543b0832840fb27ab1cc7c64fa480fee",
+    "motion-showcase.mkv": "965b8e08b3550a13c0923f01ee848c43abf9007207a9ecd2d10567b736803074",
+    "motion-revised.mkv": "6a17fdc1b0861856ad4cfd50c8055b2497c3843172ffe7fe27faa4c8edbab0bb",
+    "motion-repeat.mkv": "6a17fdc1b0861856ad4cfd50c8055b2497c3843172ffe7fe27faa4c8edbab0bb",
+    "motion-undo.mkv": "965b8e08b3550a13c0923f01ee848c43abf9007207a9ecd2d10567b736803074",
+    "motion-stabilized.mkv": "a0aa27c152de96d8e61e0e07df1512c8a8d74fe617641c27f5e88dc44ddc07e2"
+  }
+}

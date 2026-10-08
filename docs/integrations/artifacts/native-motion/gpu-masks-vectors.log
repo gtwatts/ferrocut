@@ -1,0 +1,53 @@
+cargo test --locked --offline -p ferrocut-engine --test masks --test vector_instances -- --test-threads=1 --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.51s
+     Running tests/masks.rs (target/debug/deps/masks-1cd538d3d029bc55)
+
+running 18 tests
+test cancellation_kind_is_preserved_before_planning_during_rows_and_after_render ... ok
+test compiled_reverse_masks_preserve_frame_keys_and_premultiplied_gpu_pixels_after_split_trim ... Mask adapter default: "NVIDIA GeForce RTX 5090 Laptop GPU" Vulkan DiscreteGpu
+Mask adapter cpu: "llvmpipe (LLVM 20.1.2, 256 bits)" Vulkan Cpu
+ok
+test compound_contours_holes_and_open_paths_respect_fill_rules ... ok
+test cubic_bezier_pixels_match_a_dense_independent_curve_reference ... ok
+test ellipse_rounded_rectangle_polygon_star_and_quadratics_render_native_curves ... ok
+test every_combine_pair_uses_correct_first_mask_initialization_and_fractional_coverage ... ok
+test feather_expansion_inversion_and_opacity_match_independent_pixel_math ... ok
+test horizontal_spans_preserve_large_feather_expansion_and_negative_roi_pixels ... ok
+test hostile_region_geometry_animation_expressions_and_work_fail_with_useful_errors ... ok
+test indexed_mask_edits_and_source_expressions_bake_into_the_same_native_clock ... ok
+test invalid_sampled_mask_has_a_distinct_key_and_cannot_reuse_a_warm_valid_gpu_frame ... ok
+test native_masks_precede_blur_and_follow_the_layer_transform_on_gpu ... ok
+test no_active_masks_and_empty_regions_are_pass_through_with_metadata_preserved ... ok
+test rational_animation_and_safe_property_visitors_produce_deterministic_evaluated_cache_bytes ... ok
+test reverse_source_clock_split_and_trim_preserve_exact_mask_animation_without_key_shifts ... ok
+test strict_serialization_and_cpu_storage_reject_malformed_values ... ok
+test subpixel_rectangle_coverage_matches_analytic_distance_in_negative_overscan ... ok
+test useful_uhd_ellipse_feather_stays_inside_the_row_work_budget ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.66s
+
+     Running tests/vector_instances.rs (target/debug/deps/vector_instances-50daf7dd1fc88d17)
+
+running 17 tests
+test above_and_below_copy_order_control_overlapping_gradient_colors ... ok
+test animated_group_and_repeat_controls_sample_exact_source_time ... ok
+test anisotropic_stroke_transforms_outline_instead_of_average_width ... ok
+test default_single_group_preserves_existing_shape_pixels ... ok
+test fractional_copies_and_opacity_ramp_match_analytic_alpha ... ok
+test item_order_and_group_opacity_use_linear_premultiplied_paint_composition ... ok
+test malformed_numeric_and_recursive_inputs_have_bounded_failures ... ok
+test multiplicative_expansion_pixel_work_and_transform_growth_are_rejected ... ok
+test native_group_controls_split_trim_retime_and_cache_preserve_source_animation ... vector group timeline adapter: AdapterInfo { name: "llvmpipe (LLVM 20.1.2, 256 bits)", vendor: 65541, device: 0, device_type: Cpu, device_pci_bus_id: "", driver: "llvmpipe", driver_info: "Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2)", backend: Vulkan, subgroup_min_size: 8, subgroup_max_size: 8, transient_saves_memory: Some(false), limit_bucket: None }
+ok
+test nested_transform_product_and_opacity_have_exact_area_reference ... ok
+test node_upload_preserves_alpha_and_honors_cancellation_and_deadline ... vector group upload adapter (DiscreteNvidia): AdapterInfo { name: "NVIDIA GeForce RTX 5090 Laptop GPU", vendor: 4318, device: 11352, device_type: DiscreteGpu, device_pci_bus_id: "0000:02:00.0", driver: "NVIDIA", driver_info: "580.173.02", backend: Vulkan, subgroup_min_size: 32, subgroup_max_size: 32, transient_saves_memory: Some(false), limit_bucket: None }
+vector group upload adapter (Cpu): AdapterInfo { name: "llvmpipe (LLVM 20.1.2, 256 bits)", vendor: 65541, device: 0, device_type: Cpu, device_pci_bus_id: "", driver: "llvmpipe", driver_info: "Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2)", backend: Vulkan, subgroup_min_size: 8, subgroup_max_size: 8, transient_saves_memory: Some(false), limit_bucket: None }
+ok
+test radial_gradients_inverse_map_anisotropic_and_rotated_group_coordinates ... ok
+test repeater_anchor_rotation_scale_and_negative_offset_transform_geometry ... ok
+test sampled_cache_hashes_reuse_held_values_and_include_intrinsic_wiggle ... ok
+test transformed_stroke_geometry_has_a_shared_per_frame_budget ... ok
+test visitors_match_every_nested_component_and_allow_typed_leaf_edits ... ok
+test zero_and_partial_first_copies_and_empty_groups_are_defined ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s

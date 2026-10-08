@@ -107,6 +107,9 @@ pub enum GeneratorSpec {
     Shape {
         shape: Box<crate::vector::VectorSpec>,
     },
+    VectorGroup {
+        group: Box<crate::vector_instances::VectorGroup>,
+    },
     Solid {
         color: Color,
     },
@@ -233,6 +236,7 @@ impl GeneratorSpec {
             GeneratorSpec::RadialGradient { .. } => "radial_gradient",
             GeneratorSpec::Text { .. } => "text",
             GeneratorSpec::Shape { .. } => "shape",
+            GeneratorSpec::VectorGroup { .. } => "vector_group",
         }
     }
 
@@ -245,7 +249,9 @@ impl GeneratorSpec {
     pub fn at(&self, t: RationalTime, w: u32, h: u32) -> GeneratorAt {
         let (wf, hf) = (w as f64, h as f64);
         match self {
-            GeneratorSpec::Text { .. } | GeneratorSpec::Shape { .. } => {
+            GeneratorSpec::Text { .. }
+            | GeneratorSpec::Shape { .. }
+            | GeneratorSpec::VectorGroup { .. } => {
                 panic!("text and shapes must be rendered through generator::node")
             }
             GeneratorSpec::Solid { color } => GeneratorAt {
@@ -297,7 +303,9 @@ impl GeneratorSpec {
     fn all(&self) -> Vec<(&'static str, &Animatable)> {
         let mut v = Vec::new();
         match self {
-            GeneratorSpec::Text { .. } | GeneratorSpec::Shape { .. } => {}
+            GeneratorSpec::Text { .. }
+            | GeneratorSpec::Shape { .. }
+            | GeneratorSpec::VectorGroup { .. } => {}
             GeneratorSpec::Solid { color } => {
                 for (a, n) in color
                     .0
@@ -346,6 +354,7 @@ impl GeneratorSpec {
         match self {
             GeneratorSpec::Text { text } => text.validate()?,
             GeneratorSpec::Shape { shape } => shape.validate()?,
+            GeneratorSpec::VectorGroup { group } => group.validate()?,
             GeneratorSpec::Solid { color } => color.validate("generator color")?,
             GeneratorSpec::LinearGradient {
                 start_color,
@@ -378,6 +387,7 @@ impl GeneratorSpec {
         match self {
             Self::Text { text } => text.is_animated(),
             Self::Shape { shape } => shape.is_animated(),
+            Self::VectorGroup { group } => group.is_animated(),
             _ => self.all().iter().any(|(_, a)| a.is_animated()),
         }
     }
@@ -406,6 +416,13 @@ pub fn node(
             width,
             height,
         }),
+        GeneratorSpec::VectorGroup { group } => {
+            Arc::new(crate::vector_instances::VectorGroupNode {
+                group: *group,
+                width,
+                height,
+            })
+        }
         spec => Arc::new(GeneratorNode {
             spec,
             width,

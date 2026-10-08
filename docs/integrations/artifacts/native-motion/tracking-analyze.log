@@ -1,0 +1,50 @@
+tracking 1/32 frames; 1 active points
+tracking 2/32 frames; 1 active points
+tracking 3/32 frames; 1 active points
+tracking 4/32 frames; 1 active points
+tracking 5/32 frames; 1 active points
+tracking 6/32 frames; 1 active points
+tracking 7/32 frames; 1 active points
+tracking 8/32 frames; 1 active points
+tracking 9/32 frames; 1 active points
+tracking 10/32 frames; 1 active points
+tracking 11/32 frames; 1 active points
+tracking 12/32 frames; 1 active points
+tracking 13/32 frames; 1 active points
+tracking 14/32 frames; 1 active points
+tracking 15/32 frames; 1 active points
+tracking 16/32 frames; 1 active points
+tracking 17/32 frames; 1 active points
+tracking 18/32 frames; 1 active points
+tracking 19/32 frames; 1 active points
+tracking 20/32 frames; 1 active points
+tracking 21/32 frames; 1 active points
+tracking 22/32 frames; 1 active points
+tracking 23/32 frames; 1 active points
+tracking 24/32 frames; 1 active points
+tracking 25/32 frames; 1 active points
+tracking 26/32 frames; 1 active points
+tracking 27/32 frames; 1 active points
+tracking 28/32 frames; 1 active points
+tracking 29/32 frames; 1 active points
+tracking 30/32 frames; 1 active points
+tracking 31/32 frames; 1 active points
+tracking 32/32 frames; 1 active points
+{
+  "algorithm": "effectcraft-6943872cf65b3da1275f1e0f808b60b2e51d84dc/ncc-lk-translation-v1",
+  "analysis": "/tmp/ferrocut-motion-repro-20261008/tracking-analysis.json",
+  "completion": "completed",
+  "next": "tracking_keyframes produces reviewable set_keyframes operations; apply with edit_apply",
+  "processed_frames": 32,
+  "requested_frames": 32,
+  "sampled_frames_hash": "f8f639b7e123a623edafd2d2b8760e85edaec8d12d25d6f28e4c9636bdc9f0e5",
+  "source": "/tmp/ferrocut-motion-repro-20261008/motion-source.mkv",
+  "tracks": [
+    {
+      "id": "target",
+      "measured_frames": 31,
+      "minimum_confidence": "100",
+      "outcome": "tracked"
+    }
+  ]
+}

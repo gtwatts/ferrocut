@@ -23,6 +23,8 @@ Start with the tools and schemas exposed by the running build. An agent should r
 | Inspect edit history / restore the last journaled edit | `log` / `undo`, each with `timeline` |
 | Import/export an editable foreign timeline with explicit loss reports | `timeline_import` / `timeline_export`, `format:"otio"` or `"fcp7"`, start with `dry_run:true` |
 | Measure rendered picture with numeric video scopes | `scopes_read {"path":"renders/title-draft.mkv","at":"1/2"}` |
+| Measure seeded point motion, confidence and failures | `tracking_analyze {"path":"media/shot.mkv","output":"shot.analysis.json","settings":{...}}` |
+| Generate ordinary attachment/stabilization edits for review | `tracking_keyframes {"analysis":"shot.analysis.json","timeline":"project.json","options":{...}}` then `edit_apply` |
 
 The same documentation is available through MCP resources: `docs://timeline/guide.md`, `docs://timeline/schema.json`, `docs://timeline/edit-ops.schema.json`, `docs://timeline/params.json`, and `docs://perceive/check.schema.json`. The MCP server's `--list-tools` option prints tool definitions without starting a client session.
 
@@ -35,6 +37,26 @@ keyframes and expressions. Shape operators are ordered in
 `generator.shape.operators`; edit an existing numeric slot with a path such as
 `generator.shape.operators.1.angle`. Creating/removing/reordering operators uses
 the whole array, not sparse numeric indices.
+
+Native source-time masks live in `clips.masks`; native nested vector groups and
+repeaters use `generator:{"type":"vector_group","group":{...}}`. Edit existing
+controls with `masks.0.feather`, `generator.group.repeat.copies` or
+`generator.group.items.1.group.repeat.rotation`. Group scale/opacity and repeat
+opacity use **percent**; clip scale is a factor and mask opacity is a fraction.
+Replace whole item/mask arrays to add, remove or reorder. Numeric indices never
+create sparse items. Read `docs://integrations/native-masks.md`,
+`docs://integrations/vector-instances.md`, and `docs://integrations/tracking.md`
+for strict settings, examples, animation clocks and supported boundaries.
+
+Tracking uses original source pixels and exact source sample times. The planner
+checks source path/content identity and emits target clip-local position keys.
+Apply these with `edit_apply` to preserve undo and cache behavior. A seed is
+supplied by the caller; only later samples have measured confidence. Lost points
+stay failed. Translation stabilization exposes borders without automatic crop
+or fill. Nonlinear source retiming and planar/3D tracking are not connected.
+Run `python3 scripts/motion-showcase.py --output-dir /tmp/ferrocut-motion-demo`
+from a built checkout for a complete native render, analysis, attachment,
+stabilization, style revision, cached repeat and exact-byte undo workflow.
 
 From a built checkout:
 
@@ -55,7 +77,7 @@ Times and numeric parameters use exact rationals: an integer, or a string such a
 | --- | --- | --- |
 | Timeline | Clip placement; track/master parameters; camera | Seconds from the composition start |
 | Clip-local | Clip transform, opacity, effects, audio controls, speed and time-remap key times | Timeline time minus the clip's `start` |
-| Source | Numeric generator properties, including text and shape artwork; clip markers | Time in the source content after retiming |
+| Source | Numeric generator properties, including text, shape groups and repeaters; clip masks and markers | Time in the source content after retiming |
 
 Read each parameter's registry entry. For a normal clip, source time is `source_in + clip_local_time`. With constant speed `s`, it is `source_in + s * clip_local_time`. Speed ramps integrate speed; `time_remap` directly supplies absolute source seconds and overrides speed.
 

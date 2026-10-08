@@ -145,6 +145,11 @@ enum Cmd {
         #[command(subcommand)]
         command: InterchangeCmd,
     },
+    /// Analyze source point motion or generate reviewable position edit ops.
+    Tracking {
+        #[command(subcommand)]
+        command: TrackingCmd,
+    },
     /// Make half-resolution proxies (DNxHR LB, or FFV1 when tiny or with alpha) of
     /// media files, or of every video source of timelines (nested comps followed),
     /// in `<media dir>/.ferrocut-proxies/`. `render --proxies` reads them for draft
@@ -272,6 +277,29 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
+enum TrackingCmd {
+    /// Measure source motion and save a new analysis JSON (never overwrites).
+    Analyze {
+        media: PathBuf,
+        #[arg(long)]
+        settings: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Cooperative deadline, observed between complete frames.
+        #[arg(long, default_value_t = 60.0)]
+        timeout: f64,
+    },
+    /// Print ordinary set_keyframes operations; writes no timeline.
+    Keyframes {
+        analysis: PathBuf,
+        #[arg(long)]
+        timeline: PathBuf,
+        #[arg(long)]
+        options: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
 enum CaptionCmd {
     /// Import cues through normal atomic edits and undo journal. Fonts are
     /// resolved relative to the style JSON file. Overlaps need separate tracks.
@@ -335,6 +363,53 @@ enum InterchangeCmd {
 fn main() -> anyhow::Result<()> {
     ferrocut_engine::media::init();
     match Cli::parse().cmd {
+        Cmd::Tracking { command } => {
+            use ferrocut_engine::{interchange_io::absolute, tracking_io as io};
+            let result = match command {
+                TrackingCmd::Analyze {
+                    media,
+                    settings,
+                    output,
+                    timeout,
+                } => {
+                    anyhow::ensure!(
+                        timeout.is_finite() && (1.0..=3600.0).contains(&timeout),
+                        "tracking timeout must be 1..3600 seconds"
+                    );
+                    let settings = io::read_json(&settings, 1024 * 1024)?;
+                    let cancel = ferrocut_core::CancelToken::new();
+                    let deadline =
+                        std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout);
+                    io::analyze_file(
+                        &media,
+                        &output,
+                        &settings,
+                        &cancel,
+                        |progress| {
+                            eprintln!(
+                                "tracking {}/{} frames; {} active points",
+                                progress.completed_frames,
+                                progress.total_frames,
+                                progress.active_points
+                            );
+                            if std::time::Instant::now() >= deadline {
+                                cancel.cancel();
+                            }
+                        },
+                        &mut absolute,
+                    )?
+                }
+                TrackingCmd::Keyframes {
+                    analysis,
+                    timeline,
+                    options,
+                } => {
+                    let options = io::read_json(&options, 1024 * 1024)?;
+                    io::keyframes_file(&analysis, &timeline, &options, &mut absolute)?
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
         Cmd::Interchange { command } => {
             use ferrocut_engine::interchange_io as io;
             let result = match command {

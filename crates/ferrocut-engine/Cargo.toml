@@ -48,6 +48,9 @@ effectcraft-path = { path = "../../vendor/storytold/effectcraft/crates/path" }
 effectcraft-keyframe = { path = "../../vendor/storytold/effectcraft/crates/keyframe" }
 effectcraft-project = { path = "../../vendor/storytold/effectcraft/crates/project" }
 effectcraft-color = { path = "../../vendor/storytold/effectcraft/crates/color" }
+effectcraft-geom = { path = "../../vendor/storytold/effectcraft/crates/geom" }
+effectcraft-track = { path = "../../vendor/storytold/effectcraft/crates/track" }
+effectcraft-raster = { path = "../../vendor/storytold/effectcraft/crates/raster" }
 # Expressions (MIT/Apache-2.0): sandboxed, no modules/time/I/O, op limits.
 rhai = { version = "1.26", features = ["no_module", "no_time", "no_custom_syntax", "sync"] }
 libc = "0.2"

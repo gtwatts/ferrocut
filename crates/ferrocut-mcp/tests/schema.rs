@@ -163,7 +163,9 @@ fn every_tool_schema_is_a_strict_object() {
             "effects_catalog",
             "scopes_read",
             "timeline_import",
-            "timeline_export"
+            "timeline_export",
+            "tracking_analyze",
+            "tracking_keyframes"
         ]
     );
     for t in &tools {

@@ -1,0 +1,2 @@
+vendor/storytold/** linguist-vendored
+docs/**/artifacts/** linguist-generated

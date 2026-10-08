@@ -1,0 +1,340 @@
+[
+  {
+    "clip": "reticle",
+    "keyframes": [
+      {
+        "interp": "linear",
+        "t": "0",
+        "v": "320"
+      },
+      {
+        "interp": "linear",
+        "t": "1/16",
+        "v": "324"
+      },
+      {
+        "interp": "linear",
+        "t": "1/8",
+        "v": "328"
+      },
+      {
+        "interp": "linear",
+        "t": "3/16",
+        "v": "332"
+      },
+      {
+        "interp": "linear",
+        "t": "1/4",
+        "v": "336"
+      },
+      {
+        "interp": "linear",
+        "t": "5/16",
+        "v": "340"
+      },
+      {
+        "interp": "linear",
+        "t": "3/8",
+        "v": "344"
+      },
+      {
+        "interp": "linear",
+        "t": "7/16",
+        "v": "348"
+      },
+      {
+        "interp": "linear",
+        "t": "1/2",
+        "v": "352"
+      },
+      {
+        "interp": "linear",
+        "t": "9/16",
+        "v": "356"
+      },
+      {
+        "interp": "linear",
+        "t": "5/8",
+        "v": "360"
+      },
+      {
+        "interp": "linear",
+        "t": "11/16",
+        "v": "364"
+      },
+      {
+        "interp": "linear",
+        "t": "3/4",
+        "v": "368"
+      },
+      {
+        "interp": "linear",
+        "t": "13/16",
+        "v": "372"
+      },
+      {
+        "interp": "linear",
+        "t": "7/8",
+        "v": "376"
+      },
+      {
+        "interp": "linear",
+        "t": "15/16",
+        "v": "380"
+      },
+      {
+        "interp": "linear",
+        "t": "1",
+        "v": "384"
+      },
+      {
+        "interp": "linear",
+        "t": "17/16",
+        "v": "388"
+      },
+      {
+        "interp": "linear",
+        "t": "9/8",
+        "v": "392"
+      },
+      {
+        "interp": "linear",
+        "t": "19/16",
+        "v": "396"
+      },
+      {
+        "interp": "linear",
+        "t": "5/4",
+        "v": "400"
+      },
+      {
+        "interp": "linear",
+        "t": "21/16",
+        "v": "404"
+      },
+      {
+        "interp": "linear",
+        "t": "11/8",
+        "v": "408"
+      },
+      {
+        "interp": "linear",
+        "t": "23/16",
+        "v": "412"
+      },
+      {
+        "interp": "linear",
+        "t": "3/2",
+        "v": "416"
+      },
+      {
+        "interp": "linear",
+        "t": "25/16",
+        "v": "420"
+      },
+      {
+        "interp": "linear",
+        "t": "13/8",
+        "v": "424"
+      },
+      {
+        "interp": "linear",
+        "t": "27/16",
+        "v": "428"
+      },
+      {
+        "interp": "linear",
+        "t": "7/4",
+        "v": "432"
+      },
+      {
+        "interp": "linear",
+        "t": "29/16",
+        "v": "436"
+      },
+      {
+        "interp": "linear",
+        "t": "15/8",
+        "v": "440"
+      },
+      {
+        "interp": "linear",
+        "t": "31/16",
+        "v": "444"
+      }
+    ],
+    "mode": "replace",
+    "op": "set_keyframes",
+    "param": "transform.position.x",
+    "timeline_time": false
+  },
+  {
+    "clip": "reticle",
+    "keyframes": [
+      {
+        "interp": "linear",
+        "t": "0",
+        "v": "180"
+      },
+      {
+        "interp": "linear",
+        "t": "1/16",
+        "v": "182"
+      },
+      {
+        "interp": "linear",
+        "t": "1/8",
+        "v": "184"
+      },
+      {
+        "interp": "linear",
+        "t": "3/16",
+        "v": "186"
+      },
+      {
+        "interp": "linear",
+        "t": "1/4",
+        "v": "188"
+      },
+      {
+        "interp": "linear",
+        "t": "5/16",
+        "v": "190"
+      },
+      {
+        "interp": "linear",
+        "t": "3/8",
+        "v": "192"
+      },
+      {
+        "interp": "linear",
+        "t": "7/16",
+        "v": "194"
+      },
+      {
+        "interp": "linear",
+        "t": "1/2",
+        "v": "196"
+      },
+      {
+        "interp": "linear",
+        "t": "9/16",
+        "v": "198"
+      },
+      {
+        "interp": "linear",
+        "t": "5/8",
+        "v": "200"
+      },
+      {
+        "interp": "linear",
+        "t": "11/16",
+        "v": "202"
+      },
+      {
+        "interp": "linear",
+        "t": "3/4",
+        "v": "204"
+      },
+      {
+        "interp": "linear",
+        "t": "13/16",
+        "v": "206"
+      },
+      {
+        "interp": "linear",
+        "t": "7/8",
+        "v": "208"
+      },
+      {
+        "interp": "linear",
+        "t": "15/16",
+        "v": "210"
+      },
+      {
+        "interp": "linear",
+        "t": "1",
+        "v": "212"
+      },
+      {
+        "interp": "linear",
+        "t": "17/16",
+        "v": "214"
+      },
+      {
+        "interp": "linear",
+        "t": "9/8",
+        "v": "216"
+      },
+      {
+        "interp": "linear",
+        "t": "19/16",
+        "v": "218"
+      },
+      {
+        "interp": "linear",
+        "t": "5/4",
+        "v": "220"
+      },
+      {
+        "interp": "linear",
+        "t": "21/16",
+        "v": "222"
+      },
+      {
+        "interp": "linear",
+        "t": "11/8",
+        "v": "224"
+      },
+      {
+        "interp": "linear",
+        "t": "23/16",
+        "v": "226"
+      },
+      {
+        "interp": "linear",
+        "t": "3/2",
+        "v": "228"
+      },
+      {
+        "interp": "linear",
+        "t": "25/16",
+        "v": "230"
+      },
+      {
+        "interp": "linear",
+        "t": "13/8",
+        "v": "232"
+      },
+      {
+        "interp": "linear",
+        "t": "27/16",
+        "v": "234"
+      },
+      {
+        "interp": "linear",
+        "t": "7/4",
+        "v": "236"
+      },
+      {
+        "interp": "linear",
+        "t": "29/16",
+        "v": "238"
+      },
+      {
+        "interp": "linear",
+        "t": "15/8",
+        "v": "240"
+      },
+      {
+        "interp": "linear",
+        "t": "31/16",
+        "v": "242"
+      }
+    ],
+    "mode": "replace",
+    "op": "set_keyframes",
+    "param": "transform.position.y",
+    "timeline_time": false
+  }
+]
