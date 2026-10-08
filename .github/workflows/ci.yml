@@ -1,0 +1,195 @@
+# Ferrocut CI: Ubuntu, no GPU. wgpu runs on Mesa lavapipe (software Vulkan).
+# See CONTRIBUTING.md for running the same steps locally.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_TOOLCHAIN: "1.98.1"
+  # Must match scripts/build-ffmpeg-lgpl.sh (part of the cache key with the script hash).
+  FFMPEG_VERSION: "9.0.2"
+  # Keep wgpu on Vulkan (lavapipe); its GL/EGL backend would see llvmpipe a second time.
+  WGPU_BACKEND: vulkan
+  # Backstop: anything using openh264::Provider::from_env() resolves Cisco's
+  # host to a dead local port, so OpenH264 can never be fetched in CI.
+  FERROCUT_OPENH264_URL: "http://127.0.0.1:9"
+
+jobs:
+  # fmt + clippy -D warnings cover Rusty's crates (types, core, audio, engine, mcp).
+  # SeePlus's crates are built and tested here, not linted.
+  fmt:
+    name: rustfmt (Rusty's crates)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt
+      - run: cargo fmt --check -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp
+
+  test:
+    name: clippy, tests, CPU render check
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages (no -dev libraries needed beyond these)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            mesa-vulkan-drivers libvulkan1 vulkan-tools \
+            nasm patchelf pkg-config cmake ninja-build python3-venv libclang-dev \
+            libnss3 libnspr4 libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64 \
+            libatspi2.0-0t64 libcups2t64 libdbus-1-3 libgbm1 libxkbcommon0 \
+            libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libcairo2 libpango-1.0-0
+          # The last three lines: libcef.so's NEEDED set (ferrocut-html links
+          # it). Hosted runners mostly have them via Chrome; act images don't.
+          # TODO(SeePlus): list CEF's runtime packages in ferrocut-html's README
+          # or setup script so CI can take them from there.
+          # Only lavapipe: point the Vulkan loader at its ICD.
+          icd="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' | head -n1)"
+          echo "VK_DRIVER_FILES=$icd" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=$icd" >> "$GITHUB_ENV"
+          VK_DRIVER_FILES="$icd" vulkaninfo --summary | grep -E "deviceName|driverInfo|apiVersion" || true
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+
+      # ---- LGPL FFmpeg (shared, user space; see scripts/build-ffmpeg-lgpl.sh) ----
+      - name: Cache LGPL FFmpeg
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg-lgpl
+          key: ffmpeg-lgpl-${{ runner.os }}-${{ env.FFMPEG_VERSION }}-${{ hashFiles('scripts/build-ffmpeg-lgpl.sh') }}
+      - name: Build LGPL FFmpeg (cache miss)
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: FFMPEG_VERSION="$FFMPEG_VERSION" ./scripts/build-ffmpeg-lgpl.sh
+      - name: FFmpeg license check (must be LGPL, never GPL)
+        run: |
+          export LD_LIBRARY_PATH="$PWD/third_party/ffmpeg-lgpl/lib"
+          third_party/ffmpeg-lgpl/bin/ffmpeg -hide_banner -L | head -n 3
+          ! third_party/ffmpeg-lgpl/bin/ffmpeg -hide_banner -buildconf | grep -E -- "--enable-(gpl|nonfree)"
+
+      # ---- SeePlus's C/C++ dependencies, each built by SeePlus's own script on a
+      # cache miss (scripts unchanged; keys = script hash). Without them the crates
+      # build as stubs and their tests are cfg'd out, so a failing step here is
+      # marked continue-on-error rather than blocking Rusty's checks.
+      # TODO(SeePlus): confirm these keys/paths, and whether any of these should be
+      # hard failures. Pinned versions live inside the scripts, so the script hash
+      # covers a version bump.
+      - name: Cache OpenColorIO (ferrocut-color)
+        id: ocio
+        uses: actions/cache@v4
+        with:
+          path: crates/ferrocut-color/third_party/install
+          key: ocio-${{ runner.os }}-${{ hashFiles('crates/ferrocut-color/scripts/build-ocio.sh') }}
+      - name: Build OpenColorIO (cache miss)
+        if: steps.ocio.outputs.cache-hit != 'true'
+        continue-on-error: true # TODO(SeePlus): make required once green on CI
+        run: crates/ferrocut-color/scripts/build-ocio.sh
+
+      - name: Cache OpenFX + libexpat sources (ferrocut-ofx)
+        id: ofx
+        uses: actions/cache@v4
+        with:
+          path: crates/ferrocut-ofx/third_party
+          key: ofx-src-${{ runner.os }}-${{ hashFiles('crates/ferrocut-ofx/scripts/fetch-deps.sh') }}
+      - name: Fetch OpenFX + libexpat (cache miss)
+        if: steps.ofx.outputs.cache-hit != 'true'
+        continue-on-error: true # TODO(SeePlus): make required once green on CI
+        run: crates/ferrocut-ofx/scripts/fetch-deps.sh
+
+      - name: Cache ThorVG (ferrocut-lottie)
+        id: thorvg
+        uses: actions/cache@v4
+        with:
+          path: crates/ferrocut-lottie/third_party/install
+          key: thorvg-${{ runner.os }}-${{ hashFiles('crates/ferrocut-lottie/scripts/build-thorvg.sh', 'crates/ferrocut-lottie/patches/**') }}
+      - name: Build ThorVG (cache miss)
+        if: steps.thorvg.outputs.cache-hit != 'true'
+        continue-on-error: true # TODO(SeePlus): make required once green on CI
+        run: crates/ferrocut-lottie/scripts/build-thorvg.sh
+
+      # CEF: cache only the pinned tarball (~310 MB); the extracted tree is ~1.5 GB.
+      # fetch-cef.sh verifies the SHA-1 and re-extracts on every run (~1 min).
+      # Linking ferrocut-html needs libcef.so's runtime libraries (installed in
+      # "System packages" above); with them the HTML tests pass under act.
+      # TODO(SeePlus): confirm the HTML host tests on a hosted runner, or decide
+      # whether ferrocut-html should stay a stub on CI.
+      - name: Cache CEF tarball (ferrocut-html)
+        uses: actions/cache@v4
+        with:
+          path: crates/ferrocut-html/third_party/cef_binary_*.tar.bz2
+          key: cef-${{ runner.os }}-${{ hashFiles('crates/ferrocut-html/scripts/fetch-cef.sh') }}
+      - name: Fetch/extract CEF
+        continue-on-error: true # TODO(SeePlus): make required once green on CI
+        run: crates/ferrocut-html/scripts/fetch-cef.sh
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          # SeePlus's dependency builds feed build.rs outputs; rebuild when they change.
+          key: deps-${{ env.FFMPEG_VERSION }}-${{ hashFiles('scripts/build-ffmpeg-lgpl.sh', 'crates/*/scripts/*.sh') }}
+
+      - name: Adapters (must be lavapipe only)
+        run: cargo run --locked -q -p ferrocut-engine --bin ferrocut -- adapters
+
+      - name: Clippy (Rusty's crates, all targets, -D warnings)
+        run: cargo clippy --locked -p ferrocut-types -p ferrocut-core -p ferrocut-audio -p ferrocut-engine -p ferrocut-mcp --all-targets -- -D warnings
+
+      # GPU tests run on lavapipe. Tests that need an adapter and find none print
+      # SKIP and return; on this runner lavapipe is always present.
+      # CI never downloads Cisco's OpenH264 (it must be an explicit user
+      # choice). ferrocut-deliver's integration test (tests/deliver.rs)
+      # downloads it into the target dir whenever it is online and ignores
+      # FERROCUT_OPENH264_URL, so that one target is excluded; deliver's unit
+      # tests are offline and still run.
+      # TODO(SeePlus): give tests/deliver.rs an opt-out (e.g. skip unless
+      # FERROCUT_OPENH264_LIB is set, or honor FERROCUT_OPENH264_NO_DOWNLOAD=1)
+      # so CI can run it and print SKIP; then drop the --exclude below.
+      - name: Tests (workspace; no OpenH264 download)
+        run: |
+          cargo test --workspace --locked --no-fail-fast --exclude ferrocut-deliver
+          cargo test --locked --no-fail-fast -p ferrocut-deliver --lib --bins
+
+      - name: Release build (ferrocut, ferrocut-mcp, ferrocut-perceive)
+        run: cargo build --release --locked -p ferrocut-engine -p ferrocut-mcp -p ferrocut-perceive
+
+      - name: Test media (deterministic, LGPL encoders only)
+        run: ./scripts/gen-test-media.sh
+
+      # Determinism (bit-exact run to run and across -j), exact audio hash, and
+      # SSIM vs committed reference frames. Not an exact video hash: lavapipe's
+      # output depends on the Mesa/LLVM version, see ci/render-check.sh.
+      - name: CPU render check (demo.json, demo-av.json)
+        run: ci/render-check.sh
+
+      - name: Upload render reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-reports
+          path: |
+            target/ci-render/*.report.json
+            target/ci-render/*.log
+            target/ci-render/*.ssim.txt
+          if-no-files-found: ignore

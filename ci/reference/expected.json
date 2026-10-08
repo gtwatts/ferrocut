@@ -1,0 +1,41 @@
+{
+  "comment": "Reference for ci/render-check.sh. Regenerate with `ci/render-check.sh --update` and explain the change in the commit.",
+  "made_with": {
+    "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+    "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+    "engine": "ferrocut-engine 0.0.1 render.v2"
+  },
+  "frames": {
+    "demo": 288,
+    "demo-av": 312
+  },
+  "audio_blake3": {
+    "demo-av": "6ad383e03bff798b0d22af43aeed0bce9dbf3b9e5848ea99f42d4d90dd9529c8"
+  },
+  "ssim": {
+    "step": 24,
+    "size": "960x540",
+    "mean_min": 0.999,
+    "frame_min": 0.995
+  },
+  "reference_machine_hashes": {
+    "demo": {
+      "final_blake3": "f9ae266ecbec7068c14881b7421b957cdd04f4562295d31b38005e7ab6083f46",
+      "video_blake3": "34ba480f0b7c169487949358fd261f06b89f04bba091a9a57eb5e26ecadc16e2"
+    },
+    "demo-av": {
+      "final_blake3": "25938728d563c24feb2f0298957755aa290d5f0a07e6208ae6f1b107bd3be51f",
+      "video_blake3": "190adb36ec4f04738d569626f5a156551d1ae657433773f1cf44c682680e03db"
+    }
+  },
+  "media_sha256": {
+    "bars.mov": "c635031b06360450980acf8e34c9496fdba7e8f45c644ffac49471dbf11a84da",
+    "cam_a.mov": "9a52ce86ffacd5d48f6edbdfcf05104a96a4018fac21eff535e9fee81722382c",
+    "cam_b.mov": "104dcbd550be8fbeb8979bfb94ad4f6d8befebe8c68111bf6c014c7e5523ee7a",
+    "dialogue.wav": "f6be8459407c24440b37f2625bdad8ffea7a943fa5f095d2f28e4b350d95401f",
+    "gradients.mov": "d9f5d31cfabb817c85a1a95a0151c6b637ec9897234d1e8c726a34a6266205b5",
+    "music.flac": "51d65860ae8b739884190156e5d10ebc6c6c172a5559221e3534da1b15aae865",
+    "overlay.mov": "e220df287d71a355159b6aefc7e056ee44b32f82ffea51fcb84002661bc0b235",
+    "testsrc2.mov": "f7e61866215a668396026abcd0fe4fc7a142f66f0dd6e8b2216979a03560fdf0"
+  }
+}
