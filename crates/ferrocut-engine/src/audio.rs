@@ -21,6 +21,7 @@ use ferrocut_audio::{
 use ferrocut_core::{Rational, RationalTime};
 use serde::Serialize;
 
+use crate::comp::{CompStack, is_comp};
 use crate::media::audio::decode_audio;
 use crate::retime::TimeMap;
 use crate::timeline::{BusSpec, ClipAudio, Timeline};
@@ -92,6 +93,36 @@ pub fn resolve(
     tl: &Timeline,
     load: &mut dyn FnMut(&Path) -> anyhow::Result<Option<SourceAudio>>,
 ) -> anyhow::Result<Option<Resolved>> {
+    resolve_in(tl, load, &mut CompStack::new())
+}
+
+/// The mix of nested comp `inner` at `rate` as a stereo source: its program
+/// without loudness normalization (the outermost timeline normalizes),
+/// analyzed (ducking) and rendered whole.
+fn comp_audio(
+    inner: &Timeline,
+    rate: u32,
+    load: &mut dyn FnMut(&Path) -> anyhow::Result<Option<SourceAudio>>,
+    stack: &mut CompStack,
+) -> anyhow::Result<Option<SourceAudio>> {
+    let mut inner = inner.clone();
+    inner.audio.sample_rate = rate;
+    inner.audio.loudness = None;
+    let Some((program, sources, _)) = resolve_in(&inner, load, stack)? else {
+        return Ok(None);
+    };
+    let (control, _) = analyze(&program, &sources).map_err(anyhow::Error::msg)?;
+    let mix = render_range(&program, &sources, &control, 0, program.total);
+    Ok(Some(SourceAudio {
+        planes: vec![mix.l, mix.r],
+    }))
+}
+
+fn resolve_in(
+    tl: &Timeline,
+    load: &mut dyn FnMut(&Path) -> anyhow::Result<Option<SourceAudio>>,
+    stack: &mut CompStack,
+) -> anyhow::Result<Option<Resolved>> {
     let rate = tl.audio.sample_rate;
     let s = |t: RationalTime| sample_at(t, rate);
     let mut sources: Vec<SourceAudio> = Vec::new();
@@ -105,7 +136,16 @@ pub fn resolve(
         if let Some(i) = index.get(&key) {
             return Ok(*i);
         }
-        let i = match load(path).with_context(|| format!("audio of {}", path.display()))? {
+        let loaded = if is_comp(path) {
+            let (ckey, inner) = stack.load(path)?;
+            stack.push(ckey);
+            let a = comp_audio(&inner, rate, &mut *load, stack);
+            stack.pop();
+            a
+        } else {
+            load(path)
+        };
+        let i = match loaded.with_context(|| format!("audio of {}", path.display()))? {
             Some(a) if !a.is_empty() => {
                 sources.push(a);
                 paths.push(path.to_path_buf());

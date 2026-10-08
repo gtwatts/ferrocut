@@ -435,6 +435,9 @@ pub struct EditOutcome {
     pub render: Option<RenderImpact>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub render_error: Option<String>,
+    /// Nested comp files created by `nest` ops (written unless dry run).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub new_comps: Vec<PathBuf>,
     #[serde(skip)]
     pub timeline: Option<Timeline>,
 }
@@ -463,22 +466,26 @@ fn edit_impl(
     let mut before_tl = read_timeline(timeline)?;
     let base = dir_of(timeline);
     let mut media = if opts.sources_only {
-        MediaLengths::placeholder()
+        MediaLengths::placeholder().with_base(&base)
     } else if opts.probe {
-        MediaLengths::new(&base, |p| crate::media::media_duration(p).ok().flatten()).with_info(
-            |p| {
-                let i = crate::media::probe(p)?;
-                Ok(crate::edit::MediaFacts {
-                    duration: i.duration,
-                    has_video: i.has_video,
-                    has_audio: i.has_audio,
-                })
-            },
-        )
+        MediaLengths::new(&base, |p| crate::comp::source_duration(p).ok().flatten())
+            .with_info(crate::comp::source_facts)
     } else {
-        MediaLengths::unbounded()
+        MediaLengths::unbounded().with_base(&base)
     };
     let (mut new, changes) = apply(&before_tl, ops, &mut media)?;
+    let new_comps = media.take_new_comps();
+    if !opts.dry_run {
+        // Comps first, so the render plan (and any reader) can open them.
+        for (path, comp) in &new_comps {
+            anyhow::ensure!(
+                !path.exists(),
+                "nest: {} appeared meanwhile; not overwriting it",
+                path.display()
+            );
+            write_timeline(path, comp)?;
+        }
+    }
     let output = opts
         .output
         .clone()
@@ -508,6 +515,7 @@ fn edit_impl(
         sources_absolutized: moved,
         render,
         render_error,
+        new_comps: new_comps.into_iter().map(|(p, _)| p).collect(),
         timeline: None,
     };
     if !opts.dry_run {

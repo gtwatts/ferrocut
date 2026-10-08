@@ -159,7 +159,7 @@ pub fn clip() -> Value {
         "type": "object",
         "properties": {
             "id": { "type": "string", "minLength": 1, "description": "unique across the timeline" },
-            "source": { "type": "string", "minLength": 1, "description": "media path (relative to the timeline file's directory, or absolute)" },
+            "source": { "type": "string", "minLength": 1, "description": "media path, or a timeline .json file (nested composition), relative to the timeline file's directory or absolute" },
             "start": rational("ignored: replaced by `at`"),
             "source_in": rational("source time of the clip's first frame (default 0)"),
             "duration": rational("clip length in seconds (> 0)"),
@@ -305,6 +305,24 @@ pub fn edit_op() -> Value {
             json!({ "op": "freeze_frame", "clip": "cam_a", "at": "3", "duration": "2" }),
         ),
         op(
+            "nest",
+            "Nest video clips into a new composition (AE Pre-compose / Premiere Nest): writes a new timeline file at `path` (must not exist; relative to the timeline's directory) holding the clips with their tracks, timing (shifted so the earliest starts at 0), effects and linked audio, and replaces them with one clip (`id`, default the file stem) spanning them on the lowest of their tracks. Dissolves and J/L audio must stay inside the selection.",
+            json!({
+                "clips": { "type": "array", "minItems": 1, "items": clip_id() },
+                "path": { "type": "string", "pattern": "\\.json$", "description": "new comp file, e.g. comps/intro.json" },
+                "id": { "type": "string", "minLength": 1 }
+            }),
+            &["clips", "path"],
+            json!({ "op": "nest", "clips": ["title", "bg"], "path": "comps/intro.json", "id": "intro" }),
+        ),
+        op(
+            "unnest",
+            "Replace a nested-comp clip by the comp's clips (trimmed to the part the clip shows, placed at the same timeline times): inner track 0 goes on the clip's track, further inner tracks on new tracks inserted directly above it. The comp clip must be plain (no speed, transform, opacity, blend mode, transition or audio settings) and the comp must have no audio tracks or bus/master settings. The comp file is left as is.",
+            json!({ "clip": clip_id() }),
+            &["clip"],
+            json!({ "op": "unnest", "clip": "intro" }),
+        ),
+        op(
             "add_track",
             "Add an empty track: kind video (index 0 = bottom layer; default: on top) or audio (default: last). Names must be unique across all tracks.",
             json!({
@@ -320,7 +338,7 @@ pub fn edit_op() -> Value {
             "Add a clip from a media file to a track. The file is probed: it must have a video stream for a video track (its audio, if any, plays as linked audio) or an audio stream for an audio track. Defaults: source_in 0, duration = the rest of the media after source_in, start = the end of the track, id = the file stem (made unique). The range must be free (use ripple_insert to push clips right).",
             json!({
                 "track": { "type": "string", "minLength": 1, "description": "track name" },
-                "source": path("media path, relative to the timeline file's directory (or absolute, inside the project root)"),
+                "source": path("media path or nested timeline (.json), relative to the timeline file's directory (or absolute, inside the project root)"),
                 "id": { "type": "string", "minLength": 1, "description": "clip id (unique)" },
                 "start": rational("timeline time of the clip's first frame"),
                 "source_in": rational("source time of the clip's first frame"),
@@ -617,7 +635,7 @@ fn video_clip() -> Value {
         "type": "object",
         "properties": {
             "id": { "type": "string", "minLength": 1, "description": "unique across the timeline; edit ops refer to it" },
-            "source": { "type": "string", "minLength": 1, "description": "media path, relative to the timeline file's directory (or absolute)" },
+            "source": { "type": "string", "minLength": 1, "description": "media path, or a timeline .json file (nested composition), relative to the timeline file's directory (or absolute)" },
             "start": rational("timeline time of the first frame, >= 0"),
             "source_in": rational("source time of the first frame, >= 0 (default 0)"),
             "duration": rational("length in seconds, > 0; source_in + duration must not exceed the media"),

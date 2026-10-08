@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Context as _;
+use anyhow::{Context as _, ensure};
+
+use crate::comp::{CompStack, is_comp};
 
 use crate::graph::{Graph, NodeId};
 use crate::nodes::{
@@ -17,14 +19,40 @@ pub struct Compiled {
     pub output: NodeId,
 }
 
+/// Source nodes (and compiled nested comps) by canonical path, with their
+/// frame rate.
+type Sources = HashMap<PathBuf, (NodeId, Option<ferrocut_core::FrameRate>)>;
+
 /// Build the graph. `source_factory` lets tests stub out file hashing.
+/// Nested comps (clip sources that are timeline files, see [`crate::comp`])
+/// are compiled into the same graph, so their frame keys compose.
 pub fn compile_with(
     tl: &Timeline,
     mut source_factory: impl FnMut(&PathBuf, u32, u32) -> anyhow::Result<SourceNode>,
 ) -> anyhow::Result<Compiled> {
-    let (w, h) = (tl.output.width, tl.output.height);
     let mut g = Graph::new();
-    let mut sources: HashMap<PathBuf, (NodeId, Option<ferrocut_core::FrameRate>)> = HashMap::new();
+    let mut sources = Sources::new();
+    let out = build(
+        &mut g,
+        tl,
+        &mut source_factory,
+        &mut sources,
+        &mut CompStack::new(),
+    )?;
+    Ok(Compiled {
+        graph: g,
+        output: out,
+    })
+}
+
+fn build(
+    g: &mut Graph,
+    tl: &Timeline,
+    source_factory: &mut dyn FnMut(&PathBuf, u32, u32) -> anyhow::Result<SourceNode>,
+    sources: &mut Sources,
+    stack: &mut CompStack,
+) -> anyhow::Result<NodeId> {
+    let (w, h) = (tl.output.width, tl.output.height);
     let mut track_outputs = Vec::new();
     for track in &tl.tracks {
         let mut clips: Vec<_> = track.clips.iter().collect();
@@ -36,6 +64,27 @@ pub fn compile_with(
             let key = c.source.canonicalize().unwrap_or_else(|_| c.source.clone());
             let (src, source_fps) = match sources.get(&key) {
                 Some(&s) => s,
+                None if is_comp(&c.source) => {
+                    let (ckey, inner) = stack
+                        .load(&c.source)
+                        .with_context(|| format!("clip {}", c.id))?;
+                    ensure!(
+                        (inner.output.width, inner.output.height) == (w, h),
+                        "clip {}: nested composition {} is {}x{}, this timeline is {w}x{h} (comps must match the frame size; scale with the clip transform)",
+                        c.id,
+                        c.source.display(),
+                        inner.output.width,
+                        inner.output.height
+                    );
+                    stack.push(ckey);
+                    let id = build(g, &inner, source_factory, sources, stack).with_context(|| {
+                        format!("clip {}: nested composition {}", c.id, c.source.display())
+                    });
+                    stack.pop();
+                    let s = (id?, Some(inner.output.fps));
+                    sources.insert(key, s);
+                    s
+                }
                 None => {
                     let node = source_factory(&c.source, w, h)
                         .with_context(|| format!("clip {}", c.id))?;
@@ -105,11 +154,7 @@ pub fn compile_with(
         });
         ti += 1;
     }
-    let out = out.expect("at least one track");
-    Ok(Compiled {
-        graph: g,
-        output: out,
-    })
+    Ok(out.expect("at least one track"))
 }
 
 pub fn compile(tl: &Timeline) -> anyhow::Result<Compiled> {

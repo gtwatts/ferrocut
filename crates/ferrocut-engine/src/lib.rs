@@ -3,6 +3,7 @@
 
 pub mod audio;
 pub mod blend;
+pub mod comp;
 pub mod compile;
 pub mod compositor;
 pub mod deliver;

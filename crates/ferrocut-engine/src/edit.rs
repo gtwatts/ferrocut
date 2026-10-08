@@ -198,6 +198,15 @@ pub enum EditOp {
         #[serde(default)]
         all_tracks: bool,
     },
+    Nest {
+        clips: Vec<String>,
+        path: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    Unnest {
+        clip: String,
+    },
     SetKeyframes {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clip: Option<String>,
@@ -263,6 +272,8 @@ impl EditOp {
             EditOp::SetKeyframes { .. } => "set_keyframes",
             EditOp::SetSpeed { .. } => "set_speed",
             EditOp::FreezeFrame { .. } => "freeze_frame",
+            EditOp::Nest { .. } => "nest",
+            EditOp::Unnest { .. } => "unnest",
         }
     }
     fn target(&self) -> String {
@@ -290,7 +301,9 @@ impl EditOp {
             | EditOp::JlCut { clip, .. }
             | EditOp::SetSpeed { clip, .. }
             | EditOp::FreezeFrame { clip, .. }
+            | EditOp::Unnest { clip }
             | EditOp::AddTransition { clip, .. } => clip.clone(),
+            EditOp::Nest { path, .. } => path.display().to_string(),
         }
     }
 }
@@ -810,6 +823,9 @@ pub struct MediaLengths<'a> {
     cache: HashMap<PathBuf, Option<RationalTime>>,
     base: PathBuf,
     placeholder: bool,
+    /// Comps created by `nest` in this batch: (full path, timeline as it
+    /// will be written, sources relative to its own directory).
+    new_comps: Vec<(PathBuf, Timeline)>,
 }
 
 impl<'a> MediaLengths<'a> {
@@ -824,12 +840,31 @@ impl<'a> MediaLengths<'a> {
             cache: HashMap::new(),
             base: base.into(),
             placeholder: false,
+            new_comps: Vec::new(),
         }
+    }
+    /// Comp files created by `nest` ops (full path, timeline). The caller
+    /// writes them (they must not exist) along with the edited timeline.
+    pub fn take_new_comps(&mut self) -> Vec<(PathBuf, Timeline)> {
+        std::mem::take(&mut self.new_comps)
+    }
+    /// A nested comp's timeline as stored (sources relative to its own
+    /// directory): one created earlier in this batch, or read from disk.
+    fn comp(&self, full: &Path) -> anyhow::Result<Timeline> {
+        if let Some((_, t)) = self.new_comps.iter().find(|(p, _)| p == full) {
+            return Ok(t.clone());
+        }
+        crate::project::read_timeline(full)
     }
     /// Also probe streams for `add_clip` (missing file / missing stream errors,
     /// default durations).
     pub fn with_info(mut self, info: impl FnMut(&Path) -> anyhow::Result<MediaFacts> + 'a) -> Self {
         self.info = Some(Box::new(info));
+        self
+    }
+    /// Resolve relative paths (clip sources, `nest` comp files) against `base`.
+    pub fn with_base(mut self, base: impl Into<PathBuf>) -> Self {
+        self.base = base.into();
         self
     }
     /// No media bounds (unknown lengths).
@@ -1150,6 +1185,8 @@ fn apply_one(
             all_tracks: all,
         } => freeze_frame(tl, clip, *at, *duration, new_id.as_deref(), *all)?,
         EditOp::AddTrack { kind, name, index } => add_track(tl, *kind, name, *index)?,
+        EditOp::Nest { clips, path, id } => nest(tl, clips, path, id.as_deref(), media)?,
+        EditOp::Unnest { clip } => unnest(tl, clip, media)?,
         EditOp::AddClip {
             track,
             source,
@@ -1821,6 +1858,302 @@ fn freeze_frame(
             kind: "freeze_frame",
             summary,
             span: (at, end.max(c.end())),
+        },
+        touched,
+    ))
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    let c = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    c(a) == c(b)
+}
+
+fn dir_of(p: &Path) -> PathBuf {
+    match p.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
+        _ => PathBuf::from("."),
+    }
+}
+
+/// Re-express `src` (relative to `from`, or absolute) for a timeline stored
+/// in `to`: unchanged when the directories match, else absolute.
+fn rebase_source(src: &Path, from: &Path, to: &Path) -> PathBuf {
+    if src.is_absolute() || same_dir(from, to) {
+        return src.to_path_buf();
+    }
+    let j = from.join(src);
+    std::fs::canonicalize(&j).unwrap_or(j)
+}
+
+/// The clip on the same track that a clip at sorted index `i` dissolves from.
+fn previous(clips: &[Clip], i: usize) -> Option<&Clip> {
+    i.checked_sub(1).map(|j| &clips[j])
+}
+
+fn nest(
+    tl: &mut Timeline,
+    ids: &[String],
+    path: &Path,
+    id: Option<&str>,
+    media: &mut MediaLengths<'_>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    ensure!(!ids.is_empty(), "nest: give at least one clip");
+    ensure!(
+        crate::comp::is_comp(path),
+        "nest: path {} must be a .json timeline file",
+        path.display()
+    );
+    let full = media.full(path);
+    ensure!(
+        !full.exists() && !media.new_comps.iter().any(|(p, _)| *p == full),
+        "nest: {} already exists; choose a new file name",
+        full.display()
+    );
+    let wanted: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+    ensure!(wanted.len() == ids.len(), "nest: a clip is listed twice");
+    let mut sel: Vec<(usize, Clip)> = Vec::new();
+    for cid in ids {
+        let (tr, ci) = locate(tl, cid)?;
+        let TrackRef::Video(ti) = tr else {
+            bail!(
+                "nest: {cid} is an audio clip; nest takes video clips (their linked audio comes along)"
+            );
+        };
+        sel.push((ti, tl.tracks[ti].clips[ci].clone()));
+    }
+    let s0 = sel.iter().map(|(_, c)| c.start).min().expect("non-empty");
+    let s1 = sel.iter().map(|(_, c)| c.end()).max().expect("non-empty");
+    for (_, c) in &sel {
+        let (a0, a1) = c.audio_region();
+        ensure!(
+            c.audio.mute || (a0 >= s0 && a1 <= s1),
+            "nest: clip {}'s linked audio ({a0}..{a1}) extends outside the nested span {s0}..{s1}; remove its J/L offset or nest the neighbouring clip too",
+            c.id
+        );
+    }
+    // Dissolves must stay inside the selection.
+    let mut used: Vec<usize> = sel.iter().map(|(t, _)| *t).collect();
+    used.sort_unstable();
+    used.dedup();
+    for &ti in &used {
+        let mut clips = tl.tracks[ti].clips.clone();
+        clips.sort_by_key(|c| c.start);
+        for (i, c) in clips.iter().enumerate() {
+            if c.transition_in.is_none() {
+                continue;
+            }
+            if let Some(p) = previous(&clips, i) {
+                let (a, b) = (
+                    wanted.contains(c.id.as_str()),
+                    wanted.contains(p.id.as_str()),
+                );
+                ensure!(
+                    a == b,
+                    "nest: clip {} dissolves from {}; nest both or neither",
+                    c.id,
+                    p.id
+                );
+            }
+        }
+    }
+    let comp_dir = dir_of(&full);
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "comp".into());
+    let mut inner = Timeline {
+        name: stem.clone(),
+        output: crate::timeline::OutputSpec {
+            duration: None,
+            ..tl.output.clone()
+        },
+        tracks: Vec::new(),
+        audio_tracks: Vec::new(),
+        audio: crate::timeline::AudioSettings {
+            sample_rate: tl.audio.sample_rate,
+            ..Default::default()
+        },
+    };
+    for &ti in &used {
+        let mut clips: Vec<Clip> = sel
+            .iter()
+            .filter(|(t, _)| *t == ti)
+            .map(|(_, c)| {
+                let mut c = c.clone();
+                c.start = c.start - s0;
+                c.source = rebase_source(&c.source, &media.base, &comp_dir);
+                c
+            })
+            .collect();
+        clips.sort_by_key(|c| c.start);
+        inner.tracks.push(crate::timeline::Track {
+            name: tl.tracks[ti].name.clone(),
+            audio: Default::default(),
+            matte: None,
+            clips,
+        });
+    }
+    inner.validate().context("nest: the nested timeline")?;
+    for &ti in &used {
+        tl.tracks[ti]
+            .clips
+            .retain(|c| !wanted.contains(c.id.as_str()));
+    }
+    let cid = match id {
+        Some(n) => {
+            ensure!(!n.is_empty(), "nest: id must not be empty");
+            ensure!(
+                !tl.clip_ids().any(|i| i == n),
+                "nest: id {n:?} is already used"
+            );
+            n.to_string()
+        }
+        None if !tl.clip_ids().any(|i| i == stem) => stem.clone(),
+        None => unique_id(tl, &stem),
+    };
+    let comp_clip: Clip = serde_json::from_value(serde_json::json!({
+        "id": cid,
+        "source": path,
+        "start": s0,
+        "duration": s1 - s0,
+    }))?;
+    let low = used[0];
+    tl.tracks[low].clips.push(comp_clip);
+    media.cache.insert(full.clone(), Some(inner.duration()));
+    media.new_comps.push((full, inner));
+    Ok((
+        Change {
+            op: 0,
+            kind: "nest",
+            summary: format!(
+                "nest: {} clip(s) from {} track(s) into {} ({s0}..{s1}); comp clip {cid} on track {:?}",
+                sel.len(),
+                used.len(),
+                path.display(),
+                tl.tracks[low].name
+            ),
+            span: (s0, s1),
+        },
+        used.into_iter().map(TrackRef::Video).collect(),
+    ))
+}
+
+fn unnest(
+    tl: &mut Timeline,
+    clip: &str,
+    media: &mut MediaLengths<'_>,
+) -> anyhow::Result<(Change, Vec<TrackRef>)> {
+    let (tr, ci) = locate(tl, clip)?;
+    let TrackRef::Video(ti) = tr else {
+        bail!("unnest: {clip} is an audio clip");
+    };
+    let c = tl.tracks[ti].clips[ci].clone();
+    ensure!(
+        crate::comp::is_comp(&c.source),
+        "unnest: {clip} is not a nested composition (its source is {})",
+        c.source.display()
+    );
+    ensure!(
+        c.time_map().is_identity()
+            && c.transform.is_none()
+            && c.blend_mode.is_normal()
+            && c.transition_in.is_none()
+            && crate::timeline::is_one_anim(&c.opacity)
+            && c.audio == ClipAudio::default(),
+        "unnest: {clip} has its own speed/time remap, transform, opacity, blend mode, transition or audio settings, which unnesting would drop; reset them first"
+    );
+    let full = media.full(&c.source);
+    let inner = media
+        .comp(&full)
+        .with_context(|| format!("unnest: reading {}", full.display()))?;
+    ensure!(
+        inner.audio_tracks.iter().all(|t| t.clips.is_empty()),
+        "unnest: {} has audio tracks; unnesting those isn't supported yet",
+        full.display()
+    );
+    ensure!(
+        inner.audio.master_gain_db == Animatable::default() && inner.audio.loudness.is_none(),
+        "unnest: {} has master audio settings that unnesting would drop",
+        full.display()
+    );
+    for t in &inner.tracks {
+        ensure!(
+            t.audio == Default::default() && t.matte.is_none(),
+            "unnest: inner track {:?} has bus or matte settings that unnesting would drop",
+            t.name
+        );
+    }
+    ensure!(
+        inner.tracks.len() <= 1 || tl.tracks[ti].matte.is_none(),
+        "unnest: track {:?} has a matte (the track above); unnesting a multi-track comp would change it",
+        tl.tracks[ti].name
+    );
+    let comp_dir = dir_of(&full);
+    let (w0, w1) = (c.source_in, c.source_in + c.duration);
+    let off = c.start - c.source_in;
+    tl.tracks[ti].clips.remove(ci);
+    let mut placed = 0;
+    let mut touched = vec![tr];
+    for (k, it) in inner.tracks.iter().enumerate() {
+        let target = if k == 0 {
+            ti
+        } else {
+            let mut name = it.name.clone();
+            let mut n = 2;
+            while name.is_empty() || tl.track_names().any(|x| x == name) {
+                name = format!("{}.{n}", it.name);
+                n += 1;
+            }
+            add_track(tl, TrackKind::Video, &name, Some(ti + k))?;
+            touched.push(TrackRef::Video(ti + k));
+            ti + k
+        };
+        for ic in &it.clips {
+            if ic.end() <= w0 || ic.start >= w1 {
+                continue;
+            }
+            let mut n = ic.clone();
+            if n.start < w0 {
+                let d = w0 - n.start;
+                n.source_in = ic.source_at(d);
+                n.start = w0;
+                n.duration = n.duration - d;
+                n.shift_local_keys(-d.0);
+                n.drop_transition_in();
+                n.audio.in_offset = z();
+                n.audio.fade_in = None;
+            }
+            if n.end() > w1 {
+                n.duration = w1 - n.start;
+                n.audio.out_offset = z();
+                n.audio.fade_out = None;
+            }
+            n.audio.in_offset = n.audio.in_offset.max(w0 - n.start);
+            n.audio.out_offset = n.audio.out_offset.min(w1 - n.end());
+            n.start = n.start + off;
+            if tl.clip_ids().any(|x| x == n.id) {
+                n.id = unique_id(tl, &n.id);
+            }
+            n.source = rebase_source(&n.source, &comp_dir, &media.base);
+            tl.tracks[target].clips.push(n);
+            placed += 1;
+        }
+    }
+    Ok((
+        Change {
+            op: 0,
+            kind: "unnest",
+            summary: format!(
+                "unnest {clip}: {placed} clip(s) from {} back onto track {:?}{}",
+                c.source.display(),
+                tl.tracks[ti].name,
+                if inner.tracks.len() > 1 {
+                    format!(" and {} new track(s) above it", inner.tracks.len() - 1)
+                } else {
+                    String::new()
+                }
+            ),
+            span: (c.start, c.end()),
         },
         touched,
     ))

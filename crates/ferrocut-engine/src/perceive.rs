@@ -218,21 +218,8 @@ pub struct CheckOptions {
 /// can't be read.
 pub fn timeline_has_audio(path: &Path) -> Option<bool> {
     let tl = crate::Timeline::load(path).ok()?;
-    if tl.audio_tracks.iter().any(|t| !t.clips.is_empty()) {
-        return Some(true);
-    }
-    let mut seen = std::collections::HashSet::new();
-    for c in tl.tracks.iter().flat_map(|t| &t.clips) {
-        if c.audio.mute || !seen.insert(c.source.clone()) {
-            continue;
-        }
-        match crate::media::probe(&c.source) {
-            Ok(i) if i.has_audio => return Some(true),
-            Ok(_) => {}
-            Err(_) => return None,
-        }
-    }
-    Some(false)
+    let mut stack = crate::comp::CompStack::new();
+    crate::comp::has_audio(&tl, &mut stack).ok()
 }
 
 /// Longest wait for `ferrocut-perceive check --help` (flag detection).

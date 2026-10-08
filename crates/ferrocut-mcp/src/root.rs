@@ -113,14 +113,21 @@ impl Root {
     }
 
     /// Every clip source of a loaded timeline (sources resolved against its
-    /// directory, as [`Timeline::load`] does) must be inside the root.
+    /// directory, as [`Timeline::load`] does) must be inside the root,
+    /// including the sources of nested comps (at any depth).
     pub fn check_sources(&self, tl: &Timeline) -> anyhow::Result<()> {
-        let mut tl = tl.clone();
-        for s in tl.sources_mut() {
-            self.check(s)
-                .with_context(|| format!("clip source {}", s.display()))?;
-        }
-        Ok(())
+        let own = |tl: &Timeline| -> anyhow::Result<()> {
+            let mut tl = tl.clone();
+            for s in tl.sources_mut() {
+                self.check(s)
+                    .with_context(|| format!("clip source {}", s.display()))?;
+            }
+            Ok(())
+        };
+        own(tl)?;
+        ferrocut_engine::comp::visit(tl, &mut |p, inner| {
+            own(inner).with_context(|| format!("nested composition {}", p.display()))
+        })
     }
 
     /// Load a timeline (path checked) and check its media sources.

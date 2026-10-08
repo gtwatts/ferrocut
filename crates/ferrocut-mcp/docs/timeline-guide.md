@@ -57,6 +57,19 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
   `set_keyframes` on `speed` (`[{t:0,v:1,interp:ease_in_out},{t:1,v:3,interp:ease_in_out},{t:2,v:1}]`);
   a 2 s freeze at 5 s is `freeze_frame` `{at: "5", duration: "2"}`.
 
+## Nested compositions
+
+- A clip whose `source` is a timeline file (`*.json`) shows that timeline (an AE precomp /
+  Premiere nested sequence). `source_in` and the duration pick the part of the inner timeline;
+  speed, time remap, opacity, transform and blend mode work as for media. The inner frame size
+  must match; its fps may differ (nearest sampling snaps to the inner frame grid).
+- Its linked audio is the inner mix (clip and bus gains, ducking, master gain; loudness
+  normalization only on the outermost timeline).
+- Frame keys compose, so after editing the inner file only the outer chunks that show the
+  changed frames re-render. Comps nest to any depth; a cycle is an error.
+- `nest` moves clips into a new comp file and puts one clip in their place; `unnest` puts a
+  plain comp clip's contents back (trimmed to the part it shows).
+
 ## Blend modes and track mattes
 
 - `blend_mode` on a video clip: how its track composites onto everything below while the clip is
@@ -86,6 +99,8 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 | `jl_cut` | linked-audio offsets: `in_offset < 0` J-cut, `out_offset > 0` L-cut |
 | `set_speed` | constant speed keeping the source range (duration = range / \|speed\|); `-1` reverses; `ripple`, `preserve_pitch` |
 | `freeze_frame` | hold the frame at `at`: to the clip end (split), or insert a `duration` hold and push later clips |
+| `nest` | move video `clips` (any tracks) into a new comp file `path` and replace them with one clip `id` on the lowest of their tracks |
+| `unnest` | replace a plain comp clip by the comp's clips; extra inner tracks go on new tracks right above |
 
 Parameter names (`timeline_schema` part `params` lists unit, range, default and time base):
 

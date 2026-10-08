@@ -58,6 +58,8 @@ fn every_edit_op_has_a_strict_schema_whose_example_parses() {
         "set_keyframes",
         "set_speed",
         "freeze_frame",
+        "nest",
+        "unnest",
     ]
     .into_iter()
     .map(String::from)
