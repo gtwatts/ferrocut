@@ -4,6 +4,7 @@
 pub mod audio;
 pub mod compile;
 pub mod compositor;
+pub mod edit;
 pub mod graph;
 pub mod media;
 pub mod nodes;

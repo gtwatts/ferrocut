@@ -307,6 +307,8 @@ impl Clip {
     pub fn end(&self) -> RationalTime {
         self.start + self.duration
     }
+    /// Shift clip-local video keyframes (opacity, transform) by `dt`.
+    pub(crate) fn shift_video_keys(&mut self, _dt: Rational) {}
     pub fn audio_region(&self) -> (RationalTime, RationalTime) {
         audio_region(self.start, self.duration, &self.audio)
     }

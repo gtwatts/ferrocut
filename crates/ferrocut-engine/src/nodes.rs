@@ -112,6 +112,14 @@ impl RenderNode for ClipNode {
             ],
         )
     }
+    /// Only what changes the pixels at `t`. Placement (`start`, `source_in`)
+    /// is already captured by the pulled source frame's key, which includes
+    /// the source time, and `duration` only decides *where* the clip is active
+    /// (the sequence's job). So trims, rolls and slips leave the keys of
+    /// frames whose source frame didn't change untouched.
+    fn content_hash_at(&self, _t: RationalTime) -> NodeHash {
+        NodeHash::of("clip.at", &[&self.opacity.hash_bytes()])
+    }
     fn pulls(&self, t: RationalTime) -> Vec<Pull> {
         vec![Pull {
             input: 0,

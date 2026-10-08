@@ -47,6 +47,20 @@ enum Cmd {
     },
     /// Print the chunk plan (frame/chunk keys) without decoding or touching the GPU.
     Plan { timeline: PathBuf },
+    /// Apply a JSON list of edit operations (split, trim, ripple_delete,
+    /// ripple_insert, roll, slip, slide, move, jl_cut) to a timeline.
+    Edit {
+        timeline: PathBuf,
+        ops: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Also report which output chunks the edit invalidates (compiles both timelines; no rendering).
+        #[arg(long)]
+        plan: bool,
+        /// Don't probe source media lengths (skips slip/trim-past-media checks).
+        #[arg(long)]
+        no_probe: bool,
+    },
     /// List GPU adapters and show which one Ferrocut would pick.
     Adapters,
     /// Show the FFmpeg libraries ferrocut is running against (version, license, configure flags).
@@ -69,6 +83,87 @@ fn main() -> anyhow::Result<()> {
             }
             let gpu = GpuContext::new(AdapterPreference::default())?;
             println!("selected: {}", gpu.describe());
+        }
+        Cmd::Edit {
+            timeline,
+            ops,
+            output,
+            plan: show_plan,
+            no_probe,
+        } => {
+            use ferrocut_engine::edit::{MediaLengths, apply, parse_ops};
+            let text = std::fs::read_to_string(&timeline)
+                .with_context(|| format!("reading {}", timeline.display()))?;
+            let tl = Timeline::from_json(&text)
+                .with_context(|| format!("parsing timeline {}", timeline.display()))?;
+            let ops_text = std::fs::read_to_string(&ops)
+                .with_context(|| format!("reading {}", ops.display()))?;
+            let ops = parse_ops(&ops_text).with_context(|| format!("parsing {}", ops.display()))?;
+            let base = timeline
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default();
+            let mut media = if no_probe {
+                MediaLengths::unbounded()
+            } else {
+                MediaLengths::new(&base, |p| {
+                    ferrocut_engine::media::media_duration(p).ok().flatten()
+                })
+            };
+            let (mut new, changes) = apply(&tl, &ops, &mut media)?;
+            for c in &changes {
+                println!(
+                    "op {:>2} {:<13} {}  [affects {}..{}]",
+                    c.op, c.kind, c.summary, c.span.0, c.span.1
+                );
+            }
+            // Keep relative sources valid if the output lands in another directory.
+            let out_dir = output.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+            let canon = |p: &std::path::Path| {
+                std::fs::canonicalize(if p.as_os_str().is_empty() {
+                    std::path::Path::new(".")
+                } else {
+                    p
+                })
+                .ok()
+            };
+            if canon(&out_dir) != canon(&base) {
+                let abs = |s: &mut PathBuf| {
+                    if s.is_relative() {
+                        *s = std::fs::canonicalize(base.join(&*s))
+                            .unwrap_or_else(|_| base.join(&*s));
+                    }
+                };
+                new.tracks
+                    .iter_mut()
+                    .flat_map(|t| t.clips.iter_mut())
+                    .for_each(|c| abs(&mut c.source));
+                new.audio_tracks
+                    .iter_mut()
+                    .flat_map(|t| t.clips.iter_mut())
+                    .for_each(|c| abs(&mut c.source));
+                eprintln!(
+                    "note: output is in another directory; relative sources were made absolute"
+                );
+            }
+            std::fs::write(&output, serde_json::to_string_pretty(&new)? + "\n")
+                .with_context(|| format!("writing {}", output.display()))?;
+            println!("wrote {} ({} ops)", output.display(), changes.len());
+            if show_plan {
+                let (a, b) = (Timeline::load(&timeline)?, Timeline::load(&output)?);
+                let (pa, pb) = (plan(&a, &compile(&a)?), plan(&b, &compile(&b)?));
+                let old: std::collections::HashSet<&str> =
+                    pa.iter().map(|p| p.key.as_str()).collect();
+                let dirty: Vec<usize> = pb
+                    .iter()
+                    .filter(|p| !old.contains(p.key.as_str()))
+                    .map(|p| p.index)
+                    .collect();
+                println!(
+                    "video chunks to re-render: {dirty:?} of {} (audio is re-mixed per render)",
+                    pb.len()
+                );
+            }
         }
         Cmd::Plan { timeline } => {
             let tl = Timeline::load(&timeline)?;

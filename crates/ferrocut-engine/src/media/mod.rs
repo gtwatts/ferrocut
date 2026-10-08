@@ -44,3 +44,33 @@ pub fn init() {
         ffmpeg_next::log::set_level(ffmpeg_next::log::Level::Error);
     });
 }
+
+/// Exact duration of a media file: the best video stream's duration (else
+/// the best audio stream's, else the container's), measured from the video
+/// stream's start like the decoders. `None` if the file reports none.
+pub fn media_duration(
+    path: &std::path::Path,
+) -> anyhow::Result<Option<ferrocut_core::RationalTime>> {
+    use anyhow::Context as _;
+    use ferrocut_core::RationalTime;
+    use ffmpeg_next::media::Type;
+    init();
+    let ictx =
+        ffmpeg_next::format::input(path).with_context(|| format!("opening {}", path.display()))?;
+    let nopts = ffmpeg_next::ffi::AV_NOPTS_VALUE;
+    for kind in [Type::Video, Type::Audio] {
+        if let Some(s) = ictx.streams().best(kind)
+            && s.duration() != nopts
+            && s.duration() > 0
+        {
+            return Ok(Some(RationalTime::from_pts(
+                s.duration(),
+                to_core(s.time_base()),
+            )));
+        }
+    }
+    let d = ictx.duration();
+    Ok((d != nopts && d > 0).then(|| {
+        RationalTime::from_pts(d, Rational::new(1, ffmpeg_next::ffi::AV_TIME_BASE as i64))
+    }))
+}

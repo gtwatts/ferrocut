@@ -26,4 +26,5 @@ wgpu = "30"
 
 [dev-dependencies]
 half = "2.7"
+proptest = { version = "1.11", default-features = false, features = ["std"] }
 tempfile = "3"
