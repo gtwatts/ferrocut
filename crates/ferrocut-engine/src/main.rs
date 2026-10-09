@@ -1380,11 +1380,11 @@ fn check_line(o: &ferrocut_engine::perceive::CheckOutcome) -> String {
             CheckOutcome::codes(&o.warnings).join(", ")
         )
     };
-    let warnings = match o.loudness_line() {
-        Some(l) => format!("{warnings}\n  {l}"),
-        None => warnings,
-    };
-    match o.status {
+    let loudness = o
+        .loudness_line()
+        .map(|l| format!("\n  {l}"))
+        .unwrap_or_default();
+    let line = match o.status {
         CheckStatus::Pass => format!("quality check: PASS{warnings}"),
         CheckStatus::Fail => format!(
             "quality check: FAIL ({} problem(s): {}{warnings})",
@@ -1399,5 +1399,6 @@ fn check_line(o: &ferrocut_engine::perceive::CheckOutcome) -> String {
             "quality check: skipped ({})",
             o.message.as_deref().unwrap_or("")
         ),
-    }
+    };
+    format!("{line}{loudness}")
 }
