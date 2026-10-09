@@ -742,3 +742,242 @@ fn nothing_adds_a_frame_past_the_program_end() {
     let (out, _) = captions::retime(&short, fps, t(301, 100), &exactish).unwrap();
     assert_eq!(out[0].end, t(301, 100));
 }
+
+// --- Portable caption fonts: containment by canonical path ---
+
+/// root/ is the timeline's directory; outside/ is a sibling.
+struct FontTree {
+    _dir: tempfile::TempDir,
+    root: PathBuf,
+    outside: PathBuf,
+}
+fn font_tree() -> FontTree {
+    let dir = tempfile::tempdir().unwrap();
+    let base = std::fs::canonicalize(dir.path()).unwrap();
+    let (root, outside) = (base.join("root"), base.join("outside"));
+    for d in [
+        root.join("assets/fonts"),
+        root.join("authoring"),
+        root.join("links"),
+        outside.clone(),
+    ] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::copy(font(), root.join("assets/fonts/F.ttf")).unwrap();
+    std::fs::copy(font(), outside.join("O.ttf")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        symlink("../assets/fonts/F.ttf", root.join("links/in-link.ttf")).unwrap();
+        symlink(outside.join("O.ttf"), root.join("links/out-link.ttf")).unwrap();
+        symlink(&root, outside.join("proj-alias")).unwrap();
+    }
+    FontTree {
+        _dir: dir,
+        root,
+        outside,
+    }
+}
+fn place(
+    tree: &FontTree,
+    font: &Path,
+    fallbacks: &[&Path],
+) -> anyhow::Result<(PathBuf, Vec<PathBuf>, Vec<PathBuf>)> {
+    let mut spec = style();
+    spec.font = font.into();
+    spec.fallback_fonts = fallbacks.iter().map(|p| p.to_path_buf()).collect();
+    let outside = captions::place_style_fonts(&mut spec, &tree.root.join("authoring"), &tree.root)?;
+    Ok((spec.font, spec.fallback_fonts, outside))
+}
+
+#[test]
+fn style_fonts_are_contained_by_their_real_path_not_a_lexical_prefix() {
+    let tree = font_tree();
+    let rel = Path::new("assets/fonts/F.ttf");
+    let o = tree.outside.join("O.ttf");
+    // Dot segments relative to the style file.
+    let (f, _, out) = place(&tree, Path::new("./../assets/./fonts/F.ttf"), &[]).unwrap();
+    assert_eq!((f.as_path(), out.len()), (rel, 0));
+    // Lexically under the project, really outside it: not portable.
+    // (A5 stored this as "assets/../../outside/O.ttf".)
+    let (f, _, out) = place(&tree, Path::new("../assets/../../outside/O.ttf"), &[]).unwrap();
+    assert_eq!((f.clone(), out), (o.clone(), vec![o.clone()]));
+    // Absolute into the project.
+    let (f, _, out) = place(&tree, &tree.root.join("assets/fonts/F.ttf"), &[]).unwrap();
+    assert_eq!((f.as_path(), out.len()), (rel, 0));
+    #[cfg(unix)]
+    {
+        // Absolute through an outside alias of the project: inside.
+        let alias = tree.outside.join("proj-alias/assets/fonts/F.ttf");
+        let (f, _, out) = place(&tree, &alias, &[]).unwrap();
+        assert_eq!((f.as_path(), out.len()), (rel, 0));
+        // A link inside the project to a project file: its target, relative.
+        let (f, _, out) = place(&tree, Path::new("../links/in-link.ttf"), &[]).unwrap();
+        assert_eq!((f.as_path(), out.len()), (rel, 0));
+        // A link inside the project to an outside file: not portable.
+        let (f, _, out) = place(&tree, Path::new("../links/out-link.ttf"), &[]).unwrap();
+        assert_eq!((f, out), (o.clone(), vec![o.clone()]));
+    }
+    // Fallbacks get the same treatment; only the outside one is reported.
+    let (f, fb, out) = place(
+        &tree,
+        Path::new("../assets/fonts/F.ttf"),
+        &[Path::new("../assets/fonts/F.ttf"), o.as_path()],
+    )
+    .unwrap();
+    assert_eq!(f.as_path(), rel);
+    assert_eq!(fb, vec![rel.to_path_buf(), o.clone()]);
+    assert_eq!(out, vec![o]);
+    // Missing primary or fallback, and a directory: errors naming the font.
+    for (font, fb, want) in [
+        ("../assets/fonts/nope.ttf", None, "nope.ttf not found"),
+        (
+            "../assets/fonts/F.ttf",
+            Some("missing-fallback.otf"),
+            "missing-fallback.otf not found",
+        ),
+        ("../assets/fonts", None, "is not a file"),
+    ] {
+        let fbs: Vec<&Path> = fb.map(Path::new).into_iter().collect();
+        let err = format!("{:#}", place(&tree, Path::new(font), &fbs).unwrap_err());
+        assert!(err.contains(want), "{font}: {err}");
+    }
+}
+
+#[test]
+fn caption_cli_import_is_portable_journaled_and_survives_a_move() {
+    let tree = font_tree();
+    let root = &tree.root;
+    std::fs::write(
+        root.join("project.json"),
+        serde_json::to_vec_pretty(&empty()).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("authoring/captions.srt"),
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n\n2\n00:00:01,020 --> 00:00:02,000\nWorld\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("authoring/style.json"),
+        json!({"content":"","font":"../assets/fonts/F.ttf","fallback_fonts":["../links/in-link.ttf"],"font_size":"24"}).to_string(),
+    )
+    .unwrap();
+    let ferrocut = |cwd: &Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ferrocut"))
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let import = [
+        "captions",
+        "import",
+        "../project.json",
+        "captions.srt",
+        "--style",
+        "style.json",
+    ];
+    // ops-only and dry-run write nothing; both store the relative font.
+    let before = std::fs::read(root.join("project.json")).unwrap();
+    let ops = ferrocut(
+        &root.join("authoring"),
+        &[&import[..], &["--ops-only"]].concat(),
+    );
+    assert!(
+        ops.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ops.stderr)
+    );
+    let ops: serde_json::Value = serde_json::from_slice(&ops.stdout).unwrap();
+    assert_eq!(
+        ops[1]["generator"]["text"]["font"],
+        json!("assets/fonts/F.ttf")
+    );
+    let dry = ferrocut(
+        &root.join("authoring"),
+        &[&import[..], &["--dry-run"]].concat(),
+    );
+    assert!(dry.status.success());
+    assert_eq!(std::fs::read(root.join("project.json")).unwrap(), before);
+
+    let out = ferrocut(&root.join("authoring"), &import);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["nonportable_fonts"], json!([]));
+    // The timing policy still applies (29.97 fps): the 20 ms gap is closed.
+    assert_eq!(
+        v["caption_timing"]["changed"][0]["reasons"],
+        json!(["snapped", "closed_gap"])
+    );
+    let saved = std::fs::read_to_string(root.join("project.json")).unwrap();
+    assert!(
+        !saved.contains(root.to_str().unwrap()),
+        "absolute path in {saved}"
+    );
+    assert_eq!(
+        stored_font(&root.join("project.json")),
+        Path::new("assets/fonts/F.ttf")
+    );
+
+    // Move the project (without its links dir, which is not needed now):
+    // it still loads, compiles (reads the fonts) and plans.
+    let moved = tree.outside.join("moved");
+    std::fs::create_dir_all(moved.join("assets/fonts")).unwrap();
+    std::fs::copy(root.join("project.json"), moved.join("project.json")).unwrap();
+    std::fs::copy(
+        root.join("assets/fonts/F.ttf"),
+        moved.join("assets/fonts/F.ttf"),
+    )
+    .unwrap();
+    let tl = Timeline::load(&moved.join("project.json")).unwrap();
+    ferrocut_engine::compile(&tl).unwrap();
+    let plan = ferrocut(&moved, &["plan", "project.json"]);
+    assert!(
+        plan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&plan.stderr)
+    );
+
+    // Journal: undo restores the pre-import timeline.
+    let undo = ferrocut(root, &["undo", "project.json"]);
+    assert!(
+        undo.status.success(),
+        "{}",
+        String::from_utf8_lossy(&undo.stderr)
+    );
+    assert_eq!(
+        Timeline::load(&root.join("project.json"))
+            .unwrap()
+            .tracks
+            .len(),
+        1
+    );
+
+    // Negative control: an outside font is imported but reported.
+    std::fs::write(
+        root.join("authoring/style.json"),
+        json!({"content":"","font":"../../outside/O.ttf","font_size":"24"}).to_string(),
+    )
+    .unwrap();
+    let out = ferrocut(&root.join("authoring"), &import);
+    assert!(out.status.success());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["nonportable_fonts"], json!([tree.outside.join("O.ttf")]));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not portable"));
+    // Missing font: refused, timeline untouched.
+    let before = std::fs::read(root.join("project.json")).unwrap();
+    std::fs::write(
+        root.join("authoring/style.json"),
+        json!({"content":"","font":"../assets/fonts/none.ttf","font_size":"24"}).to_string(),
+    )
+    .unwrap();
+    let out = ferrocut(&root.join("authoring"), &import);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("none.ttf not found"));
+    assert_eq!(std::fs::read(root.join("project.json")).unwrap(), before);
+}
