@@ -1,0 +1,11 @@
+1
+00:00:00,000 --> 00:00:01,010
+First cue ends 33 ms before the next.
+
+2
+00:00:01,043 --> 00:00:02,407
+Second cue: the same gap, as in vox at 7.407 s.
+
+3
+00:00:02,440 --> 00:00:03,000
+Third cue holds to the end.

@@ -1,0 +1,348 @@
+{
+  "border_policy": "transparent exposed borders; no crop or synthetic fill",
+  "mode": "stabilize",
+  "ops": [
+    {
+      "clip": "source",
+      "keyframes": [
+        {
+          "interp": "linear",
+          "t": "0",
+          "v": "384"
+        },
+        {
+          "interp": "linear",
+          "t": "1/16",
+          "v": "380"
+        },
+        {
+          "interp": "linear",
+          "t": "1/8",
+          "v": "376"
+        },
+        {
+          "interp": "linear",
+          "t": "3/16",
+          "v": "372"
+        },
+        {
+          "interp": "linear",
+          "t": "1/4",
+          "v": "368"
+        },
+        {
+          "interp": "linear",
+          "t": "5/16",
+          "v": "364"
+        },
+        {
+          "interp": "linear",
+          "t": "3/8",
+          "v": "360"
+        },
+        {
+          "interp": "linear",
+          "t": "7/16",
+          "v": "356"
+        },
+        {
+          "interp": "linear",
+          "t": "1/2",
+          "v": "352"
+        },
+        {
+          "interp": "linear",
+          "t": "9/16",
+          "v": "348"
+        },
+        {
+          "interp": "linear",
+          "t": "5/8",
+          "v": "344"
+        },
+        {
+          "interp": "linear",
+          "t": "11/16",
+          "v": "340"
+        },
+        {
+          "interp": "linear",
+          "t": "3/4",
+          "v": "336"
+        },
+        {
+          "interp": "linear",
+          "t": "13/16",
+          "v": "332"
+        },
+        {
+          "interp": "linear",
+          "t": "7/8",
+          "v": "328"
+        },
+        {
+          "interp": "linear",
+          "t": "15/16",
+          "v": "324"
+        },
+        {
+          "interp": "linear",
+          "t": "1",
+          "v": "320"
+        },
+        {
+          "interp": "linear",
+          "t": "17/16",
+          "v": "316"
+        },
+        {
+          "interp": "linear",
+          "t": "9/8",
+          "v": "312"
+        },
+        {
+          "interp": "linear",
+          "t": "19/16",
+          "v": "308"
+        },
+        {
+          "interp": "linear",
+          "t": "5/4",
+          "v": "304"
+        },
+        {
+          "interp": "linear",
+          "t": "21/16",
+          "v": "300"
+        },
+        {
+          "interp": "linear",
+          "t": "11/8",
+          "v": "296"
+        },
+        {
+          "interp": "linear",
+          "t": "23/16",
+          "v": "292"
+        },
+        {
+          "interp": "linear",
+          "t": "3/2",
+          "v": "288"
+        },
+        {
+          "interp": "linear",
+          "t": "25/16",
+          "v": "284"
+        },
+        {
+          "interp": "linear",
+          "t": "13/8",
+          "v": "280"
+        },
+        {
+          "interp": "linear",
+          "t": "27/16",
+          "v": "276"
+        },
+        {
+          "interp": "linear",
+          "t": "7/4",
+          "v": "272"
+        },
+        {
+          "interp": "linear",
+          "t": "29/16",
+          "v": "268"
+        },
+        {
+          "interp": "linear",
+          "t": "15/8",
+          "v": "264"
+        },
+        {
+          "interp": "linear",
+          "t": "31/16",
+          "v": "260"
+        }
+      ],
+      "mode": "replace",
+      "op": "set_keyframes",
+      "param": "transform.position.x",
+      "timeline_time": false
+    },
+    {
+      "clip": "source",
+      "keyframes": [
+        {
+          "interp": "linear",
+          "t": "0",
+          "v": "212"
+        },
+        {
+          "interp": "linear",
+          "t": "1/16",
+          "v": "210"
+        },
+        {
+          "interp": "linear",
+          "t": "1/8",
+          "v": "208"
+        },
+        {
+          "interp": "linear",
+          "t": "3/16",
+          "v": "206"
+        },
+        {
+          "interp": "linear",
+          "t": "1/4",
+          "v": "204"
+        },
+        {
+          "interp": "linear",
+          "t": "5/16",
+          "v": "202"
+        },
+        {
+          "interp": "linear",
+          "t": "3/8",
+          "v": "200"
+        },
+        {
+          "interp": "linear",
+          "t": "7/16",
+          "v": "198"
+        },
+        {
+          "interp": "linear",
+          "t": "1/2",
+          "v": "196"
+        },
+        {
+          "interp": "linear",
+          "t": "9/16",
+          "v": "194"
+        },
+        {
+          "interp": "linear",
+          "t": "5/8",
+          "v": "192"
+        },
+        {
+          "interp": "linear",
+          "t": "11/16",
+          "v": "190"
+        },
+        {
+          "interp": "linear",
+          "t": "3/4",
+          "v": "188"
+        },
+        {
+          "interp": "linear",
+          "t": "13/16",
+          "v": "186"
+        },
+        {
+          "interp": "linear",
+          "t": "7/8",
+          "v": "184"
+        },
+        {
+          "interp": "linear",
+          "t": "15/16",
+          "v": "182"
+        },
+        {
+          "interp": "linear",
+          "t": "1",
+          "v": "180"
+        },
+        {
+          "interp": "linear",
+          "t": "17/16",
+          "v": "178"
+        },
+        {
+          "interp": "linear",
+          "t": "9/8",
+          "v": "176"
+        },
+        {
+          "interp": "linear",
+          "t": "19/16",
+          "v": "174"
+        },
+        {
+          "interp": "linear",
+          "t": "5/4",
+          "v": "172"
+        },
+        {
+          "interp": "linear",
+          "t": "21/16",
+          "v": "170"
+        },
+        {
+          "interp": "linear",
+          "t": "11/8",
+          "v": "168"
+        },
+        {
+          "interp": "linear",
+          "t": "23/16",
+          "v": "166"
+        },
+        {
+          "interp": "linear",
+          "t": "3/2",
+          "v": "164"
+        },
+        {
+          "interp": "linear",
+          "t": "25/16",
+          "v": "162"
+        },
+        {
+          "interp": "linear",
+          "t": "13/8",
+          "v": "160"
+        },
+        {
+          "interp": "linear",
+          "t": "27/16",
+          "v": "158"
+        },
+        {
+          "interp": "linear",
+          "t": "7/4",
+          "v": "156"
+        },
+        {
+          "interp": "linear",
+          "t": "29/16",
+          "v": "154"
+        },
+        {
+          "interp": "linear",
+          "t": "15/8",
+          "v": "152"
+        },
+        {
+          "interp": "linear",
+          "t": "31/16",
+          "v": "150"
+        }
+      ],
+      "mode": "replace",
+      "op": "set_keyframes",
+      "param": "transform.position.y",
+      "timeline_time": false
+    }
+  ],
+  "sample_count": 32,
+  "sampled_frames_hash": "f8f639b7e123a623edafd2d2b8760e85edaec8d12d25d6f28e4c9636bdc9f0e5",
+  "semantics": "Position follows displacement from the supplied seed. Original decoded-source pixels scale to the timeline canvas. Apply through edit_apply for validation, undo, and cache invalidation.",
+  "time_base": "target clip-local"
+}

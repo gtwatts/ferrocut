@@ -1,0 +1,1982 @@
+{
+  "schema": "ferrocut.native-motion-evidence/1",
+  "recorded_at": "2026-10-08T16:49:49.056781+00:00",
+  "scope": "Second connected native-motion milestone; not Adobe parity or production creative review",
+  "git_head": "701b88f0991a6f9a5fa7c9123b065c60c6904079",
+  "state": "local uncommitted work; pre-existing changes preserved",
+  "pre_milestone_checkpoint": "/tmp/ferrocut-before-motion-integration-20261008",
+  "reproduce": [
+    [
+      "cargo",
+      "build",
+      "--locked",
+      "--offline",
+      "-p",
+      "ferrocut-engine",
+      "--bin",
+      "ferrocut"
+    ],
+    [
+      "python3",
+      "scripts/motion-showcase.py",
+      "--output-dir",
+      "/tmp/ferrocut-motion-demo"
+    ]
+  ],
+  "workflow": {
+    "schema": "ferrocut.native-motion-showcase/1",
+    "source": "original synthetic native vector animation; not real-footage tracking validation",
+    "frames": 32,
+    "minimum_measured_confidence": 100.0,
+    "maximum_axis_error_pixels": 0.0,
+    "repeat_exact": true,
+    "undo_exact": true,
+    "files": {
+      "motion-source.mkv": "b85e9c6a85fd8f38054a32c9e5921071543b0832840fb27ab1cc7c64fa480fee",
+      "motion-showcase.mkv": "965b8e08b3550a13c0923f01ee848c43abf9007207a9ecd2d10567b736803074",
+      "motion-revised.mkv": "6a17fdc1b0861856ad4cfd50c8055b2497c3843172ffe7fe27faa4c8edbab0bb",
+      "motion-repeat.mkv": "6a17fdc1b0861856ad4cfd50c8055b2497c3843172ffe7fe27faa4c8edbab0bb",
+      "motion-undo.mkv": "965b8e08b3550a13c0923f01ee848c43abf9007207a9ecd2d10567b736803074",
+      "motion-stabilized.mkv": "a0aa27c152de96d8e61e0e07df1512c8a8d74fe617641c27f5e88dc44ddc07e2"
+    }
+  },
+  "render_reports": {
+    "motion-source": {
+      "engine": "ferrocut-engine 0.0.1 render.v3",
+      "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+      "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+      "output": "/tmp/ferrocut-motion-repro-20261008/motion-source.mkv",
+      "total_frames": 32,
+      "chunk_frames": 16,
+      "jobs": 1,
+      "chunks": [
+        {
+          "index": 0,
+          "start_frame": 0,
+          "frames": 16,
+          "key": "72dc54430d764369ae8ef6eb249b61aaed62eee31ee69712d4025730cd1d864b",
+          "status": "rendered",
+          "file_blake3": "fbd25c2e77cdcc6822331896116749036c3d54a920ed29b529cf738d37221e71",
+          "render_ms": 547
+        },
+        {
+          "index": 1,
+          "start_frame": 16,
+          "frames": 16,
+          "key": "437bb758521040264233988ba80558eefad5d31e354086eb531b33c5001d67e9",
+          "status": "rendered",
+          "file_blake3": "9442d026c5ec1f3f33f497abf025d8e34a0609ec9d5a644825ba51c1180611a9",
+          "render_ms": 501
+        }
+      ],
+      "rendered_frames": 32,
+      "reused_frames": 0,
+      "render_wall_ms": 1048,
+      "concat_ms": 1,
+      "total_ms": 1088,
+      "render_fps": 30.53435114503817,
+      "retries": 0,
+      "gpu_submissions": 32,
+      "textures_allocated": 6,
+      "textures_reused": 96,
+      "sequential": false,
+      "worker_tasks": 2,
+      "sequential_resets": 0,
+      "chunk_restarts": 0,
+      "gpu_recreations": 0,
+      "oom_backoffs": 0,
+      "min_jobs_in_flight": 1,
+      "chunk_dir": "/tmp/ferrocut-motion-repro-20261008/cache/chunks/f22f3505ddfab3ee",
+      "final_blake3": "022a6b4f7ff54eb3129294acb1ca5455d305f5cf2efbb59fa7757dc8e1b245f7",
+      "video_blake3": "aaf49060c78d85f0b71c4cd74a4ea24a47aac2152b850c9f50c67554942530cc"
+    },
+    "motion-showcase": {
+      "engine": "ferrocut-engine 0.0.1 render.v3",
+      "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+      "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+      "output": "/tmp/ferrocut-motion-repro-20261008/motion-showcase.mkv",
+      "total_frames": 32,
+      "chunk_frames": 16,
+      "jobs": 1,
+      "chunks": [
+        {
+          "index": 0,
+          "start_frame": 0,
+          "frames": 16,
+          "key": "ebc73a3ab9b7542dd355924f4e541a3d60b93794dc5dea4c7ff3b2af77c90428",
+          "status": "rendered",
+          "file_blake3": "ec89f7d457dd61c3fa9696da4a5284630341caf8d5b315b044746affbd953eeb",
+          "render_ms": 2383
+        },
+        {
+          "index": 1,
+          "start_frame": 16,
+          "frames": 16,
+          "key": "9b5138dbb475c4ad2b863aaf2b6c1d35fb3b88a0da380d09ea5e5186c8dbe404",
+          "status": "rendered",
+          "file_blake3": "da1b297dae6334c253d363623667337633a94dc988a285004fe18aa501d2fe82",
+          "render_ms": 2241
+        }
+      ],
+      "rendered_frames": 32,
+      "reused_frames": 0,
+      "render_wall_ms": 4625,
+      "concat_ms": 2,
+      "total_ms": 4644,
+      "render_fps": 6.918918918918919,
+      "retries": 0,
+      "gpu_submissions": 32,
+      "textures_allocated": 139,
+      "textures_reused": 346,
+      "sequential": false,
+      "worker_tasks": 2,
+      "sequential_resets": 0,
+      "chunk_restarts": 0,
+      "gpu_recreations": 0,
+      "oom_backoffs": 0,
+      "min_jobs_in_flight": 1,
+      "chunk_dir": "/tmp/ferrocut-motion-repro-20261008/cache/chunks/f22f3505ddfab3ee",
+      "final_blake3": "a3206218901ac710c4447ab4e92d4af4970f8884a9e1e75657c11b23b5af434e",
+      "video_blake3": "a60a9a51c9546453611e7107341a57bfca49bea6d2d681f2ddb728da6d605de0"
+    },
+    "motion-stabilized": {
+      "engine": "ferrocut-engine 0.0.1 render.v3",
+      "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+      "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+      "output": "/tmp/ferrocut-motion-repro-20261008/motion-stabilized.mkv",
+      "total_frames": 32,
+      "chunk_frames": 16,
+      "jobs": 1,
+      "chunks": [
+        {
+          "index": 0,
+          "start_frame": 0,
+          "frames": 16,
+          "key": "aca4195cd708ce7c62ac72ff6ea724479819aacc254521580617310754a531cb",
+          "status": "rendered",
+          "file_blake3": "95c71a17bff8c9a1bdaa40277aa8f102f23b5824d6ccaaf5a5e655595ed870e6",
+          "render_ms": 2442
+        },
+        {
+          "index": 1,
+          "start_frame": 16,
+          "frames": 16,
+          "key": "fc00253af238639ff5740dc68b310755fa906969cd73af8c48d2b34b8fd24f2d",
+          "status": "rendered",
+          "file_blake3": "35244e0552c3b523eddf5471c72a9179ff05c2319bef614cfc423773df7eee27",
+          "render_ms": 2263
+        }
+      ],
+      "rendered_frames": 32,
+      "reused_frames": 0,
+      "render_wall_ms": 4706,
+      "concat_ms": 2,
+      "total_ms": 4724,
+      "render_fps": 6.799830004249894,
+      "retries": 0,
+      "gpu_submissions": 32,
+      "textures_allocated": 172,
+      "textures_reused": 376,
+      "sequential": false,
+      "worker_tasks": 2,
+      "sequential_resets": 0,
+      "chunk_restarts": 0,
+      "gpu_recreations": 0,
+      "oom_backoffs": 0,
+      "min_jobs_in_flight": 1,
+      "chunk_dir": "/tmp/ferrocut-motion-repro-20261008/cache/chunks/f22f3505ddfab3ee",
+      "final_blake3": "f8eac0975ad943c6edf41c8894d00e561e2a8cb66fcd890d4818c25a05e212fe",
+      "video_blake3": "421b4871a386125b98c386fb5080941881010ca990aadb1db3c271d3d1e2e316"
+    },
+    "motion-revised": {
+      "engine": "ferrocut-engine 0.0.1 render.v3",
+      "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+      "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+      "output": "/tmp/ferrocut-motion-repro-20261008/motion-revised.mkv",
+      "total_frames": 32,
+      "chunk_frames": 16,
+      "jobs": 1,
+      "chunks": [
+        {
+          "index": 0,
+          "start_frame": 0,
+          "frames": 16,
+          "key": "270a107048e7acb8c3b7a1a35751fcb100d642549bfa79b158e28c5f17360f97",
+          "status": "rendered",
+          "file_blake3": "f6b0fcb9b926c15e53a1924c87a7713acee91d3cfb0d7cc46d549291b56094ac",
+          "render_ms": 2528
+        },
+        {
+          "index": 1,
+          "start_frame": 16,
+          "frames": 16,
+          "key": "d6b7c7d52c48184cfedf723f81bd93f723e4f8e985dfbbf1434c2d6391ef1391",
+          "status": "rendered",
+          "file_blake3": "21632e940754483c811b596a938e7b861aac9c87890d701d1e7ed67963015400",
+          "render_ms": 2399
+        }
+      ],
+      "rendered_frames": 32,
+      "reused_frames": 0,
+      "render_wall_ms": 4928,
+      "concat_ms": 3,
+      "total_ms": 4948,
+      "render_fps": 6.4935064935064934,
+      "retries": 0,
+      "gpu_submissions": 32,
+      "textures_allocated": 139,
+      "textures_reused": 346,
+      "sequential": false,
+      "worker_tasks": 2,
+      "sequential_resets": 0,
+      "chunk_restarts": 0,
+      "gpu_recreations": 0,
+      "oom_backoffs": 0,
+      "min_jobs_in_flight": 1,
+      "chunk_dir": "/tmp/ferrocut-motion-repro-20261008/cache/chunks/f22f3505ddfab3ee",
+      "final_blake3": "af4d1aa21b1e0f5abe6e4f2e8c43ce6687fdcac0722f6457eeae6dae612a0772",
+      "video_blake3": "a6183b2ab3c0e1be5869309a2e2f0e7831077e558a91c09d794747eb70b9f730"
+    },
+    "motion-repeat": {
+      "engine": "ferrocut-engine 0.0.1 render.v3",
+      "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+      "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+      "output": "/tmp/ferrocut-motion-repro-20261008/motion-repeat.mkv",
+      "total_frames": 32,
+      "chunk_frames": 16,
+      "jobs": 1,
+      "chunks": [
+        {
+          "index": 0,
+          "start_frame": 0,
+          "frames": 16,
+          "key": "270a107048e7acb8c3b7a1a35751fcb100d642549bfa79b158e28c5f17360f97",
+          "status": "reused",
+          "file_blake3": "f6b0fcb9b926c15e53a1924c87a7713acee91d3cfb0d7cc46d549291b56094ac",
+          "render_ms": 0
+        },
+        {
+          "index": 1,
+          "start_frame": 16,
+          "frames": 16,
+          "key": "d6b7c7d52c48184cfedf723f81bd93f723e4f8e985dfbbf1434c2d6391ef1391",
+          "status": "reused",
+          "file_blake3": "21632e940754483c811b596a938e7b861aac9c87890d701d1e7ed67963015400",
+          "render_ms": 0
+        }
+      ],
+      "rendered_frames": 0,
+      "reused_frames": 32,
+      "render_wall_ms": 0,
+      "concat_ms": 2,
+      "total_ms": 19,
+      "render_fps": 0.0,
+      "retries": 0,
+      "gpu_submissions": 0,
+      "textures_allocated": 0,
+      "textures_reused": 0,
+      "sequential": false,
+      "worker_tasks": 0,
+      "sequential_resets": 0,
+      "chunk_restarts": 0,
+      "gpu_recreations": 0,
+      "oom_backoffs": 0,
+      "min_jobs_in_flight": 1,
+      "chunk_dir": "/tmp/ferrocut-motion-repro-20261008/cache/chunks/f22f3505ddfab3ee",
+      "final_blake3": "af4d1aa21b1e0f5abe6e4f2e8c43ce6687fdcac0722f6457eeae6dae612a0772",
+      "video_blake3": "a6183b2ab3c0e1be5869309a2e2f0e7831077e558a91c09d794747eb70b9f730"
+    },
+    "motion-undo": {
+      "engine": "ferrocut-engine 0.0.1 render.v3",
+      "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+      "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+      "output": "/tmp/ferrocut-motion-repro-20261008/motion-undo.mkv",
+      "total_frames": 32,
+      "chunk_frames": 16,
+      "jobs": 1,
+      "chunks": [
+        {
+          "index": 0,
+          "start_frame": 0,
+          "frames": 16,
+          "key": "ebc73a3ab9b7542dd355924f4e541a3d60b93794dc5dea4c7ff3b2af77c90428",
+          "status": "reused",
+          "file_blake3": "ec89f7d457dd61c3fa9696da4a5284630341caf8d5b315b044746affbd953eeb",
+          "render_ms": 0
+        },
+        {
+          "index": 1,
+          "start_frame": 16,
+          "frames": 16,
+          "key": "9b5138dbb475c4ad2b863aaf2b6c1d35fb3b88a0da380d09ea5e5186c8dbe404",
+          "status": "reused",
+          "file_blake3": "da1b297dae6334c253d363623667337633a94dc988a285004fe18aa501d2fe82",
+          "render_ms": 0
+        }
+      ],
+      "rendered_frames": 0,
+      "reused_frames": 32,
+      "render_wall_ms": 0,
+      "concat_ms": 3,
+      "total_ms": 19,
+      "render_fps": 0.0,
+      "retries": 0,
+      "gpu_submissions": 0,
+      "textures_allocated": 0,
+      "textures_reused": 0,
+      "sequential": false,
+      "worker_tasks": 0,
+      "sequential_resets": 0,
+      "chunk_restarts": 0,
+      "gpu_recreations": 0,
+      "oom_backoffs": 0,
+      "min_jobs_in_flight": 1,
+      "chunk_dir": "/tmp/ferrocut-motion-repro-20261008/cache/chunks/f22f3505ddfab3ee",
+      "final_blake3": "a3206218901ac710c4447ab4e92d4af4970f8884a9e1e75657c11b23b5af434e",
+      "video_blake3": "a60a9a51c9546453611e7107341a57bfca49bea6d2d681f2ddb728da6d605de0"
+    }
+  },
+  "inspection": {
+    "reviewer": "Codex root; actual retained image inspection",
+    "artifacts": [
+      "motion-revision-compare.png",
+      "stabilized-start_0.000s.png",
+      "stabilized-end_1.938s.png"
+    ],
+    "findings": "At 1 second title content, repeater count and mask feather revise through ordinary native edits. The overlay remains attached to the moving target. The stabilized target holds position at the inspected start/end frames with exposed borders. Text stays legible within its bounds.",
+    "scope": "Synthetic technical integration; no real-footage tracking accuracy or Adobe output-equivalence claim",
+    "external_qa": "Installed FFmpeg skill extracted comparison/still frames and overlaid timecodes; native pictures are rendered by Ferrocut"
+  },
+  "verification": {
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "ferrocut-engine",
+      "-p",
+      "ferrocut-mcp",
+      "-p",
+      "ferrocut-core",
+      "-p",
+      "ferrocut-types",
+      "--",
+      "--test-threads=1"
+    ],
+    "completed": true,
+    "target_reports": 60,
+    "passed": 417,
+    "failed": 0,
+    "ignored": 1,
+    "scope": "Selected four packages; not whole workspace; focused test totals overlap",
+    "hardware_focus": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "ferrocut-engine",
+        "--test",
+        "masks",
+        "--test",
+        "vector_instances",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "passed": 35,
+      "failed": 0,
+      "log": "gpu-masks-vectors.log",
+      "adapters": [
+        "NVIDIA GeForce RTX 5090 Laptop GPU / Vulkan",
+        "llvmpipe / Vulkan"
+      ],
+      "scope": "18 masks and the earlier 17 vector-group tests. Mask GPU pixels and vector uploads exercised both adapters; vector-group timeline checks used llvmpipe. Two later independent CPU geometry tests are covered by the final regression. No bitwise cross-adapter parity claim."
+    },
+    "clippy": {
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--offline",
+        "-p",
+        "ferrocut-engine",
+        "-p",
+        "ferrocut-mcp",
+        "-p",
+        "ferrocut-core",
+        "-p",
+        "ferrocut-types",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "log": "all-targets-clippy.log"
+    },
+    "format": {
+      "command": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "--check",
+        "<61 changed/untracked project Rust files>"
+      ],
+      "exit_code": 0,
+      "log": "format-check.log"
+    },
+    "ledger": {
+      "check": "python3 scripts/parity-inventory.py check",
+      "self_test": "python3 scripts/parity-inventory.py self-test",
+      "requirements": 456,
+      "self_test_cases": 24,
+      "logs": [
+        "ledger-check.log",
+        "ledger-self-test.log"
+      ]
+    },
+    "vendor": {
+      "command": [
+        "python3",
+        "scripts/storytold-vendor.py",
+        "check"
+      ],
+      "log": "vendor-check.log"
+    },
+    "limitations": [
+      "Previously recorded color-crate parallel GPU test crash and Chromium sandbox issue remain outside this scope.",
+      "Tracking is forward seeded point analysis; attach accepts exact constant positive/reverse clip speeds. No planar solve, two-point rotation/scale, tracked mask geometry, crop/fill, nonlinear retime inversion or real-footage drift validation.",
+      "Mask feather is isotropic; effect-specific masks and isolated vector-group opacity remain absent."
+    ]
+  },
+  "input_files": [
+    {
+      "path": "examples/motion-source.json",
+      "bytes": 18884,
+      "sha256": "17383d7ba8aa425d51c650ad815869de55fee0959f94a89d95b7c3a2495c814c"
+    },
+    {
+      "path": "examples/motion-showcase.json",
+      "bytes": 8029,
+      "sha256": "b504db9eb100d5a450962bda8ce637fadd404e2e5428501deb684340c8a5175c"
+    },
+    {
+      "path": "examples/motion-tracking.settings",
+      "bytes": 351,
+      "sha256": "9341dc87f34ba73853e0646c531492743981b789382bde72ef04efc470e60110"
+    },
+    {
+      "path": "examples/motion-tracking.options",
+      "bytes": 99,
+      "sha256": "87de8b553e01d0a902e5b7fe4e76127a1d1e0386f95edc809365e9e294675ac3"
+    },
+    {
+      "path": "examples/motion-revise.ops",
+      "bytes": 497,
+      "sha256": "ae2d9e5c8d81fe178eb3ea5c6e59850df56c343a0b9fd5ae8011f4af9e8b80e4"
+    },
+    {
+      "path": "scripts/motion-showcase.py",
+      "bytes": 6649,
+      "sha256": "b4b384396f1fc8c6691e103a1a874dd7cf15330ff1c81f106733614fa1aa6d56"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+      "bytes": 512672,
+      "sha256": "89c3c497f618fdaa0b2d1e98fef93582f28c71debd2c4a8cdf41f190ced2909d"
+    },
+    {
+      "path": "vendor/storytold/manifest.json",
+      "bytes": 162211,
+      "sha256": "9518fce046455ef7fde7783faf889d295a55597ca36d44fd6249ecef7982668a"
+    },
+    {
+      "path": "Cargo.toml",
+      "bytes": 433,
+      "sha256": "d8fc114bb2c9f9339902bd01ae3379027a1f6f575ae95d52275253810b440ae8"
+    },
+    {
+      "path": "Cargo.lock",
+      "bytes": 81683,
+      "sha256": "109ca0577100af262840a8b8f6cb070f5b8bd32d78656df707ecab3b1635b54a"
+    }
+  ],
+  "project_source_fingerprint": {
+    "algorithm": "SHA-256 over compact sorted-key JSON of project_source_files",
+    "sha256": "3bf46bcf7f622083d1254b39d2378117b5ff5290e100e3c9dbb6c6c049f6c4c7",
+    "excludes": "vendor source, generated target files and docs"
+  },
+  "project_source_files": [
+    {
+      "path": "crates/ferrocut-audio/Cargo.toml",
+      "bytes": 586,
+      "sha256": "b07cef48647679cc069e343a66def9c5a8c6b7356c98d1d2ef9f89354ddcc2f1"
+    },
+    {
+      "path": "crates/ferrocut-audio/src/analysis.rs",
+      "bytes": 5769,
+      "sha256": "f744db1f356aba00cb87ccfe4aab15f6073e94d120a59259d304b472b1fd9916"
+    },
+    {
+      "path": "crates/ferrocut-audio/src/dynamics.rs",
+      "bytes": 11281,
+      "sha256": "a2c07cc35dcdfe61cbf408beecbcc52e3c3fa9f80874c4ac1bdf4547799a4fb8"
+    },
+    {
+      "path": "crates/ferrocut-audio/src/effects.rs",
+      "bytes": 20836,
+      "sha256": "ed99db4380f43aec98edc5f8d58fb10d7e06965a2cf56d308d9dd2b46f0c46c6"
+    },
+    {
+      "path": "crates/ferrocut-audio/src/lib.rs",
+      "bytes": 2915,
+      "sha256": "be2e69609a6b026f5ba5a3e240a8d7f8379aefa53b2df53a1af32679b78eeba0"
+    },
+    {
+      "path": "crates/ferrocut-audio/src/loudness.rs",
+      "bytes": 1159,
+      "sha256": "956f049715a0a0b83a8ce6ffdd395b144dc3abb54461206ec629b3a3b9ac67af"
+    },
+    {
+      "path": "crates/ferrocut-audio/src/mix.rs",
+      "bytes": 8771,
+      "sha256": "10e971f4ad517281892e3052f3534099e5a6b81f2efa1d57ee9379ae932fa7f9"
+    },
+    {
+      "path": "crates/ferrocut-audio/src/program.rs",
+      "bytes": 7314,
+      "sha256": "209b874c6c7f7a91adf9441e56cb2d7c1affc4a80484d830b319ca0317b2b874"
+    },
+    {
+      "path": "crates/ferrocut-audio/src/retime.rs",
+      "bytes": 11860,
+      "sha256": "63503ff27aef14022d555eaafacbe18535a7e0beff6cde7cc0c128cc673a5bdd"
+    },
+    {
+      "path": "crates/ferrocut-audio/src/stream.rs",
+      "bytes": 5260,
+      "sha256": "46433ff67a62f6c30d6956395cd34f5f60adc2e5efac6c5ed91091e063a6dae4"
+    },
+    {
+      "path": "crates/ferrocut-audio/tests/mix.rs",
+      "bytes": 15628,
+      "sha256": "765500175e4194e10165dc9f9f156be19ae8dd72595498556e8c45e1b178b233"
+    },
+    {
+      "path": "crates/ferrocut-build/Cargo.toml",
+      "bytes": 349,
+      "sha256": "1d6a10d073d06d0c797953f1fd41a2de70ecfebe7701d9102475a09b7c7e1bad"
+    },
+    {
+      "path": "crates/ferrocut-build/src/lib.rs",
+      "bytes": 8551,
+      "sha256": "7ece1eae6168fc6184d49a7f0ecf822ec710a130c72c7dcbded870fa61c24f32"
+    },
+    {
+      "path": "crates/ferrocut-color/Cargo.toml",
+      "bytes": 658,
+      "sha256": "39b50830c4bc6f55a8463388f0b799acd7c48f46d4fd7238a7e5badcb4279536"
+    },
+    {
+      "path": "crates/ferrocut-color/build.rs",
+      "bytes": 2801,
+      "sha256": "1d20d82372d23bc42e079045c7255793db71e99be93fc21bb3c55f7d1e6dec2b"
+    },
+    {
+      "path": "crates/ferrocut-color/src/ffi.rs",
+      "bytes": 3700,
+      "sha256": "1c00e54116410e7af8351740112a3ea4b76f24b2aa29c83c9572dfb484b947ee"
+    },
+    {
+      "path": "crates/ferrocut-color/src/glsl.rs",
+      "bytes": 7074,
+      "sha256": "4a1719fc728d45a855c8e53c54f1438a727b8e928c3abcb779a73640fe1964a8"
+    },
+    {
+      "path": "crates/ferrocut-color/src/gpu.rs",
+      "bytes": 11326,
+      "sha256": "4563927e768cfc2400d1f1794b22ccadbdfaa1b56595a1c6a9895bd7d858c73e"
+    },
+    {
+      "path": "crates/ferrocut-color/src/lib.rs",
+      "bytes": 1058,
+      "sha256": "2a4ed8c38fe23078880ab4a82c116fb5f268364fb8afaf0aa14a5ea95c266623"
+    },
+    {
+      "path": "crates/ferrocut-color/src/node.rs",
+      "bytes": 7126,
+      "sha256": "e147085fbd33aeec4f2a43d8da1acc364593429babae7d09fa8e1622b325b155"
+    },
+    {
+      "path": "crates/ferrocut-color/src/ocio.rs",
+      "bytes": 10465,
+      "sha256": "4935fba6830c3eeb3ffe822d8bfc168bb508abf0ceed9dcc7759da344992d482"
+    },
+    {
+      "path": "crates/ferrocut-color/tests/colorspace_vs_ocio.rs",
+      "bytes": 15242,
+      "sha256": "5c11430acb005e9c2537965ecd6fb31f7caedacd5474f810c937efc13444cda6"
+    },
+    {
+      "path": "crates/ferrocut-color/tests/gpu_vs_cpu.rs",
+      "bytes": 14010,
+      "sha256": "8124b8f6682c12c4ea40744b746ae9dc62a13679f99bf290ffe79fd16593bceb"
+    },
+    {
+      "path": "crates/ferrocut-color/tests/software_vs_hardware.rs",
+      "bytes": 11130,
+      "sha256": "dabd7adf715f5f6d0981d5e92cabfcc9e6cd0736c86b6f60fca21f1c6aa257b6"
+    },
+    {
+      "path": "crates/ferrocut-colorspace/Cargo.toml",
+      "bytes": 437,
+      "sha256": "6c7c62a2cd19cfcc203b96258ca3d78e640ea86105960e56fbbc778f7957b96c"
+    },
+    {
+      "path": "crates/ferrocut-colorspace/src/lib.rs",
+      "bytes": 12776,
+      "sha256": "e86f64daa7b0cd6669f62d3585392f142b0cc870ecf6fff6f2514edc85419d31"
+    },
+    {
+      "path": "crates/ferrocut-colorspace/src/named.rs",
+      "bytes": 8173,
+      "sha256": "669b190a9907f2a81b3f3b4f07e8b678c9a45613cc43a10b3e6bd58ae1e503bc"
+    },
+    {
+      "path": "crates/ferrocut-colorspace/src/pixels.rs",
+      "bytes": 4681,
+      "sha256": "967b04c4d1d839db58f8051d48f4934188f20d1af6252c78ef2a0b0d0df96a71"
+    },
+    {
+      "path": "crates/ferrocut-colorspace/src/wgsl.rs",
+      "bytes": 4997,
+      "sha256": "54dbb82e9cd8cee99568cf703c1bf234eff282815d6db8a6d322cc354eea8700"
+    },
+    {
+      "path": "crates/ferrocut-core/Cargo.toml",
+      "bytes": 421,
+      "sha256": "aa2ac8c6835d4011b91a6a70b76d923d369bb740171c33b9580b43b2ec0aeee8"
+    },
+    {
+      "path": "crates/ferrocut-core/src/effect.rs",
+      "bytes": 16416,
+      "sha256": "66e31b61805564fb8c508dd5eb4381b96ffc106a2af78e78660f5811c2fb9a4a"
+    },
+    {
+      "path": "crates/ferrocut-core/src/frame.rs",
+      "bytes": 7349,
+      "sha256": "1e8efe87eb49ae3fff4a841b0104710fb2908832281dc543749e36eb43825c96"
+    },
+    {
+      "path": "crates/ferrocut-core/src/gpu.rs",
+      "bytes": 32764,
+      "sha256": "8b0778523252adff613da54bcaf8b2cdf22fcd72b40ddbfbe9f7da14c0763930"
+    },
+    {
+      "path": "crates/ferrocut-core/src/lib.rs",
+      "bytes": 795,
+      "sha256": "89b6e7aa790202640287a43861e90e51cc662bf247d10d3965f64f840fe8fc75"
+    },
+    {
+      "path": "crates/ferrocut-core/src/node.rs",
+      "bytes": 9126,
+      "sha256": "8e9984d3c1b06cb2c29643aa073f62dd6ba42a1a6ca8380ed312166c69746fa8"
+    },
+    {
+      "path": "crates/ferrocut-core/src/pool.rs",
+      "bytes": 9679,
+      "sha256": "a1216732ea7df29fc28023933fdc6ddfd94563968e7f73349bef64b452c3fe6d"
+    },
+    {
+      "path": "crates/ferrocut-core/tests/alloc_scope.rs",
+      "bytes": 3879,
+      "sha256": "6c3914be52e532976f803c129ad984f3fc87a9144447cade6e0a6f6c7a9515a1"
+    },
+    {
+      "path": "crates/ferrocut-core/tests/upload_pool.rs",
+      "bytes": 3846,
+      "sha256": "270ef212b774d1e323018adc551c516f736caf4a434f5c6a7f8daa80f7e51e5f"
+    },
+    {
+      "path": "crates/ferrocut-deliver/Cargo.toml",
+      "bytes": 987,
+      "sha256": "458d8256851d67ed26b5fb8f0f4a67a86b6bd4a447f958f35584e44d94a21174"
+    },
+    {
+      "path": "crates/ferrocut-deliver/build.rs",
+      "bytes": 4863,
+      "sha256": "1d8567a8752da4de89a5469186f53903ab668d670ef9537c71887d72b48ee8b9"
+    },
+    {
+      "path": "crates/ferrocut-deliver/src/bin/ferrocut-deliver.rs",
+      "bytes": 8021,
+      "sha256": "6926f14952c23e7933f78edd99a97e08a529dfbc4efc5cf68b6bf6462c22c6fa"
+    },
+    {
+      "path": "crates/ferrocut-deliver/src/color.rs",
+      "bytes": 8419,
+      "sha256": "c36452669ed226b7102096d2d65123eac4a203c1f4e476eb87c51d45668343c3"
+    },
+    {
+      "path": "crates/ferrocut-deliver/src/deliver.rs",
+      "bytes": 18360,
+      "sha256": "c2ed0cfdc561d87acb56499887d50a86f5ed3df2c33a3c3ec75c0880318a6ab1"
+    },
+    {
+      "path": "crates/ferrocut-deliver/src/encoder.rs",
+      "bytes": 7011,
+      "sha256": "bee86b2936d22a529100386e2b9c4f1835edc961f8c249d56051fe0e5d64a98b"
+    },
+    {
+      "path": "crates/ferrocut-deliver/src/h264.rs",
+      "bytes": 4234,
+      "sha256": "e263763a86fcd1b211c653c1b169b3b851c2fb72f0e7676bd231caff9c0e52b6"
+    },
+    {
+      "path": "crates/ferrocut-deliver/src/lib.rs",
+      "bytes": 915,
+      "sha256": "acb6d83439ed4374d148eeb5052c063f8a5bc01a3c1dc11b15220cf78df8a60c"
+    },
+    {
+      "path": "crates/ferrocut-deliver/src/media.rs",
+      "bytes": 11148,
+      "sha256": "4bae520b752f25496ebf81f79679ef6c18a50ffe1fffe11b87c9446cf8a5de0b"
+    },
+    {
+      "path": "crates/ferrocut-deliver/src/mux.rs",
+      "bytes": 12452,
+      "sha256": "a61c09fd761d3001516d7f4b104113daaf3258bb87945963292017e37ac02864"
+    },
+    {
+      "path": "crates/ferrocut-deliver/src/openh264.rs",
+      "bytes": 31796,
+      "sha256": "a46088381e0aaaef036ec5498a497cc2f24491ad08459ad603c93055fea2de11"
+    },
+    {
+      "path": "crates/ferrocut-deliver/tests/deliver.rs",
+      "bytes": 20295,
+      "sha256": "2a00337fdfe4e53167c51d5d737eaaf07558f7304720201827c11c23996e7cf6"
+    },
+    {
+      "path": "crates/ferrocut-engine/Cargo.toml",
+      "bytes": 3202,
+      "sha256": "5f20af2d95a6e48c67d67f6881322e312177bc067f5e6637de33f1503fe8800e"
+    },
+    {
+      "path": "crates/ferrocut-engine/build.rs",
+      "bytes": 798,
+      "sha256": "3ebc80dd9bbc48432fae0432251190165fa1c26c0a531eb49fa06065f53f51ae"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/audio.rs",
+      "bytes": 20815,
+      "sha256": "249fd90a17d393ce6e88bbe5a3f07d210e8206fc615f0fea9073889f0e1f4ccc"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/audio_fx.rs",
+      "bytes": 10297,
+      "sha256": "e5aaadfed2e5e7925498e6714cc6b94cc40f5003732436ed90c95c35985c6d62"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/blend.rs",
+      "bytes": 9875,
+      "sha256": "604a2ed264284515ae14fc6ff2ff11016807910d699740120ffe6189b29f1a16"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/captions.rs",
+      "bytes": 12902,
+      "sha256": "0a29e1f9d85227bd7d4c3cd3f454c758c37ef2a788a07a873c126dc74139cb59"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/comp.rs",
+      "bytes": 5820,
+      "sha256": "cae084e555fcc70e335ea14bd68606759c41ef399faa960c3b905ff92ce21e2b"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/compile.rs",
+      "bytes": 12260,
+      "sha256": "54726d9883db65a43d15ccbf7abf4657be2e33a3ac66db428c1df7047948aa64"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/compositor.rs",
+      "bytes": 34840,
+      "sha256": "301f6052618dd1564ca3383cc113f2f025895c9057c732caf04bc064ecd83d24"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/deliver.rs",
+      "bytes": 6482,
+      "sha256": "879af317c7f40f687fdf3b99484f752352f9ed82fd77e393d497780e54c11176"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/diff.rs",
+      "bytes": 21373,
+      "sha256": "898aa20ea1348ca36fdbde07f54d858f976ebe2af380c1ec06e10e33bffa0f31"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/edit.rs",
+      "bytes": 104748,
+      "sha256": "3d9683c8cc438f119bd63e770e33fb84f88b270bd702fdd621fc1be686839b22"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/expr.rs",
+      "bytes": 51764,
+      "sha256": "7f9af6d3a88fc97bd6ee55c8a446a9a2caba89833d6cf586ceca994ddd331e62"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/fx/effectcraft.rs",
+      "bytes": 53317,
+      "sha256": "08938b8908cfce3957943dad534a088f84d668341291dcaee4be582cd2564cd9"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/fx/finishing.rs",
+      "bytes": 13500,
+      "sha256": "0e3f4bbea3c28750be9ca033b987512f43af679f4c33ce44d01ce1d0ac76265e"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/fx/kernels.rs",
+      "bytes": 19613,
+      "sha256": "547a7edae87121efbb08975ec8811b587326e09dd94bddc406ac4906531f30b2"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/fx/mod.rs",
+      "bytes": 33605,
+      "sha256": "62050a7655ee0fbce4b481ca0154655bc092cdd94a3a05dbbf650d6d218ad3f5"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/fx/native.rs",
+      "bytes": 23348,
+      "sha256": "97fe8e6e7163190cb76059d98dcbe9759ac06b2c9ee3eaf7b7bdfd454843d3a6"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/generator.rs",
+      "bytes": 20458,
+      "sha256": "fcdbd732ba06f2aced424a3ea873b45fbc68cba98fab0bbf0fe77252e5b00bd6"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/graph.rs",
+      "bytes": 5859,
+      "sha256": "f4661d27ee082586619cc5219f5f9e4810adc0f9b0c525374ab98dde2d3e4f24"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/index/mod.rs",
+      "bytes": 12383,
+      "sha256": "313995444cfca146c4daae48e5b492542f21ca381078773885d3479e44b0a8a3"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/index/search.rs",
+      "bytes": 4672,
+      "sha256": "c3d6c7892c989e0f9bc232142773dfa2bcc888c777352e35fc1eed24cdd3a6d1"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/index/shots.rs",
+      "bytes": 5585,
+      "sha256": "7e19c0393ae0ada1caf2c57fa65e9ac374f8e7a133ddfdde73910d37df61f234"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/index/whisper.rs",
+      "bytes": 8600,
+      "sha256": "f6b945fb3f2ef31cf08181a050048087195c3345ab07ba318f655effde78f36b"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/interchange.rs",
+      "bytes": 95623,
+      "sha256": "e1d848d684aa03532039407f51f32ba57c288e8af59d8ba95632930aa4fcaeaa"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/interchange_io.rs",
+      "bytes": 13359,
+      "sha256": "d52dd157b1b9fad42aa07a76c4a35c42555692a8811dbb1b45e8d9d222e400d0"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/layer3d.rs",
+      "bytes": 27426,
+      "sha256": "c5589835d2cda9a12c4e925c2a00b07aa7cfdf6808872dea1c9391376f1a80e6"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/lib.rs",
+      "bytes": 978,
+      "sha256": "796ebff7e0647ba0a2a9188415d60c757dabbd69f98c47e2920fdded2be307ff"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/main.rs",
+      "bytes": 43952,
+      "sha256": "b06ec1c9d01ddffbbdd4a0eb7338f99f6c2416db0e84ffc15afc7aa922feb8e3"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/markers.rs",
+      "bytes": 7297,
+      "sha256": "cf9eec3c5d5b9975f2fb78180e96555a4b7e90b8106bfd64230e3be56239ba43"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/mask_node.rs",
+      "bytes": 3431,
+      "sha256": "44a58a5c297b5a8052892a2ac542cca33ddece619a1133a04377a0df42730573"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/masks.rs",
+      "bytes": 37734,
+      "sha256": "067fa9ed9e5471b1b92c76724bf029826bab8f20fe020e12d86c7fdb62d93e3f"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/media/audio.rs",
+      "bytes": 11293,
+      "sha256": "9c123f008b46985410d4ef04f16cbfb9ef050310cafe8eb75880a1013203c363"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/media/concat.rs",
+      "bytes": 8847,
+      "sha256": "1e542b9e328a68b07949d319815048dc074c39c5da7e7f720c90f5b52a13e4be"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/media/decode.rs",
+      "bytes": 7886,
+      "sha256": "5026ca5e04e31e9c96d006931284d70712f4527295978643e1c707787a01d2a4"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/media/encode.rs",
+      "bytes": 5650,
+      "sha256": "f54f9a8cc09a1065780a66c22cdc486f371ce9eebf099b1b8b1404dfecd8ab13"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/media/mod.rs",
+      "bytes": 2626,
+      "sha256": "d44a9546cf96bc6158c15f291688af46f40f59585227ae21eaba18fb43af5de3"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/media/probe.rs",
+      "bytes": 5567,
+      "sha256": "78adae5342627e97eec0cfe7b32730ff4fa98bd242f3606d611e10a981019a26"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/media/proxy.rs",
+      "bytes": 16798,
+      "sha256": "4542c5ea7496c245cdd1f1b3e002b03b67fd54a523a6b53b9ea241fdc7eae75e"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/mixdown.rs",
+      "bytes": 39507,
+      "sha256": "e560eeaed906739af52bc7ad69da4f56728e3921d6d856aaa2f0e8676a7cbeef"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/nodes.rs",
+      "bytes": 32522,
+      "sha256": "d81cfd630229553e5f55eeaf2507d72c1965c3825b7d2e4d0bc8b1dd27125961"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/params.rs",
+      "bytes": 47038,
+      "sha256": "3b192b6b291340717c6b011528f9a7707e7802d0748599f7b8cea9318839caed"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/perceive.rs",
+      "bytes": 20590,
+      "sha256": "ccdf05741d22a3da234b950771efb908c29eb2d92b6965e0dd9ac6c16460e860"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/project.rs",
+      "bytes": 25530,
+      "sha256": "aee41c4c75111d2f5814f5d4baec0f4328d21b39f956875e65e2bd37b6ee5e12"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/render.rs",
+      "bytes": 40674,
+      "sha256": "86808fa5d9c1659c5a5c580b473d5a880aeaca688b6a64bd14a49426c94312ac"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/retime.rs",
+      "bytes": 15753,
+      "sha256": "b6874795331b3428aef5a546a3725a33e1f526ced8024e5ecbc234f66b54c8b1"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/scopes.rs",
+      "bytes": 6668,
+      "sha256": "b70b32cc94ceaa2afd34311ebd1dcdee866e3c712dd5c85df82078e2173a04ba"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/storytold.rs",
+      "bytes": 7303,
+      "sha256": "b3d7e0734a5c28526a7d31e7f39694494df373d66d8a6724a721fe894118f6d1"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/text.rs",
+      "bytes": 40278,
+      "sha256": "468ed8b90cbc1e6d59b67a9cccfff0afcda40e0df7a2a56e044753bd905bea98"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/timeline.rs",
+      "bytes": 42354,
+      "sha256": "b57e416fbdbee6f5c56e918d9dd1123f127e39cc3087bf530c47bafebff37917"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/tracking.rs",
+      "bytes": 34983,
+      "sha256": "e420d853b3959dfdfa9f0d46ee38009504e967ff05944c59ac30cea691f82bbe"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/tracking_io.rs",
+      "bytes": 12296,
+      "sha256": "2d838eed4e8131768baef77f8bc3adc045c44f87bf4b3887fdb4ec6bd35a6f3c"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/transform.rs",
+      "bytes": 21455,
+      "sha256": "15df037133edfe0fbf19a2859a98f7c06f0317e1b3c5c2fb42d9538bd6ba6324"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/vector.rs",
+      "bytes": 68022,
+      "sha256": "4064b8f0a2bf12369d522d7da4659e43afc8f1755b12a9d4fb6bc050e7e9de7c"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/vector_instances.rs",
+      "bytes": 27852,
+      "sha256": "2ac48ca710746b4db88ec998b9bbfaf0d3b226ed9cd4de4c57c5b3828d59292b"
+    },
+    {
+      "path": "crates/ferrocut-engine/src/vram.rs",
+      "bytes": 6449,
+      "sha256": "060c95ec68f9e50ff948887514402dcd5eb5344545603d948688e504c3c4fe7b"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/audio.rs",
+      "bytes": 10399,
+      "sha256": "d467222d6c2268a9a292525c02c06513342274e1b7e77748f40daffa4b51c50f"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/blend.rs",
+      "bytes": 12066,
+      "sha256": "8d3bdaed88a8697f2a289cf93be53945a80df026503818debf3ca65d2ef18606"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/build_ops.rs",
+      "bytes": 10077,
+      "sha256": "d8791ee37876b084767f113321c58ecae94fb6613436b9c8dc4b0c8625429960"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/captions.rs",
+      "bytes": 8856,
+      "sha256": "187641112b30a15ae7178314e6430e3679090ca0fc9fbe0fe59e1a78d6a26566"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/deliver.rs",
+      "bytes": 6592,
+      "sha256": "0c46cb59c433d70fe07a9428f6b6262f48b0a4970fbdec6b95923c43ea32fd5c"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/e2e.rs",
+      "bytes": 23447,
+      "sha256": "68d403e9f46139f701bbfe23f40a36f06e821853cc2d75fc785303cedff4c647"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/edit.rs",
+      "bytes": 14023,
+      "sha256": "026b4e3fcabe52d2b51c1fea0c8584cb21150302716f1da41a98a23c01c1baca"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/edit_render.rs",
+      "bytes": 5753,
+      "sha256": "344db63c7e4d12ebff1d66844cc2084bcd167619fff677010762a847010a92a9"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/effectcraft.rs",
+      "bytes": 43819,
+      "sha256": "d0638f589bf285ca100546bf74586e5d19d565436e00ed1f313e5a6bdb7693f1"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/effects.rs",
+      "bytes": 30646,
+      "sha256": "247941eb231fd5ca88971ea14c02a97dd73a54abdbad74cf3a696c1785334315"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/expressions.rs",
+      "bytes": 14871,
+      "sha256": "cea2d81be873aae8dc1ce4303421a6e303e6bc27cb6a8e82378e1f5168fd1f53"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/finishing.rs",
+      "bytes": 24969,
+      "sha256": "cd1c73f0e3b6dd89e5265dbe19b09f825201a39b52ba85f420547931c6d5975b"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/frames.rs",
+      "bytes": 11029,
+      "sha256": "a77229675f4ba1a70b261b164dd662c57b2ad2b29d92af5e46fe478a24321ba5"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/generator.rs",
+      "bytes": 13055,
+      "sha256": "17817d2ec95cee6edcb8eaca7de8769aec03fcf5f38ff4c890cb5f7a273d5273"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/index.rs",
+      "bytes": 11909,
+      "sha256": "9b300896f98bd8f8ca7c912e6b89ff886a73944750cea542ca0aae9542465b24"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/interchange.rs",
+      "bytes": 25404,
+      "sha256": "81503576090882e53cef9390e6bd9fa24cc324bbf932f361d16cb4aec99890bb"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/journal.rs",
+      "bytes": 14685,
+      "sha256": "906e915af58d81a0382c94fc85048c5d563d1d4b5e8cbd2ab55116dbd9c12650"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/layer3d.rs",
+      "bytes": 19892,
+      "sha256": "19600addf43c6278c35b62efd9a41e57bb60bc79170c95583259249ad53352de"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/markers.rs",
+      "bytes": 11694,
+      "sha256": "8d24857e7720ecb267e6cff5026fa2788d7ac41d35680dbe9c73f95f2197ede1"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/masks.rs",
+      "bytes": 33747,
+      "sha256": "64b2a1228b28ccead0963153c9e10e44aef1cc0da5ca28137a6d414d3084ea48"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/mixdown.rs",
+      "bytes": 16565,
+      "sha256": "834dd20e00378196883f8524ced8d7ec048e8e600fff469dc5112e5ab218a5dd"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/native_text_timeline.rs",
+      "bytes": 16339,
+      "sha256": "49113491bf25cf1cae2a417069a30bf5aecacffe47489c256149cd55fe552e2f"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/nest.rs",
+      "bytes": 13077,
+      "sha256": "ac2f066c11cccb3648f371fc273d996a354a2ac0bb3366c82334e997107f3b7b"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/perceive.rs",
+      "bytes": 14139,
+      "sha256": "7b2a27aeb7f374d14854689a2757ff733177d9be988b18d6792d757f6ba5895c"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/proxy.rs",
+      "bytes": 7933,
+      "sha256": "f1e608eb9ff4a4f49ca3f590005e25da21653cd8b73ed744eb754821ece3561c"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/retime.rs",
+      "bytes": 11605,
+      "sha256": "1e185f047eace11e12f3b86eb8c102245c7c8ecd1dbde50d57227a512eaba254"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/source_expressions.rs",
+      "bytes": 4317,
+      "sha256": "acd341902744126b39dfdb1b1adaaca94633afc8972306b1967b833110aae325"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/storytold_controls.rs",
+      "bytes": 9569,
+      "sha256": "78a7de21197b018b473e8dea79c8f81b51327ace6bc84200869d13e851a3f7d8"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/storytold_scopes.rs",
+      "bytes": 4470,
+      "sha256": "6501fe93e0243ed9a1f30c1cd5ee767ed982da7f696bd037c64b925c9f9d1e9d"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/streaming.rs",
+      "bytes": 4778,
+      "sha256": "6ed16124b78f16b326320f6e9c64678b8107995bfc7bad05ef5141e2a832c20b"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/text.rs",
+      "bytes": 17934,
+      "sha256": "eb4403d874e5e8785a7cc4f850059cd6e1e09871dcf5c0bebe1d701aee9ded34"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/time_rounding.rs",
+      "bytes": 4949,
+      "sha256": "e1aa9d5979d1377119fdb6bc1cb8b2eafddf5467711087cc2db8396d9affe1d7"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/tracking.rs",
+      "bytes": 17383,
+      "sha256": "e984b7c96017d87db5ad6c7dddf6d0ac48ad50c9fef5d7bc498e27f51025ebfa"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/transform.rs",
+      "bytes": 11429,
+      "sha256": "5ad64c6c7c2780119f0918caa9de19c48ec0c056bb99c03a2eb2ac30c1bbb806"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/transform_mip.rs",
+      "bytes": 5489,
+      "sha256": "b3eefdea94aaf430bbf8166cc81215f801f5d7cc07a96e95bb85cabad8dc8941"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/vector.rs",
+      "bytes": 22256,
+      "sha256": "3c339c5648d172ae8432f93c7517d6a9f80a8ce856a8ce4d04855ddbcbfac928"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/vector_instances.rs",
+      "bytes": 28198,
+      "sha256": "ce0f096236e4a195650a185611d4d009172f5332fc7b41709c7d37a0d4c8085d"
+    },
+    {
+      "path": "crates/ferrocut-engine/tests/vector_operators.rs",
+      "bytes": 24808,
+      "sha256": "198874e18ba6315447ecff0d1012c3d7bc2e18a94f1c19d5158bd34e9d9e8462"
+    },
+    {
+      "path": "crates/ferrocut-html/Cargo.toml",
+      "bytes": 585,
+      "sha256": "da247a52987f7a3eae9c4b9c3a75c3ef46f258deaadd5d9befbb49dcea2aaf0a"
+    },
+    {
+      "path": "crates/ferrocut-html/build.rs",
+      "bytes": 2030,
+      "sha256": "9cb6337a0c0c493649ac9a211ae7a81aa597687d1a44d87a1f5fabb29bca081b"
+    },
+    {
+      "path": "crates/ferrocut-html/src/adapter.rs",
+      "bytes": 9849,
+      "sha256": "6fa7360dce1e5cb56b1587027b76fc2e9c2f6e27f8b38fb787688b1b66b05348"
+    },
+    {
+      "path": "crates/ferrocut-html/src/color.rs",
+      "bytes": 4271,
+      "sha256": "553d2fda9f61a4f503d10e4f98b01170045f35b70e7d7726de725716b2d02a70"
+    },
+    {
+      "path": "crates/ferrocut-html/src/host.rs",
+      "bytes": 2998,
+      "sha256": "7d2658e79f9bc4b60361ca074301c7e4c34ef14212af52123001aadd831ac471"
+    },
+    {
+      "path": "crates/ferrocut-html/src/lib.rs",
+      "bytes": 959,
+      "sha256": "41ac96099b14f9b380ce139c734ebca9fe63b57b22e0884196283d9648bf2fa7"
+    },
+    {
+      "path": "crates/ferrocut-html/src/policy.rs",
+      "bytes": 7698,
+      "sha256": "06635e38368079a568154ee997db319db441d2cbfd09a244fd4db7818a8d0599"
+    },
+    {
+      "path": "crates/ferrocut-html/src/session.rs",
+      "bytes": 8548,
+      "sha256": "8a3701e475045b19a6724c52aa13ef55fd1c408b0ce69799a47bceb7483aaf7d"
+    },
+    {
+      "path": "crates/ferrocut-html/tests/determinism.rs",
+      "bytes": 9273,
+      "sha256": "3d6841b306c5ba5b6feed2fa4c25482be6101afe1a18f7678cae268606e61997"
+    },
+    {
+      "path": "crates/ferrocut-html/tests/network.rs",
+      "bytes": 16281,
+      "sha256": "4dfa59ab7f39d77ec5b45a1906d302ebf7a133e3309f860a7e0c7633dd26ca4f"
+    },
+    {
+      "path": "crates/ferrocut-ipc/Cargo.toml",
+      "bytes": 401,
+      "sha256": "e3e22ecf591d5ce97b128c5e5ba1b5b5cb4f8ad1d4e1e49080e39298fe8ab6c4"
+    },
+    {
+      "path": "crates/ferrocut-ipc/src/error.rs",
+      "bytes": 2869,
+      "sha256": "eb5f5345c5ef76d094889f37b1af877f19eba98cb76268f25cf838dab14c209b"
+    },
+    {
+      "path": "crates/ferrocut-ipc/src/host.rs",
+      "bytes": 12950,
+      "sha256": "3463d39d579eb53c4244500b3d29c7402eb2f584de9356bbb20b2f4e194e4180"
+    },
+    {
+      "path": "crates/ferrocut-ipc/src/lib.rs",
+      "bytes": 2465,
+      "sha256": "2516123a3ec2e05d0c91db7cbe22667e2ddf8802fcb88079a840cc0676cb36c1"
+    },
+    {
+      "path": "crates/ferrocut-ipc/src/shm.rs",
+      "bytes": 2475,
+      "sha256": "943b6181a6ebd77ca6dd0992371b41c1eccd9195ee4814c6dca42e32fb76316f"
+    },
+    {
+      "path": "crates/ferrocut-ipc/src/slot.rs",
+      "bytes": 3357,
+      "sha256": "89cfc0914892902b9c0a16bfaee267a42883999af3badeaeddfcb5a6ed7a70bf"
+    },
+    {
+      "path": "crates/ferrocut-ipc/tests/host.rs",
+      "bytes": 9156,
+      "sha256": "4704f5ba422bf7cf8886503ef5c8042b576a46e955b242e60fb333d33bbe6d65"
+    },
+    {
+      "path": "crates/ferrocut-lottie/Cargo.toml",
+      "bytes": 567,
+      "sha256": "a667bdf18fd7a6c41089eced68e63ed3374d53ce35e1cac93b094f08a77098d3"
+    },
+    {
+      "path": "crates/ferrocut-lottie/build.rs",
+      "bytes": 1316,
+      "sha256": "8d1b47ff2f77ae533057bc6a057770de6e06918280651c5d41926e59018be571"
+    },
+    {
+      "path": "crates/ferrocut-lottie/src/adapter.rs",
+      "bytes": 3682,
+      "sha256": "376a60332df2c2050e42cfa5dde9a6002b720285e0d7a4afb36b00d3935d7c79"
+    },
+    {
+      "path": "crates/ferrocut-lottie/src/color.rs",
+      "bytes": 3915,
+      "sha256": "0f37ac21d890ac46b8b0a055ca2306572dad850bc2c3e42e05b38843cb7b6b25"
+    },
+    {
+      "path": "crates/ferrocut-lottie/src/ffi.rs",
+      "bytes": 2616,
+      "sha256": "7246953c0965ca8d62fadf4956113d9cb7ee3d84cebfbcc88a257128202e7f33"
+    },
+    {
+      "path": "crates/ferrocut-lottie/src/lib.rs",
+      "bytes": 1266,
+      "sha256": "b1384a8d5efd3217c0604abe8bc103810f15bc3ded2a821d737b8689b2d9f247"
+    },
+    {
+      "path": "crates/ferrocut-lottie/src/meta.rs",
+      "bytes": 3300,
+      "sha256": "4efc9decaa8e3af77a34535251fa2d20466bc404eaf0ea7954db37c7c9f95052"
+    },
+    {
+      "path": "crates/ferrocut-lottie/src/renderer.rs",
+      "bytes": 2816,
+      "sha256": "14537d585f733d00635ff12065e738d922ac3d732bad9866d03ad53b25d5f513"
+    },
+    {
+      "path": "crates/ferrocut-lottie/src/thorvg.rs",
+      "bytes": 9897,
+      "sha256": "01ea6d1504dda709654b3b9209ed54e2bf3e70bc120541474b2d57f2fb784734"
+    },
+    {
+      "path": "crates/ferrocut-lottie/src/timing.rs",
+      "bytes": 3930,
+      "sha256": "e1241918039f52d545feaf3fbf23b5be8e91659877bcb5e0addbb13722e0b82d"
+    },
+    {
+      "path": "crates/ferrocut-lottie/tests/determinism.rs",
+      "bytes": 12514,
+      "sha256": "3cd9bcd2f50dbafc321ca88a421edf250604fd168a3cff9c3beebc9241687e27"
+    },
+    {
+      "path": "crates/ferrocut-mcp/Cargo.toml",
+      "bytes": 794,
+      "sha256": "6f1039af01426373e84d46f4028cbe5ddbf33e242daa7ceac538067011a6d4f5"
+    },
+    {
+      "path": "crates/ferrocut-mcp/build.rs",
+      "bytes": 463,
+      "sha256": "141803c8fa65b95ffc1b1dbe208f3450dddfda826a22cd9eecce8e39461b9759"
+    },
+    {
+      "path": "crates/ferrocut-mcp/src/lib.rs",
+      "bytes": 56829,
+      "sha256": "9e15ee835b22e8459ca257336e44b67134853995405c94b2ce3d71acfeb7ca61"
+    },
+    {
+      "path": "crates/ferrocut-mcp/src/main.rs",
+      "bytes": 1921,
+      "sha256": "b7f0eaac0d298188dd4da9b6d5e6a8c9e8be7cb866e89eec3ede42da78b2cc2d"
+    },
+    {
+      "path": "crates/ferrocut-mcp/src/native_schema.rs",
+      "bytes": 19958,
+      "sha256": "50af34449abf2e8065fdc745bef78ba577906959ddf2e2ee7c41a4d66f55dbf5"
+    },
+    {
+      "path": "crates/ferrocut-mcp/src/root.rs",
+      "bytes": 5513,
+      "sha256": "f413f3b5a84e59c6cd0691d59668cc793c0b686a283f42ca4b2e79ef66b6cdde"
+    },
+    {
+      "path": "crates/ferrocut-mcp/src/schema.rs",
+      "bytes": 64958,
+      "sha256": "1d71f5cdcc97e1ecc0823f8e17be4cdf52e798d94e4774dd38e013971ef53ee0"
+    },
+    {
+      "path": "crates/ferrocut-mcp/src/storytold_tools.rs",
+      "bytes": 11964,
+      "sha256": "d6dcb7e3f861d79bbeffdb974a2cb825aab87a367e7dc66c57c297f9f6deb2ce"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/deliver.rs",
+      "bytes": 7951,
+      "sha256": "b2f8a3134df07362dc4b265c74e70286a8afa213c314c5b4cc0ccfdf3d648956"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/media.rs",
+      "bytes": 4842,
+      "sha256": "11b718444c58a3fd251118c36e17928d2f5a38929e43b91ac3c732f4c1c30285"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/motion_tools.rs",
+      "bytes": 13205,
+      "sha256": "6a58e5993a652a4283ce9a243d41b67c415707c0dde0f25d460d9a6d89c389ff"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/native_graphics.rs",
+      "bytes": 14613,
+      "sha256": "a77065c673755a452f52ac9469c70bc6e000838aa54ed1e9957cbd458e9d2577"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/progress.rs",
+      "bytes": 11076,
+      "sha256": "f37ec306532b6b17cb5f5636c622a2a55ce069bf1e07cd642fec2a3e7ccd3094"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/sandbox.rs",
+      "bytes": 10600,
+      "sha256": "415e74a1a4951a92520d6ac6cfcb4b836ddf49939c55d4a4645c9bb5712e71e2"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/schema.rs",
+      "bytes": 5692,
+      "sha256": "fc09c5b26a0ee203bc1eae06a9d9552c7d84e0311c13031a1ae9dc121def19e8"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/stdio.rs",
+      "bytes": 15204,
+      "sha256": "c4c0cc78bcb72db3b5e415fa0e0cdaab93138fdb34d44a77f35d1dea93b973e3"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/storytold.rs",
+      "bytes": 33206,
+      "sha256": "df2804516f3794f72d7aed9782337408d8351e5b444b5e1e27462bfa88114068"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/support/mini_schema.rs",
+      "bytes": 4353,
+      "sha256": "37e9913995ecc9837da47abcc736f3e88bda999311aa67c9683489c0dca121ab"
+    },
+    {
+      "path": "crates/ferrocut-mcp/tests/timeline_schema.rs",
+      "bytes": 8025,
+      "sha256": "31ec8449a84b108babfd43ec5d1df9b90e48fd9ff3b452f28cc240e194ec32fe"
+    },
+    {
+      "path": "crates/ferrocut-ofx/Cargo.toml",
+      "bytes": 475,
+      "sha256": "0552452cdfa1f7c3c0cb72c8173a4db81c1d40f5415dba665095f384866ca228"
+    },
+    {
+      "path": "crates/ferrocut-ofx/build.rs",
+      "bytes": 1647,
+      "sha256": "1c9d8f417f08c9b50249dc69b9c2d6375b3bd22a5033bdd97d2f0f7dd17c8f01"
+    },
+    {
+      "path": "crates/ferrocut-ofx/src/host.rs",
+      "bytes": 5912,
+      "sha256": "59970c86d56774edc0fdeb73672dce71da859150811278c22647427600dcbc3a"
+    },
+    {
+      "path": "crates/ferrocut-ofx/src/lib.rs",
+      "bytes": 1128,
+      "sha256": "ca7082e388735a1a87a0cb614cecbe4f6146ed4c470700962772c1007cb1b974"
+    },
+    {
+      "path": "crates/ferrocut-ofx/src/node.rs",
+      "bytes": 9277,
+      "sha256": "6d2c82d0404da91414169bdc82c9e75c268389c719c429f5a0d7ca379320a8ab"
+    },
+    {
+      "path": "crates/ferrocut-ofx/src/shm.rs",
+      "bytes": 903,
+      "sha256": "f86b3e853e035cd61f0f4be7b29b47c8f9002026dfce8b8959fe14d73e99be90"
+    },
+    {
+      "path": "crates/ferrocut-ofx/tests/isolation.rs",
+      "bytes": 8748,
+      "sha256": "132ebe2b66893eb65b9ddfcccd3f2a5090df4156af38580cee9fc4819251728d"
+    },
+    {
+      "path": "crates/ferrocut-perceive/Cargo.toml",
+      "bytes": 973,
+      "sha256": "5101d9c06dddbf933f3984a7b78de8fa89ef2d8291337c75428478c08ce5220d"
+    },
+    {
+      "path": "crates/ferrocut-perceive/build.rs",
+      "bytes": 4345,
+      "sha256": "9e04163021e68c85e007eca4265fa40e670c1435d1bdf55d66151fa2a2e672c9"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/analyze.rs",
+      "bytes": 32285,
+      "sha256": "076bf22387145aecd79c798a4c0ed57da3fe019adc713b7c9c4d9b87fd9c4cc9"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/audio.rs",
+      "bytes": 49157,
+      "sha256": "ef73068cfcdbb591a15c1663fca8f7991fcf0bb6930894b8b541e03dbbb8321a"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/bin/ferrocut-perceive.rs",
+      "bytes": 11943,
+      "sha256": "c2487b6feab3491a17e336c255b608b967dd9f67d901bd4f37bcda8530b4eb93"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/check.rs",
+      "bytes": 22786,
+      "sha256": "0125f4427df21463d1ffaba9224ca16be3b201569125d595a006bfd749af367f"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/diff.rs",
+      "bytes": 10731,
+      "sha256": "87295ba84be49266b6aa8d9ca04d03a108972e9f49ac5daed49a62939304967d"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/gpu.rs",
+      "bytes": 9411,
+      "sha256": "341cceea3af3f591a36d783d65794659f01cfcf43cd4ecaf55415b7d15234c9a"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/images.rs",
+      "bytes": 10808,
+      "sha256": "a44ff283f2399ac5e5d9ea561a79c202b25b97de85f5cf82bed404ea840e1ad6"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/input.rs",
+      "bytes": 10715,
+      "sha256": "7873fc2053a3a7de26aeaab995fe5be74bc907a2aca4566d9472e7ce43b12a16"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/lib.rs",
+      "bytes": 2293,
+      "sha256": "670c1e9f6eb9114ce424016d6ecbb57a16b24d158e5d8e9aa89e3c40f348f5e2"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/media.rs",
+      "bytes": 6852,
+      "sha256": "8b0e7064f0ebe585e81b1c593b832653e7c920c1af5f6f1275e9e9bac2439a8e"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/report.rs",
+      "bytes": 6115,
+      "sha256": "d2f015e1e232d96421f011f55ffec1e44093684c51cd17246f0b2d8486dcc837"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/scopes.rs",
+      "bytes": 12967,
+      "sha256": "dc47088a56a9e838838cf8ad4db851be86021b415153e1d69e7dd59c32bf4622"
+    },
+    {
+      "path": "crates/ferrocut-perceive/src/shots.rs",
+      "bytes": 17982,
+      "sha256": "c65e8830964ca781835b0a741ac98795b6f2c7433d2d0e7cdfcb464c90e211be"
+    },
+    {
+      "path": "crates/ferrocut-perceive/tests/check.rs",
+      "bytes": 14110,
+      "sha256": "96b920e751f84cd20ab544428a1ef8479d9eb0676f0b6f426211af4c1e71371f"
+    },
+    {
+      "path": "crates/ferrocut-perceive/tests/e2e.rs",
+      "bytes": 15206,
+      "sha256": "34107b1b92fb7ddb14d0b814b47400ee6d60e2360d6941f2bcf0298a557cf781"
+    },
+    {
+      "path": "crates/ferrocut-perceive/tests/gpu_vs_cpu.rs",
+      "bytes": 2115,
+      "sha256": "794acdec88956a89901b41770c6d32b70db63b2b4533ae5e790de790ca9b883f"
+    },
+    {
+      "path": "crates/ferrocut-perceive/tests/loudness.rs",
+      "bytes": 1686,
+      "sha256": "ec6084832db86127df42ae2138df8c8c80d154fae33ae862f913d80b9955657c"
+    },
+    {
+      "path": "crates/ferrocut-perceive/tests/support/schema_check.rs",
+      "bytes": 5520,
+      "sha256": "0014c270c246f69b4423c77034723933f8daf864775073c9cd595e0c1e52025b"
+    },
+    {
+      "path": "crates/ferrocut-perceive/tests/support/synth.rs",
+      "bytes": 1607,
+      "sha256": "483c4d4081c1a5589fd3cced373678c6e7f67df9b0efdc2f989083497c7948f5"
+    },
+    {
+      "path": "crates/ferrocut-perceive/tests/support/wav.rs",
+      "bytes": 1230,
+      "sha256": "8c462cb094dffa2a9c06797c1a75e04db9687df64a5abde2e0fdb042cadeaa0b"
+    },
+    {
+      "path": "crates/ferrocut-types/Cargo.toml",
+      "bytes": 491,
+      "sha256": "cbd653893fc1ae66883eba7050b0094cb0cb242af6a611e108b869c797cc76b3"
+    },
+    {
+      "path": "crates/ferrocut-types/src/cancel.rs",
+      "bytes": 1439,
+      "sha256": "4686b2741ffbe10aa4e9e197510e6fd97086d4f0758beb602974d2cc7c6f719c"
+    },
+    {
+      "path": "crates/ferrocut-types/src/color.rs",
+      "bytes": 772,
+      "sha256": "c751ee2a350c92ea3adbf614ecd8d8de06013d01f13dc40c568996afa8ab65db"
+    },
+    {
+      "path": "crates/ferrocut-types/src/error.rs",
+      "bytes": 4407,
+      "sha256": "281f12cf95c7108bcddf77d2321e4b1274deaba32471a92bd002551db1fdfc6a"
+    },
+    {
+      "path": "crates/ferrocut-types/src/hash.rs",
+      "bytes": 1950,
+      "sha256": "9a77694d3afb9b13528500362331c0c9ecf2596999f3e65a8ec71ab9dfdf1514"
+    },
+    {
+      "path": "crates/ferrocut-types/src/image.rs",
+      "bytes": 4690,
+      "sha256": "3ebc79e42518e6ce341d193b26619a7215cd1ba8cb10f07441c1523add0fcedc"
+    },
+    {
+      "path": "crates/ferrocut-types/src/keyframe.rs",
+      "bytes": 23950,
+      "sha256": "73e81db6c8278b808134a8b2b7915349d7420c0fbf6759a21138de5137ea6c99"
+    },
+    {
+      "path": "crates/ferrocut-types/src/lib.rs",
+      "bytes": 904,
+      "sha256": "6614c871fb4c87c177c65d591b802a0d9026d0e53bde2440c07e1c6e3fa4ffc1"
+    },
+    {
+      "path": "crates/ferrocut-types/src/manifest.rs",
+      "bytes": 9022,
+      "sha256": "a76ca056d017ad85dd999213bfb248370c823c7ba23edee387a004f413d4366f"
+    },
+    {
+      "path": "crates/ferrocut-types/src/param.rs",
+      "bytes": 7690,
+      "sha256": "0c4214986a866150d3da684ed076cc0859afc979a3fa736c3fc47b04dbcc848d"
+    },
+    {
+      "path": "crates/ferrocut-types/src/shot.rs",
+      "bytes": 1941,
+      "sha256": "80472a3f5058ce31e29617007fe37fb41e8e1bf3df97b7b4bf4bc74920b3db5a"
+    },
+    {
+      "path": "crates/ferrocut-types/src/time.rs",
+      "bytes": 17302,
+      "sha256": "ccefd7dbb02f85e49f67a65ba89d6ffa7c352f1840c3fc26c96a5668b9fae03e"
+    }
+  ],
+  "video_files": [
+    {
+      "path": "/tmp/ferrocut-motion-repro-20261008/motion-source.mkv",
+      "bytes": 257963,
+      "sha256": "b85e9c6a85fd8f38054a32c9e5921071543b0832840fb27ab1cc7c64fa480fee",
+      "retention": "Tracked repository artifact; original /tmp path records the executed workflow location.",
+      "repository_path": "media/motion-source.mkv"
+    },
+    {
+      "path": "/tmp/ferrocut-motion-repro-20261008/motion-showcase.mkv",
+      "bytes": 1400130,
+      "sha256": "965b8e08b3550a13c0923f01ee848c43abf9007207a9ecd2d10567b736803074",
+      "retention": "Tracked repository artifact; original /tmp path records the executed workflow location.",
+      "repository_path": "media/motion-showcase.mkv"
+    },
+    {
+      "path": "/tmp/ferrocut-motion-repro-20261008/motion-revised.mkv",
+      "bytes": 1235158,
+      "sha256": "6a17fdc1b0861856ad4cfd50c8055b2497c3843172ffe7fe27faa4c8edbab0bb",
+      "retention": "Tracked repository artifact; original /tmp path records the executed workflow location.",
+      "repository_path": "media/motion-revised.mkv"
+    },
+    {
+      "path": "/tmp/ferrocut-motion-repro-20261008/motion-repeat.mkv",
+      "bytes": 1235158,
+      "sha256": "6a17fdc1b0861856ad4cfd50c8055b2497c3843172ffe7fe27faa4c8edbab0bb",
+      "retention": "Tracked repository artifact; original /tmp path records the executed workflow location.",
+      "repository_path": "media/motion-repeat.mkv"
+    },
+    {
+      "path": "/tmp/ferrocut-motion-repro-20261008/motion-undo.mkv",
+      "bytes": 1400130,
+      "sha256": "965b8e08b3550a13c0923f01ee848c43abf9007207a9ecd2d10567b736803074",
+      "retention": "Tracked repository artifact; original /tmp path records the executed workflow location.",
+      "repository_path": "media/motion-undo.mkv"
+    },
+    {
+      "path": "/tmp/ferrocut-motion-repro-20261008/motion-stabilized.mkv",
+      "bytes": 1148952,
+      "sha256": "a0aa27c152de96d8e61e0e07df1512c8a8d74fe617641c27f5e88dc44ddc07e2",
+      "retention": "Tracked repository artifact; original /tmp path records the executed workflow location.",
+      "repository_path": "media/motion-stabilized.mkv"
+    }
+  ],
+  "artifact_files": [
+    {
+      "path": "all-targets-clippy.log",
+      "bytes": 336,
+      "sha256": "a4802c3d3415290310913411a7bff772cfc0da6f95e0541c37fa06b2dcc75b66"
+    },
+    {
+      "path": "attached.timeline.json",
+      "bytes": 18520,
+      "sha256": "e5544779d14664f5049dd475adc54d9963633394cc3cbad7b43da96ad4a52867"
+    },
+    {
+      "path": "capabilities.json",
+      "bytes": 1179810,
+      "sha256": "d83bbd0634fc61524c57e2cdb25c2f66750dda348d5b01257b01e84bb83561a7"
+    },
+    {
+      "path": "diff-check.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "format-check.log",
+      "bytes": 92,
+      "sha256": "11b0c109f36c9903237e68cc9d634ee85ef43675342b7721fbbdfbd18911ed29"
+    },
+    {
+      "path": "gpu-masks-vectors.log",
+      "bytes": 4663,
+      "sha256": "10e99a8154070b9fe6ba890163cf109096a448def2f61e20f4dc0a092612f0ea"
+    },
+    {
+      "path": "ledger-check.log",
+      "bytes": 70,
+      "sha256": "a46e017f394979f753f7fffc6813d8fb1227401153711055733022a456b1ceb1"
+    },
+    {
+      "path": "ledger-self-test.log",
+      "bytes": 102,
+      "sha256": "5b3f0355ffa7e6bacd0159e676bb46364fa795d2f537b1240db57cd96bd0a2bc"
+    },
+    {
+      "path": "ledger-summary.json",
+      "bytes": 307,
+      "sha256": "307214e141d887ee0e8cc99fcec21a62f5023bc469eb40e159322436c45238c9"
+    },
+    {
+      "path": "media/motion-repeat.mkv",
+      "bytes": 1235158,
+      "sha256": "6a17fdc1b0861856ad4cfd50c8055b2497c3843172ffe7fe27faa4c8edbab0bb"
+    },
+    {
+      "path": "media/motion-revised.mkv",
+      "bytes": 1235158,
+      "sha256": "6a17fdc1b0861856ad4cfd50c8055b2497c3843172ffe7fe27faa4c8edbab0bb"
+    },
+    {
+      "path": "media/motion-showcase.mkv",
+      "bytes": 1400130,
+      "sha256": "965b8e08b3550a13c0923f01ee848c43abf9007207a9ecd2d10567b736803074"
+    },
+    {
+      "path": "media/motion-source.mkv",
+      "bytes": 257963,
+      "sha256": "b85e9c6a85fd8f38054a32c9e5921071543b0832840fb27ab1cc7c64fa480fee"
+    },
+    {
+      "path": "media/motion-stabilized.mkv",
+      "bytes": 1148952,
+      "sha256": "a0aa27c152de96d8e61e0e07df1512c8a8d74fe617641c27f5e88dc44ddc07e2"
+    },
+    {
+      "path": "media/motion-undo.mkv",
+      "bytes": 1400130,
+      "sha256": "965b8e08b3550a13c0923f01ee848c43abf9007207a9ecd2d10567b736803074"
+    },
+    {
+      "path": "motion-repeat.log",
+      "bytes": 1042,
+      "sha256": "3618fabc2ca745a3b38a68dc7410eb7e1bd3b7705240a04cea7652bd464fd34f"
+    },
+    {
+      "path": "motion-repeat.report.json",
+      "bytes": 1633,
+      "sha256": "c77800336180da3ac9fcfdb48957e1a28da3e9636a73ad6b6232d9bf48866232"
+    },
+    {
+      "path": "motion-revised.log",
+      "bytes": 1053,
+      "sha256": "c36ba79789187960c0d47207422ef56e099ecd01ec238708a1f9f3285a269cd8"
+    },
+    {
+      "path": "motion-revised.report.json",
+      "bytes": 1669,
+      "sha256": "cf9aeace5f1f64681eb0f17666d5439792bd3729641956b5f039efd38aa74ceb"
+    },
+    {
+      "path": "motion-revision-compare.png",
+      "bytes": 53769,
+      "sha256": "07b72b84f0d773ebaa845492c28413379f042c097dd3282c1c01379aa14cb782"
+    },
+    {
+      "path": "motion-showcase.log",
+      "bytes": 1054,
+      "sha256": "e746609aa8cce39a8fb11e25d9defb215eeb97a6b96cf8a15d85bf1b10b4861d"
+    },
+    {
+      "path": "motion-showcase.report.json",
+      "bytes": 1669,
+      "sha256": "872615a07cc6ac6f0f93c3bc0660a9ffa87bd107f3155ebd0ba22b4e386b7ab5"
+    },
+    {
+      "path": "motion-source.log",
+      "bytes": 1050,
+      "sha256": "4efdc9fd181ebd81c861c1a9825659011eea0993e5af6e56bd2ee8e694487a49"
+    },
+    {
+      "path": "motion-source.report.json",
+      "bytes": 1662,
+      "sha256": "20c3766a4dec815ac2aedb67460dd6c8de63bd798691e8c56cb58e88bef4dc06"
+    },
+    {
+      "path": "motion-stabilized.log",
+      "bytes": 1056,
+      "sha256": "633d2c5296ee38bca768288dfab646a21bc3ca6b46e8b7402f3a3602fa2f02ac"
+    },
+    {
+      "path": "motion-stabilized.report.json",
+      "bytes": 1671,
+      "sha256": "e234c47ba99fe8e72c25bf4969b3a1ed15d0e9653b3d2cba7617f5b441518f3f"
+    },
+    {
+      "path": "motion-undo.log",
+      "bytes": 1040,
+      "sha256": "7c805a9675ab1411a70f9832647e00ec8b7f4fc1623f1750865145a521612ed9"
+    },
+    {
+      "path": "motion-undo.report.json",
+      "bytes": 1631,
+      "sha256": "90471300fc08d951414b7abf1e5395d3fa184a84f291ed4f4b410acce32f1f3c"
+    },
+    {
+      "path": "regressions.log",
+      "bytes": 40138,
+      "sha256": "717d02a3cff6cb45445939c649969d3a323e20c67e897a3174a068779fdb2cb9"
+    },
+    {
+      "path": "revised.timeline.json",
+      "bytes": 18518,
+      "sha256": "b59c68c6bca189ed51d84e012fea1769a47d4b6450ba63c07568f3997352e33b"
+    },
+    {
+      "path": "revision-edit.log",
+      "bytes": 1484,
+      "sha256": "7d76084c3928d50080753e0cfcb40858c489655fc49cde78622902b13ba14d08"
+    },
+    {
+      "path": "revision-look.log",
+      "bytes": 2861,
+      "sha256": "525864b95873cf8002b0c3254136de1e31f72a5ea9cd865d7a1ced1e2a08a329"
+    },
+    {
+      "path": "stabilization-edit.log",
+      "bytes": 3058,
+      "sha256": "2bcc6f21536d3a0deaa39ef4d7f36eec7f6b2dfdfbe16817da385f209d6c7808"
+    },
+    {
+      "path": "stabilization-keyframes.log",
+      "bytes": 6917,
+      "sha256": "4964ee26bb625177c9e24a338990e192f448ed81b933a522bf9e776ab3ea2e70"
+    },
+    {
+      "path": "stabilization.ops",
+      "bytes": 5997,
+      "sha256": "79563bab8d7c56e36794ecc63970f8296c1b06b1b46c52871e3d0b8dde0cfde7"
+    },
+    {
+      "path": "stabilization.options.json",
+      "bytes": 168,
+      "sha256": "bfa37150dc6c615fcfbc300a73e87eeb6a3d5d8b3e8eb805d12313c31dc8869e"
+    },
+    {
+      "path": "stabilized-end-look.log",
+      "bytes": 2250,
+      "sha256": "b9ff30de68a038e92c00300c4b97463db5ee4c711c65eddd3feaf020697a424f"
+    },
+    {
+      "path": "stabilized-end_1.938s.png",
+      "bytes": 30076,
+      "sha256": "cf2edbcfe7f2096c2fa0ddaf3fcec239d891ccf459010047b04a887307dd0464"
+    },
+    {
+      "path": "stabilized-start-look.log",
+      "bytes": 2262,
+      "sha256": "40f06f6caf92d7035658e72d33857584029286e0a0ce371a9dcf88ee36b64e1d"
+    },
+    {
+      "path": "stabilized-start_0.000s.png",
+      "bytes": 28645,
+      "sha256": "a0444ae6d27ab4eb34b42f9bd4b00e63c0c43b938214610a9dc083c60d92f82f"
+    },
+    {
+      "path": "stabilized.timeline.json",
+      "bytes": 25469,
+      "sha256": "ea0caf6899d4f6a50c9941a5ebf0626ab384f41e720a8f8bdf2698d27c3e4263"
+    },
+    {
+      "path": "timeline.json",
+      "bytes": 18520,
+      "sha256": "e5544779d14664f5049dd475adc54d9963633394cc3cbad7b43da96ad4a52867"
+    },
+    {
+      "path": "title-acceptance.log",
+      "bytes": 236,
+      "sha256": "6871ff526a08745c874226bf086e6be4d41f5db662ce1991772b7739e38969fd"
+    },
+    {
+      "path": "tracking-analysis.json",
+      "bytes": 7904,
+      "sha256": "1338bf2a2a2104d96dcf5b71060794308f0c4e409b53daba5531d3a7278281f3"
+    },
+    {
+      "path": "tracking-analyze.log",
+      "bytes": 1898,
+      "sha256": "f3358036bfd14eb80eab2886dc931bd314a5527b41ba9aabae9450cb36048cd4"
+    },
+    {
+      "path": "tracking-attach.ops",
+      "bytes": 5773,
+      "sha256": "2c0e00822c09e7c861122f3600a60f045de56d5a552c4f1d6e7300249be9a921"
+    },
+    {
+      "path": "tracking-edit.log",
+      "bytes": 3063,
+      "sha256": "dfaace888b85c0bff32e52503570d0a80be84d08665e5012c90760cfe288fcb3"
+    },
+    {
+      "path": "tracking-keyframes.log",
+      "bytes": 6871,
+      "sha256": "f5e76aa2aca42bc78b4fa7230a601c68f5a43238be1bb6206e4048808047cd27"
+    },
+    {
+      "path": "undo.log",
+      "bytes": 227,
+      "sha256": "5e5c780cfc99ce948d791933f3c632853ccc604d4ae62b47bda8de8b238f171a"
+    },
+    {
+      "path": "vendor-check.log",
+      "bytes": 481,
+      "sha256": "d25947a2c6a3a66f94aafbefd020af69ad5bf3c0087cadd8b552d98106f1b37f"
+    },
+    {
+      "path": "workflow-summary.json",
+      "bytes": 866,
+      "sha256": "3d3f7af39f001429417558c0a33a1b7df9b680c191de27d29bec27f623aa962e"
+    },
+    {
+      "path": "workflow.log",
+      "bytes": 917,
+      "sha256": "1998da471eefbd64a05ebdce67a01e27502babf105bcfe2e4b40beedeabd5b19"
+    }
+  ]
+}

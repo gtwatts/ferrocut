@@ -1,0 +1,26 @@
+[
+  {
+    "op": "set_param",
+    "clip": "title",
+    "param": "generator.text.content",
+    "value": "EDITED, STILL NATIVE."
+  },
+  {
+    "op": "set_param",
+    "clip": "reticle",
+    "param": "generator.group.items.1.group.repeat.copies",
+    "value": 18
+  },
+  {
+    "op": "set_param",
+    "clip": "reticle",
+    "param": "generator.group.items.1.group.repeat.rotation",
+    "value": 20
+  },
+  {
+    "op": "set_param",
+    "clip": "source",
+    "param": "masks.0.feather",
+    "value": 3
+  }
+]

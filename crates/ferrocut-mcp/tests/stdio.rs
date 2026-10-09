@@ -193,6 +193,10 @@ async fn stdio_server_end_to_end() {
         assert!(!err, "{r1}");
         assert_eq!(r1["chunks"]["total"], 12);
         assert_eq!(r1["chunks"]["rendered"], 12);
+        assert_eq!(r1["placements"].as_array().unwrap().len(), 3);
+        assert_eq!(r1["placements"][0]["fit"], "contain");
+        assert_eq!(r1["placements"][0]["native"], json!([64, 32]));
+        assert_eq!(r1["warnings"], json!([]));
         let report = r1["report_path"].as_str().unwrap().to_string();
         assert!(Path::new(&report).exists());
         let (err, r2) = call(&client, "render", render(false)).await;
@@ -396,5 +400,95 @@ async fn transcript_tools_over_stdio() {
     // Outside the root: refused before anything is read or written.
     let (err, v) = call(&client, "index_media", json!({ "media": "/etc/hostname" })).await;
     assert!(err, "{v}");
+    client.cancel().await.unwrap();
+}
+
+/// `--list-docs` and `--doc` print the docs:// resources without a client.
+#[test]
+fn docs_print_from_the_command_line() {
+    let bin = env!("CARGO_BIN_EXE_ferrocut-mcp");
+    let out = std::process::Command::new(bin)
+        .arg("--list-docs")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let list = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        list.contains("docs://timeline/guide.md\ttimeline-guide\t"),
+        "{list}"
+    );
+    for want in ["docs://timeline/guide.md", "timeline-guide"] {
+        let out = std::process::Command::new(bin)
+            .args(["--doc", want])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{want}");
+        let text = String::from_utf8(out.stdout).unwrap();
+        assert!(
+            text.contains("add_transition") && text.contains("preview_frames"),
+            "{want}"
+        );
+    }
+    let out = std::process::Command::new(bin)
+        .args(["--doc", "nope"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("--list-docs")
+    );
+}
+
+/// preview_frames over real stdio: the PNG arrives as an image content
+/// block and is stripped from the structured result.
+#[tokio::test(flavor = "multi_thread")]
+async fn preview_frames_returns_an_image_block_over_stdio() {
+    if let Err(e) = ferrocut_core::GpuContext::new(ferrocut_core::AdapterPreference::Cpu) {
+        eprintln!("SKIP: no software adapter ({e})");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    std::fs::write(
+        d.join("tl.json"),
+        r#"{"output":{"width":64,"height":36,"fps":24,"duration":1,"gop":12},
+            "tracks":[{"name":"V","clips":[{"id":"bg","start":0,"duration":1,
+            "generator":{"type":"solid","color":["1/2","1/4","1/8",1]}}]}]}"#,
+    )
+    .unwrap();
+    let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_ferrocut-mcp"));
+    cmd.current_dir(d);
+    let client = ().serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap();
+    let args = serde_json::json!({"timeline": "tl.json", "spread": 2, "cpu": true});
+    let r = client
+        .call_tool(
+            CallToolRequestParams::new("preview_frames".to_string())
+                .with_arguments(args.as_object().unwrap().clone()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.is_error, Some(false));
+    let sc = r.structured_content.clone().expect("structured result");
+    assert!(sc.get("_inline_png").is_none(), "{sc}");
+    assert_eq!(sc["inline"]["kind"], "sheet");
+    assert_eq!(sc["frames"].as_array().unwrap().len(), 2);
+    let content = serde_json::to_value(&r.content).unwrap();
+    let images: Vec<&Value> = content
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["type"] == "image")
+        .collect();
+    assert_eq!(images.len(), 1, "{content}");
+    assert_eq!(images[0]["mimeType"], "image/png");
+    assert!(
+        images[0]["data"]
+            .as_str()
+            .unwrap()
+            .starts_with("iVBORw0KGgo")
+    );
+    assert!(d.join("stills/tl-sheet.png").is_file());
     client.cancel().await.unwrap();
 }

@@ -51,6 +51,11 @@ pub struct EngineAudio {
     /// The engine's own measurement (libebur128 port), for cross-checks.
     #[serde(default)]
     pub output: Option<EngineMeasurement>,
+    /// The engine's mix analysis, kept as JSON: `target_lufs` and
+    /// `true_peak_ceiling_dbtp` are what the master was normalized and limited
+    /// to (`null` when it had no loudness target; absent in older reports).
+    #[serde(default)]
+    pub analysis: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -79,6 +84,9 @@ pub struct Timeline {
     pub name: String,
     pub output: Output,
     pub tracks: Vec<Track>,
+    /// The timeline's audio settings, kept as JSON (`loudness` is read).
+    #[serde(default)]
+    pub audio: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -172,6 +180,13 @@ impl Timeline {
     }
     pub fn from_json(text: &str) -> anyhow::Result<Self> {
         Ok(serde_json::from_str(text)?)
+    }
+    /// `audio.loudness`: (target LUFS, true-peak ceiling dBTP, default -1),
+    /// when the timeline asks the engine to normalize.
+    pub fn loudness(&self) -> Option<(f64, f64)> {
+        let l = self.audio.as_ref()?.get("loudness")?;
+        let tp = l.get("true_peak_dbtp").map_or(Some(-1.0), num)?;
+        Some((num(l.get("target_lufs")?)?, tp))
     }
     pub fn duration(&self) -> RationalTime {
         self.output.duration.unwrap_or_else(|| {

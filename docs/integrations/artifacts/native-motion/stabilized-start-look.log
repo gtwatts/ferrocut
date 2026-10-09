@@ -1,0 +1,47 @@
+/home/gordontwatts/.codex/plugins/cache/personal/ffmpeg-skill/0.10.0+codex.20260907122347/vendor/ffmpeg-skill/scripts/_common.py:225: SyntaxWarning: "\;" is an invalid escape sequence. Such sequences will not work in the future. Did you mean "\\;"? A raw string is also an option.
+  if not s or any(ch in s for ch in " \t\"'\;|&<>()[]{}$*?"):
+$ /home/gordontwatts/.local/share/codex-ffmpeg-skill/runtime/usr/bin/ffmpeg -hide_banner -loglevel error -nostdin -y -ss 0.000 -i /tmp/ferrocut-motion-repro-20261008/motion-stabilized.mkv -vf 'scale=640:-2,drawtext=text='\''00\:00\:00.000'\'':fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8' -frames:v 1 /tmp/ferrocut-motion-repro-20261008/stabilized-start_0.000s.png
+wrote /tmp/ferrocut-motion-repro-20261008/stabilized-start_0.000s.png
+{
+  "status": "completed",
+  "output": "/tmp/ferrocut-motion-repro-20261008/stabilized-start_0.000s.png",
+  "dry_run": false,
+  "commands": [
+    "/home/gordontwatts/.local/share/codex-ffmpeg-skill/runtime/usr/bin/ffmpeg -hide_banner -loglevel error -nostdin -y -ss 0.000 -i /tmp/ferrocut-motion-repro-20261008/motion-stabilized.mkv -vf 'scale=640:-2,drawtext=text='\\''00\\:00\\:00.000'\\'':fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8' -frames:v 1 /tmp/ferrocut-motion-repro-20261008/stabilized-start_0.000s.png"
+  ],
+  "probe": {
+    "file": "/tmp/ferrocut-motion-repro-20261008/stabilized-start_0.000s.png",
+    "format": "png_pipe",
+    "duration": null,
+    "size_bytes": 28645,
+    "bitrate": null,
+    "video": {
+      "codec": "png",
+      "profile": null,
+      "width": 640,
+      "height": 360,
+      "display_aspect": "16:9",
+      "fps": 25.0,
+      "r_frame_rate": "25/1",
+      "avg_frame_rate": "25/1",
+      "variable_frame_rate_suspected": false,
+      "pix_fmt": "rgb24",
+      "bit_depth": 8,
+      "hdr": false,
+      "hdr_format": null,
+      "dolby_vision": null,
+      "color_space": "gbr",
+      "color_primaries": null,
+      "color_transfer": null,
+      "color_range": "pc",
+      "rotation": 0,
+      "nb_frames": null,
+      "bitrate": null
+    },
+    "audio": null,
+    "subtitle_streams": 0
+  },
+  "outputs": [
+    "/tmp/ferrocut-motion-repro-20261008/stabilized-start_0.000s.png"
+  ]
+}

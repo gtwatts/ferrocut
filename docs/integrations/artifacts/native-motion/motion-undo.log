@@ -1,0 +1,11 @@
+adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))
+ffmpeg:  9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)
+chunk  frames       status    key               chunk-file blake3                                                 ms
+    0     0..16    reused    ebc73a3ab9b7542d  ec89f7d457dd61c3fa9696da4a5284630341caf8d5b315b044746affbd953eeb      0
+    1    16..32    reused    9b5138dbb475c4ad  da1b297dae6334c253d363623667337633a94dc988a285004fe18aa501d2fe82      0
+reused chunks:      [0, 1]
+re-rendered chunks: []
+frames: 32 total, 0 rendered, 32 reused | render 0 ms (0.0 fps, 1 jobs) | concat 3 ms | total 19 ms
+gpu: 0 submissions, textures 0 allocated / 0 reused from pool | retries 0, chunk restarts 0, device recreations 0
+video stream blake3 a60a9a51c9546453611e7107341a57bfca49bea6d2d681f2ddb728da6d605de0
+output: /tmp/ferrocut-motion-repro-20261008/motion-undo.mkv  blake3 a3206218901ac710c4447ab4e92d4af4970f8884a9e1e75657c11b23b5af434e

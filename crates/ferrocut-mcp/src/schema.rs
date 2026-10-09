@@ -70,8 +70,29 @@ pub fn animatable(desc: &str) -> Value {
                     }
                 } },
                 "required": ["keyframes"], "additionalProperties": false
-            }
+            },
+            expression()
         ]
+    })
+}
+
+/// An expression on a numeric parameter (see the guide's "Expressions").
+pub fn expression() -> Value {
+    json!({
+        "type": "object",
+        "description": "After Effects-style expression (rhai syntax, sandboxed, deterministic): variables time, value, fps, frame, comp_time, duration, in_point; functions wiggle, seed_random, random, noise, linear, ease, ease_in, ease_out, clamp, lerp, value_at_time, loop_out, loop_in, param, layer(id).param, track(name).param, comp().param. Evaluated per frame when the timeline is validated; errors name the parameter, time, line and column.",
+        "properties": {
+            "expression": { "type": "string", "minLength": 1, "maxLength": 16384, "description": "the script; its result (a number) is the parameter's value. Integer division truncates: write 1.0 / 2" },
+            "value": {
+                "description": "pre-expression value (`value` in the script): a constant or {keyframes} in the parameter's time base; default: the parameter's default",
+                "anyOf": [
+                    rational("constant"),
+                    { "type": "object", "properties": { "keyframes": { "type": "array" } }, "required": ["keyframes"] }
+                ]
+            },
+            "time_offset": rational("added to the parameter time to get the script's `time` (set by split; normally omitted)")
+        },
+        "required": ["expression"], "additionalProperties": false
     })
 }
 
@@ -163,6 +184,7 @@ pub fn clip() -> Value {
             "duration": rational("clip length in seconds (> 0)"),
             "opacity": animatable("0..1, default 1"),
             "transform": transform(),
+            "fit": fit(),
             "three_d": three_d(),
             "motion_blur": clip_motion_blur(),
             "transition_in": {
@@ -180,6 +202,7 @@ pub fn clip() -> Value {
             "audio": clip_audio(),
             "generator": generator(),
             "markers": markers(CLIP_MARKER_TIME),
+            "masks": crate::native_schema::masks(),
             "effects": video_effects(),
             "adjustment": { "type": "boolean", "default": false, "description": "adjustment layer: no source; its effects apply to the composite of the tracks below while it is active, mixed by its opacity and its track's matte. Its track holds only adjustment clips; no transform, 3D, blend mode, speed or transition." }
         },
@@ -252,6 +275,7 @@ pub fn video_effect() -> Value {
             props.insert("type".into(), json!({ "const": e.type_name() }));
             props.insert("id".into(), json!({ "type": "string", "minLength": 1, "description": "name, unique in the stack (ops and errors refer to it)" }));
             props.insert("enabled".into(), json!({ "type": "boolean", "default": true }));
+            props.insert("clock_offset".into(), rational("intrinsic procedural phase in seconds; split/trim maintains this automatically, default 0"));
             for p in e.params() {
                 props.insert(p.name.into(), video_param(p));
             }
@@ -266,7 +290,7 @@ pub fn video_effect() -> Value {
         })
         .collect();
     json!({
-        "description": "{type, id?, enabled?, ...params}; numeric params take a constant or {keyframes} (clip-local on clips, timeline time on tracks)",
+        "description": "{type, id?, enabled?, ...params}; numeric params take a constant, {keyframes} (clip-local on clips, timeline time on tracks) or {expression}",
         "oneOf": branches
     })
 }
@@ -326,8 +350,23 @@ pub fn generator() -> Value {
     let space = json!({ "enum": ["display", "linear"], "default": "display",
         "description": "display: mix the encoded colors (After Effects Gradient Ramp); linear: mix linear light" });
     json!({
-        "description": "Synthesized layer. Colors are [r, g, b] or [r, g, b, a] in [0, 1], display-referred Rec.709 (like decoded video), straight alpha. Keyframe times are the clip's source time (clip-local + source_in). Vector shapes (rect/ellipse/paths) are not generators: they come from the Lottie/ThorVG path.",
+        "description": "Native synthesized layer: solids, gradients, explicit-font text, or editable vector shapes. Colors are encoded Rec.709 straight RGBA; output is linear ACEScg premultiplied. Numeric keys use source time (follows speed/remap). Text fonts are explicit project assets and their bytes affect cache keys.",
         "oneOf": [
+            {
+                "type": "object",
+                "properties": { "type": {"const":"text"}, "text": crate::native_schema::text() },
+                "required": ["type","text"], "additionalProperties": false
+            },
+            {
+                "type": "object",
+                "properties": { "type": {"const":"shape"}, "shape": crate::native_schema::shape() },
+                "required": ["type","shape"], "additionalProperties": false
+            },
+            {
+                "type":"object",
+                "properties":{"type":{"const":"vector_group"},"group":crate::native_schema::vector_group()},
+                "required":["type","group"],"additionalProperties":false
+            },
             {
                 "type": "object",
                 "properties": { "type": { "const": "solid" }, "color": color("fill color") },
@@ -512,7 +551,7 @@ pub fn edit_op() -> Value {
         ),
         op(
             "add_video_effect",
-            "Insert a video effect on a clip (`clip`; keyframes clip-local; incl. adjustment layers) or a video track (`track`; timeline time) at `index` (default: end = applied last). Types: gaussian_blur, directional_blur, unsharp_mask, sharpen, glow, drop_shadow, transform, crop, letterbox (and any registered plug-in types); their params, ranges and defaults are in the `effect` schema and timeline_schema `params` (`video_effects`).",
+            "Insert a registered video effect on a clip (`clip`; keyframes clip-local; incl. adjustment layers) or a video track (`track`; timeline time) at `index` (default: end = applied last). Discover available types, parameters, ranges and defaults in the `effect` schema and timeline_schema `params` (`video_effects`). Includes native blurs, transforms, grading and chroma/luma keying.",
             json!({
                 "clip": video_target().0,
                 "track": video_target().1,
@@ -524,7 +563,7 @@ pub fn edit_op() -> Value {
         ),
         op(
             "set_video_effect_param",
-            "Set one parameter of a video effect (by index or id): `param` is a parameter name (sigma, color, color.g, position.x), `enabled` (bypass with false) or `id`; `value` a constant, {keyframes}, array, boolean, string, or null (back to the default).",
+            "Set one parameter of a video effect (by index or id): `param` is a parameter name (sigma, color, color.g, position.x), `enabled` (bypass with false) or `id`; `value` a constant, {keyframes}, {expression}, array, boolean, string, or null (back to the default).",
             json!({
                 "clip": video_target().0,
                 "track": video_target().1,
@@ -577,10 +616,11 @@ pub fn edit_op() -> Value {
         ),
         op(
             "add_clip",
-            "Add a clip to a track: from a media file (`source`), a generator layer (`generator`: solid color, linear or radial gradient; video tracks; `duration` required), or an adjustment layer (`adjustment: true`; video tracks; `duration` required; then add_video_effect on it). A media file is probed: it must have a video stream for a video track (its audio, if any, plays as linked audio) or an audio stream for an audio track. Defaults: source_in 0, duration = the rest of the media after source_in, start = the end of the track, id = the file stem or generator type (made unique). The range must be free (use ripple_insert to push clips right).",
+            "Add a clip to a track: media (`source`), native generator (`generator`: solid, linear_gradient, radial_gradient, text or shape; video track; duration required), or adjustment layer (adjustment:true; duration required). Text uses explicit project font assets. Media is probed for the requested stream. Defaults: source_in 0, duration remaining media, start track end, unique id from source/generator. The range must be free; use ripple_insert to push clips right. All numeric generator parameters use source time.",
             json!({
                 "track": { "type": "string", "minLength": 1, "description": "track name" },
                 "source": path("media path or nested timeline (.json), relative to the timeline file's directory (or absolute, inside the project root)"),
+                "fit": fit(),
                 "generator": generator(),
                 "id": { "type": "string", "minLength": 1, "description": "clip id (unique)" },
                 "start": rational("timeline time of the clip's first frame"),
@@ -605,7 +645,7 @@ pub fn edit_op() -> Value {
         ),
         op(
             "set_param",
-            "Set one parameter by name on a clip (`clip`), a track's audio bus (`track`) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant or {keyframes}; objects take an object, or null to remove.",
+            "Set one parameter by name on a clip (`clip`), a track's audio bus (`track`) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant, {keyframes} or {expression, value?} (see the guide's Expressions); objects take an object, or null to remove.",
             json!({
                 "clip": clip_id(),
                 "track": { "type": "string", "minLength": 1, "description": "track name (its audio bus)" },
@@ -703,13 +743,15 @@ pub fn keyframes() -> Value {
 /// `set_param.value`: a number/keyframes, `[x, y]`, a bool, an object, or null.
 fn param_value() -> Value {
     json!({
-        "description": "constant rational or {keyframes} (numeric), [x, y] (vectors), true/false, an object (fades, duck, loudness) or null (remove)",
+        "description": "rational/keyframes/expression, vector/color, string (text/path/choice), boolean, object, ordered animator/effect/font list, or null; target parameter registry defines the accepted shape",
         "anyOf": [
             animatable("numeric value"),
+            { "type": "string", "description": "editable text, explicit asset path, or enum choice; parameter-specific validation applies" },
             { "type": "array", "minItems": 2, "maxItems": 4, "items": animatable("component"), "description": "[x, y], [x, y, z] or a color [r, g, b(, a)]" },
             { "type": "boolean" },
             { "type": "object" },
             { "type": "array", "items": { "type": "object" }, "description": "audio.effects / bus.effects chain" },
+            { "type": "array", "items": { "type": "string" }, "description": "explicit fallback font assets" },
             { "type": "null" }
         ]
     })
@@ -860,7 +902,7 @@ pub fn branch() -> Value {
 fn check_args() -> Value {
     json!({
         "type": "array", "items": { "type": "string" },
-        "description": "extra ferrocut-perceive arguments, verbatim (threshold flags, config file). Defaults: -14 LUFS ±1 LU, true peak ≤ -1 dBTP"
+        "description": "extra ferrocut-perceive arguments, verbatim (threshold flags, config file). Loudness target and true-peak ceiling: a flag, else a config key, else what the render was normalized/limited to (a recorded null means no target: the default), else the timeline's audio.loudness (only when the render report lacks those keys), else -14 LUFS / -1 dBTP; tolerance ±1 LU unless set. The result's loudness_target names each value's source."
     })
 }
 
@@ -880,16 +922,20 @@ pub fn quality_check() -> Value {
 // ---------------------------------------------------------------------------
 // The timeline file format (docs://timeline/schema.json, timeline_schema).
 
+fn fit() -> Value {
+    json!({"enum": ["contain", "cover", "none", "stretch"], "description": "Media/comp placement before the transform. contain: uniform whole picture (default); cover: uniform fill/crop; none: native pixels centered; stretch: per-axis fill, changes aspect. Clip omission inherits output.fit. Generators and adjustments cannot set fit."})
+}
+
 fn transform() -> Value {
     let pair =
         |d: &str| json!({ "type": "array", "minItems": 2, "maxItems": 2, "items": animatable(d) });
     json!({
-        "description": "Layer transform (After Effects convention); key times clip-local. Defaults are the identity: position and anchor at the frame center, scale 1, rotation 0. position_z, anchor_z, rotation_x, rotation_y and orientation need the clip's three_d switch.",
+        "description": "Layer transform (After Effects convention); key times clip-local. Defaults center the fitted picture: anchor at native source center, position at output center, scale 1 relative to fit, rotation 0. position_z, anchor_z, rotation_x, rotation_y and orientation need the clip's three_d switch.",
         "type": "object",
         "properties": {
             "position": pair("output pixels [x, y] where the anchor lands"),
-            "anchor": pair("source pixels [x, y] of the pivot"),
-            "scale": { "anyOf": [ animatable("uniform scale factor (1 = 100 %)"), pair("per-axis scale [x, y]") ] },
+            "anchor": pair("native source pixels [x, y] of the pivot; use media_probe width/height"),
+            "scale": { "anyOf": [ animatable("scale relative to fit (1 = the fitted picture)"), pair("per-axis scale [x, y]") ] },
             "rotation": animatable("degrees, clockwise (the Z rotation of a 3D layer)"),
             "position_z": animatable("3D layers: depth of the position, pixels, positive = away from the viewer (default 0)"),
             "anchor_z": animatable("3D layers: depth of the anchor point, pixels (default 0)"),
@@ -1007,6 +1053,7 @@ fn video_clip() -> Value {
             "duration": rational("length in seconds, > 0; source_in + duration must not exceed the media"),
             "opacity": animatable("0..1, default 1; keyframes clip-local"),
             "transform": transform(),
+            "fit": fit(),
             "three_d": three_d(),
             "motion_blur": clip_motion_blur(),
             "transition_in": {
@@ -1027,6 +1074,7 @@ fn video_clip() -> Value {
             "audio": clip_audio(),
             "generator": generator(),
             "markers": markers(CLIP_MARKER_TIME),
+            "masks": crate::native_schema::masks(),
             "effects": video_effects(),
             "adjustment": { "type": "boolean", "default": false, "description": "adjustment layer: no source; its effects apply to the composite of the tracks below while it is active, mixed by its opacity and its track's matte. Its track holds only adjustment clips; no transform, 3D, blend mode, speed or transition." }
         },
@@ -1072,6 +1120,7 @@ pub fn timeline() -> Value {
                     "width": { "type": "integer", "minimum": 1 },
                     "height": { "type": "integer", "minimum": 1 },
                     "fps": rational("frames per second, e.g. 24 or \"30000/1001\""),
+                    "fit": fit(),
                     "gop": { "type": "integer", "minimum": 1, "default": 24, "description": "frames per closed GOP" },
                     "gops_per_chunk": { "type": "integer", "minimum": 1, "default": 1, "description": "render chunk size in GOPs" },
                     "duration": { "anyOf": [ { "type": "null" }, rational("explicit output length (default: end of the last clip)") ] }
@@ -1143,9 +1192,33 @@ pub fn timeline_schema() -> Value {
                 "enum": ["all", "timeline", "edit_ops", "params", "guide"],
                 "default": "all",
                 "description": "timeline: JSON Schema of the file; edit_ops: schema of edit_apply ops; params: every settable parameter (name, kind, unit, range, default, time base); guide: concise authoring guide (markdown)"
-            }
+            },
+            "op": { "type": "string", "minLength": 1, "description": "edit_ops/all: only this op's schema (e.g. \"split\"); unknown ops list the known ones" },
+            "query": { "type": "string", "minLength": 1, "description": "params/all: only parameters whose entry mentions this text, case-insensitive (e.g. \"glow\", \"opacity\")" }
         }),
         &[],
+    )
+}
+
+/// `preview_frames`: stills and a contact sheet straight from the graph.
+pub fn preview_frames() -> Value {
+    object(
+        json!({
+            "timeline": path(TL),
+            "output_dir": path("directory for the PNGs (default: <timeline dir>/stills)"),
+            "at": { "type": "array", "maxItems": 64, "items": rational("timeline time"), "description": "timeline times to render; each is snapped to the output frame containing it" },
+            "frames": { "type": "array", "maxItems": 64, "items": { "type": "integer", "minimum": 0 }, "description": "output frame indices to render" },
+            "spread": { "type": "integer", "minimum": 1, "maximum": 64, "description": "also render this many evenly spaced frames over the whole timeline (default 12 when at/frames are empty)" },
+            "each": { "type": "boolean", "default": false, "description": "write one full-resolution PNG per frame (<prefix>-f<frame>.png); read those to check small text" },
+            "sheet": { "type": "boolean", "default": true, "description": "write the labeled contact sheet (<prefix>-sheet.png)" },
+            "cols": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4, "description": "contact sheet columns" },
+            "cell_width": { "type": "integer", "minimum": 64, "maximum": 1920, "default": 480, "description": "contact sheet cell width in pixels" },
+            "prefix": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$", "description": "file name prefix (default: the timeline file stem): letters, digits, '.', '_', '-'" },
+            "cpu": { "type": "boolean", "default": false, "description": "render on the software (CPU) Vulkan adapter (Mesa lavapipe)" },
+            "inline": { "type": "boolean", "default": true, "description": "also return the sheet (or the single frame) as an image content block, shrunk so its longer side is inline_max" },
+            "inline_max": { "type": "integer", "minimum": 256, "maximum": 4096, "default": 1568, "description": "longer side of the inline image in pixels; the PNG is also halved until it is under 3 MB" }
+        }),
+        &["timeline"],
     )
 }
 
@@ -1225,4 +1298,40 @@ pub fn expect_audio() -> Value {
         "enum": ["auto", "yes", "no"], "default": "auto",
         "description": "audio expectation for the check: auto = audio iff the timeline has any (a silent timeline doesn't fail missing_audio)"
     })
+}
+
+/// Replace every copy of `target` inside `v` with `with`.
+fn replace_subtree(v: &mut Value, target: &Value, with: &Value) {
+    if v == target {
+        *v = with.clone();
+        return;
+    }
+    match v {
+        Value::Object(m) => m
+            .values_mut()
+            .for_each(|c| replace_subtree(c, target, with)),
+        Value::Array(xs) => xs.iter_mut().for_each(|c| replace_subtree(c, target, with)),
+        _ => {}
+    }
+}
+
+/// The `edit_apply` input schema as published in the tool list: exact except
+/// that each video effect is `{type, id?, enabled?, ...params}` without its
+/// per-type branch (170+ types). `effects_catalog` (details=true) gives each
+/// type's controls and `timeline_schema` the full union; the engine validates
+/// every op strictly either way.
+pub fn edit_apply_published() -> Value {
+    let mut s = edit_apply();
+    let loose = json!({
+        "description": "One video effect: {type, id?, enabled?, ...params}. Find types and their exact params with effects_catalog {query, details:true}; numeric params take a constant, {keyframes} (clip-local on clips, timeline time on tracks) or {expression}. The engine rejects unknown types and params.",
+        "type": "object",
+        "properties": {
+            "type": { "type": "string", "minLength": 1 },
+            "id": { "type": "string", "minLength": 1 },
+            "enabled": { "type": "boolean", "default": true }
+        },
+        "required": ["type"]
+    });
+    replace_subtree(&mut s, &video_effect(), &loose);
+    crate::compact::compact(s)
 }

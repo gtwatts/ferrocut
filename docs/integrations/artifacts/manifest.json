@@ -1,0 +1,378 @@
+{
+  "schema": "ferrocut.storytold-evidence/1",
+  "recorded_at": "2026-10-08",
+  "scope": "first connected engine adoption milestone; not Adobe parity",
+  "example": "examples/storytold-showcase.json",
+  "operations": "examples/storytold-revise.ops",
+  "workflow": [
+    "ferrocut edit examples/storytold-showcase.json bootstrap.ops -o /tmp/ferrocut-storytold-workflow.json --json (bootstrap.ops is [])",
+    "ferrocut render /tmp/ferrocut-storytold-workflow.json -o /tmp/ferrocut-storytold-showcase.mkv --cpu -j1",
+    "ferrocut edit /tmp/ferrocut-storytold-workflow.json examples/storytold-revise.ops --plan --json",
+    "ferrocut render /tmp/ferrocut-storytold-workflow.json -o /tmp/ferrocut-storytold-revised.mkv --cpu -j1",
+    "repeat render to /tmp/ferrocut-storytold-repeat.mkv",
+    "ferrocut undo /tmp/ferrocut-storytold-workflow.json --json",
+    "render restored timeline to /tmp/ferrocut-storytold-undo.mkv"
+  ],
+  "assertions": {
+    "original_and_revision_differ": true,
+    "repeat_reuses_48_frames_without_gpu": true,
+    "undo_reuses_48_frames_without_gpu": true,
+    "undo_restores_full_file_bytes": true,
+    "otio_roundtrip_all_36_decoded_rgba_frames_equal": true
+  },
+  "inspection": {
+    "artifact": "storytold-revision-compare.png",
+    "reviewer": "Codex root, actual image inspection",
+    "at_seconds": 1,
+    "findings": "Native headline wording changes, twist changes the star, text is legible and within bounds; footer/subtitle/background retain placement. Technical fixture, not a production creative review."
+  },
+  "performance": {
+    "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+    "original_render_ms": 27254,
+    "revision_render_ms": 26822,
+    "note": "640x360 technical example; not a real-time or production throughput benchmark."
+  },
+  "video_files": [
+    {
+      "path": "/tmp/ferrocut-storytold-showcase.mkv",
+      "bytes": 2582323,
+      "sha256": "79a5cc7df1ded3a6dc3ae3e6aa8f9e8b2e3f63ffdf9ea56d84a2672242e3ce91",
+      "retention": "local /tmp only, reproduce from recorded inputs"
+    },
+    {
+      "path": "/tmp/ferrocut-storytold-revised.mkv",
+      "bytes": 2588917,
+      "sha256": "620e106f25d12237489b16f7db579fb41278bef3459d05cad02ab03bbb8bd8ed",
+      "retention": "local /tmp only, reproduce from recorded inputs"
+    },
+    {
+      "path": "/tmp/ferrocut-storytold-repeat.mkv",
+      "bytes": 2588917,
+      "sha256": "620e106f25d12237489b16f7db579fb41278bef3459d05cad02ab03bbb8bd8ed",
+      "retention": "local /tmp only, reproduce from recorded inputs"
+    },
+    {
+      "path": "/tmp/ferrocut-storytold-undo.mkv",
+      "bytes": 2582323,
+      "sha256": "79a5cc7df1ded3a6dc3ae3e6aa8f9e8b2e3f63ffdf9ea56d84a2672242e3ce91",
+      "retention": "local /tmp only, reproduce from recorded inputs"
+    },
+    {
+      "path": "/tmp/ferrocut-storytold-interchange.mkv",
+      "bytes": 1921498,
+      "sha256": "51985ca353f3f458435a2ed9976d048d666403776e4813a0653a081581c6f378",
+      "retention": "local /tmp only, reproduce from recorded inputs"
+    },
+    {
+      "path": "/tmp/ferrocut-storytold-imported.mkv",
+      "bytes": 1918888,
+      "sha256": "18661a7bda31ab35ad3c602b79471aa2c479506d9b5baf899741c88f8d1fbb99",
+      "retention": "local /tmp only, reproduce from recorded inputs"
+    },
+    {
+      "path": "/tmp/ferrocut-storytold-imported-revised.mkv",
+      "bytes": 1836767,
+      "sha256": "5d1c4ec1ddc8124ddae01d94c93f73a44bccdee5c70257d6177ed3695f1e39a5",
+      "retention": "local /tmp only, reproduce from recorded inputs"
+    }
+  ],
+  "input_files": [
+    {
+      "path": "examples/storytold-showcase.json",
+      "sha256": "afcde1a150e421013f8f52cb19a11d8e4b7825c4baca22faa6f9813a46b8e851"
+    },
+    {
+      "path": "examples/storytold-revise.ops",
+      "sha256": "a07e7a5003519fdf4943c771c99315d0a62d90c27e89d8c7e5171b9c0d2e5de9"
+    },
+    {
+      "path": "vendor/storytold/manifest.json",
+      "sha256": "9518fce046455ef7fde7783faf889d295a55597ca36d44fd6249ecef7982668a"
+    }
+  ],
+  "artifact_files": [
+    {
+      "path": "all-targets-clippy.log",
+      "bytes": 174,
+      "sha256": "58c2ec9b893087409f41ef9c4c20167d89f9339ce4c9d3633cf9fc6cbe1b3239"
+    },
+    {
+      "path": "bootstrap.json",
+      "bytes": 322,
+      "sha256": "f3ed9fa1aea486635f682eadf4f5c61328edc91f3bab018a547ef42b287bfc74"
+    },
+    {
+      "path": "capabilities.json",
+      "bytes": 13297,
+      "sha256": "6ad2120290ee8b59ea341d22136b98dd6030faf8a36f14732aa3c6f42af6a4e5"
+    },
+    {
+      "path": "duration-regressions.log",
+      "bytes": 489,
+      "sha256": "fceddb7fdae22c1ec86df4c6b05c441d538cd85fb5258de59fd952e37388fb04"
+    },
+    {
+      "path": "edit.json",
+      "bytes": 1321,
+      "sha256": "f8780298293bcadb0dd4bfca7d3d4277939c2f5339af150c6838905862056507"
+    },
+    {
+      "path": "editor-controls.log",
+      "bytes": 946,
+      "sha256": "4135fb49eddd044acc6b25796bec1598862944bad381c73edf197117e20d0938"
+    },
+    {
+      "path": "effectcraft-clippy.log",
+      "bytes": 718,
+      "sha256": "ba799c2cf44bfa02b835553aa7c3639d78b88b9894fa39c996d475bd921d56eb"
+    },
+    {
+      "path": "final-build.log",
+      "bytes": 174,
+      "sha256": "549c7a4e57aa15f932738a5a2534fa7672842d6811012e38755b107b14d49feb"
+    },
+    {
+      "path": "format-check.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "frame-extraction.json",
+      "bytes": 1696,
+      "sha256": "61fde5d59973f812e30d9a037c6c4b566b51778c3ca0f7336c49003d425f7a44"
+    },
+    {
+      "path": "gpu-effects.log",
+      "bytes": 3834,
+      "sha256": "b87a8eb402cbca04da810746a44e3957383a255a476455a292a2509f0c5b3120"
+    },
+    {
+      "path": "imported-edit.json",
+      "bytes": 883,
+      "sha256": "6537e3fec2bb35e846aab120c3aeb4f322a09a7250cd7b925bb06c6dd4012cd3"
+    },
+    {
+      "path": "imported-revise.ops",
+      "bytes": 103,
+      "sha256": "94961f62a2d0ef3cfcb431d2f15723b61a797be9444c6971e31b7540af9d9e18"
+    },
+    {
+      "path": "imported-revised.report.json",
+      "bytes": 1632,
+      "sha256": "19ab687d837b65e7979fc84acb14824a0861ffc679162d8c76da79aa5c146be7"
+    },
+    {
+      "path": "imported-revised.timeline.json",
+      "bytes": 1581,
+      "sha256": "62f1a6f451ff441e6dc9df47c031620e9f8b628dee08a3f0390b6e972de81b5f"
+    },
+    {
+      "path": "imported.framemd5",
+      "bytes": 3094,
+      "sha256": "25181a7e219243b073fa2311e7eb6898eeee943f171f8c74f204f494fc2bf11e"
+    },
+    {
+      "path": "imported.report.json",
+      "bytes": 1626,
+      "sha256": "230d7a862274d627bc35dba428fe228dbc67f1d43d93fd215673da5b00db7043"
+    },
+    {
+      "path": "imported.timeline.json",
+      "bytes": 1578,
+      "sha256": "b67f132ca46a641cc66931344271aad7fe0334c75c8252f0d22fdc4dd5c57083"
+    },
+    {
+      "path": "interchange.framemd5",
+      "bytes": 3094,
+      "sha256": "25181a7e219243b073fa2311e7eb6898eeee943f171f8c74f204f494fc2bf11e"
+    },
+    {
+      "path": "interchange.otio",
+      "bytes": 12809,
+      "sha256": "7db2ce672a12923424e60c11f1dbd2f48be74f9df508c001a6e8aff286fb9fd0"
+    },
+    {
+      "path": "interchange.report.json",
+      "bytes": 1925,
+      "sha256": "77b3ed6ae0132b766f6cb517cd4942fe7b45c4a7e4a004068720c96b917e683f"
+    },
+    {
+      "path": "interchange.timeline.json",
+      "bytes": 717,
+      "sha256": "03b0b7ebd67316fec4fa43021fded20d431dc342266b237a48d89089b7dd6023"
+    },
+    {
+      "path": "ledger-check.log",
+      "bytes": 70,
+      "sha256": "a46e017f394979f753f7fffc6813d8fb1227401153711055733022a456b1ceb1"
+    },
+    {
+      "path": "ledger-self-test.log",
+      "bytes": 102,
+      "sha256": "5b3f0355ffa7e6bacd0159e676bb46364fa795d2f537b1240db57cd96bd0a2bc"
+    },
+    {
+      "path": "mcp-storytold.log",
+      "bytes": 1532,
+      "sha256": "df688652b629d7f33b03e1e5f904a0bb6003ba063ff5435b2df4668d9426d06c"
+    },
+    {
+      "path": "otio-export.json",
+      "bytes": 819,
+      "sha256": "a0ec57436cce3228e3e3ab09b941c45d66b8fc416049d9f397d078d8e3845545"
+    },
+    {
+      "path": "otio-import.json",
+      "bytes": 3109,
+      "sha256": "73038460f513087d608b30b3c0960f951a762cb3cdb087062d02d7dc6b299d03"
+    },
+    {
+      "path": "regressions.log",
+      "bytes": 34605,
+      "sha256": "c354d7a676520608a978a2fa4c915df6e6d5adff2f628faa8acf3ecae71c633e"
+    },
+    {
+      "path": "repeat.log",
+      "bytes": 1267,
+      "sha256": "8f8b4321ff613299f85b2b1c2def5ce6a996afb93764b05b9f03a97e4e1e6ec3"
+    },
+    {
+      "path": "repeat.report.json",
+      "bytes": 2179,
+      "sha256": "c3538e21993e2facbecda4e94596c1497365b28276dd96c7cb2ded06428a833f"
+    },
+    {
+      "path": "revised.log",
+      "bytes": 1280,
+      "sha256": "a88b6ed6d7d7b303de8540b7862e5b3fc5b59f3de8cdbf55e524fc88b57a3dd7"
+    },
+    {
+      "path": "revised.report.json",
+      "bytes": 2227,
+      "sha256": "517a28deb90f956f5ddf181eb0f4d3b25918479f8f048a7684dd7b70d57c42ef"
+    },
+    {
+      "path": "revised.timeline.json",
+      "bytes": 10120,
+      "sha256": "15b2f5cf2c14aca2a7acc28793cbd84d49b94bbee7cb72474b24b6a957c691e0"
+    },
+    {
+      "path": "roundtrip-evidence.json",
+      "bytes": 1551,
+      "sha256": "f6f8e80194e3160bc9f7046707e8e843651c7e3dc674796e39eb6875396348fb"
+    },
+    {
+      "path": "showcase.log",
+      "bytes": 1281,
+      "sha256": "68123f3b240d02f0789d0240f6da571deb7dbd56043c9d3af9a3ba08f98983d4"
+    },
+    {
+      "path": "showcase.probe.json",
+      "bytes": 373,
+      "sha256": "7667524e437f6506c75bc14e8a409839f0bbc2efc6153cadb0011094e7861406"
+    },
+    {
+      "path": "showcase.report.json",
+      "bytes": 2228,
+      "sha256": "5d340647f33ffdbb4450e6e6e1bfcda4cfb8a1436c7c06de32278fa194be80b8"
+    },
+    {
+      "path": "showcase.scopes.json",
+      "bytes": 24326,
+      "sha256": "a644bd7fd905e832ed2d28588a981c365ff0dfb3ff8613a7511e76c1d93a4d39"
+    },
+    {
+      "path": "software-effects.log",
+      "bytes": 4361,
+      "sha256": "c34abeb9b9cf2733dd2b2ed285fd2c4eea51d997f98907caa58f8e848feea6c2"
+    },
+    {
+      "path": "storytold-at1_1.000s.png",
+      "bytes": 46214,
+      "sha256": "9fd9221c75a2eea5c67f2ab323d9ea73c215f5a68a71bc6ddb85763df0bcc9bd"
+    },
+    {
+      "path": "storytold-revision-compare.png",
+      "bytes": 77297,
+      "sha256": "942c5377b0d5e61133e039677c44472fb8882c32b09ef349a0e3c60c914c3215"
+    },
+    {
+      "path": "test-summary.json",
+      "bytes": 422,
+      "sha256": "c6065eabf2a4abbee4de8bc646d4e8f232cac3361f6d64ef2f06bdc5bac50928"
+    },
+    {
+      "path": "undo.json",
+      "bytes": 227,
+      "sha256": "7c7e7b968b2c36fc551ef748ed4155248f44efa8bfefdd495a4bbb678cb32058"
+    },
+    {
+      "path": "undo.log",
+      "bytes": 1265,
+      "sha256": "803c04562c81eb53daf63ae8e76ca5d67d5eac972cc0e2dd8ba37f5e07dc556d"
+    },
+    {
+      "path": "undo.report.json",
+      "bytes": 2177,
+      "sha256": "612ca88263cbea92c6185cb3583ae9922794eea3a53df0d66963ba4c19822989"
+    },
+    {
+      "path": "vendor-check.json",
+      "bytes": 481,
+      "sha256": "d25947a2c6a3a66f94aafbefd020af69ad5bf3c0087cadd8b552d98106f1b37f"
+    }
+  ],
+  "verification": {
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "ferrocut-engine",
+      "-p",
+      "ferrocut-mcp",
+      "-p",
+      "ferrocut-core",
+      "-p",
+      "ferrocut-types",
+      "--",
+      "--test-threads=1"
+    ],
+    "completed": true,
+    "target_reports": 56,
+    "passed": 357,
+    "failed": 0,
+    "ignored": 1,
+    "scope": "Selected four packages; not entire workspace; focused test totals overlap.",
+    "hardware_focus": {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "ferrocut-engine",
+        "--test",
+        "effectcraft",
+        "--test",
+        "effects",
+        "--test",
+        "expressions",
+        "--test",
+        "source_expressions",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "passed": 37,
+      "failed": 0,
+      "adapters": [
+        "NVIDIA GeForce RTX 5090 Laptop GPU / Vulkan",
+        "llvmpipe / Vulkan"
+      ],
+      "log": "gpu-effects.log",
+      "note": "Focused count overlaps regression total."
+    }
+  }
+}

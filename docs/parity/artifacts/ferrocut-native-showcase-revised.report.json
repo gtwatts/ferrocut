@@ -1,0 +1,67 @@
+{
+  "engine": "ferrocut-engine 0.0.1 render.v3",
+  "adapter": "llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))",
+  "ffmpeg": "9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)",
+  "output": "/tmp/ferrocut-native-showcase-revised.mkv",
+  "total_frames": 96,
+  "chunk_frames": 24,
+  "jobs": 2,
+  "chunks": [
+    {
+      "index": 0,
+      "start_frame": 0,
+      "frames": 24,
+      "key": "b83975993e6d6c65775737c311cf00348c91022395674328c4da6207637de2c5",
+      "status": "rendered",
+      "file_blake3": "ffa7301ee04ee83109c744cfd465897c5e9625c57f7272aa2800b18e337693c1",
+      "render_ms": 29612
+    },
+    {
+      "index": 1,
+      "start_frame": 24,
+      "frames": 24,
+      "key": "c74e27d0410fdb9adff06ce83c7f9366382d292d057ed0f6eecf188ffdbf0490",
+      "status": "rendered",
+      "file_blake3": "a0abc68853cd31f4b475e58907e3dd4d5092420e012e2c4b4c8f3685a0a9880b",
+      "render_ms": 27626
+    },
+    {
+      "index": 2,
+      "start_frame": 48,
+      "frames": 24,
+      "key": "1940ecbc7cdc711e506fbd69c1b646f6edf7acd1ca3d323b9bed2a71855ff4d3",
+      "status": "rendered",
+      "file_blake3": "3fc19fc87ad5851a6b518e6d05914d00bb3dcddf0f1c4cf3c7a967cebafd7c97",
+      "render_ms": 27167
+    },
+    {
+      "index": 3,
+      "start_frame": 72,
+      "frames": 24,
+      "key": "1888aa96ccc39ec629299a1f584fbb39ffd834c7eda5a837f196dde99f183026",
+      "status": "rendered",
+      "file_blake3": "3fc19fc87ad5851a6b518e6d05914d00bb3dcddf0f1c4cf3c7a967cebafd7c97",
+      "render_ms": 26772
+    }
+  ],
+  "rendered_frames": 96,
+  "reused_frames": 0,
+  "render_wall_ms": 57240,
+  "concat_ms": 13,
+  "total_ms": 57307,
+  "render_fps": 1.6771488469601676,
+  "retries": 0,
+  "gpu_submissions": 192,
+  "textures_allocated": 922,
+  "textures_reused": 1832,
+  "sequential": false,
+  "worker_tasks": 4,
+  "sequential_resets": 0,
+  "chunk_restarts": 0,
+  "gpu_recreations": 0,
+  "oom_backoffs": 0,
+  "min_jobs_in_flight": 2,
+  "chunk_dir": "/tmp/ferrocut-native-showcase-cache/chunks/f22f3505ddfab3ee",
+  "final_blake3": "c12cf156d5aa6a62901c1e2bffda32036ecfb2e0f56152ced8ff27910d532a77",
+  "video_blake3": "b0f58d8c69c28a550fe983f8f91bd55c76f4da105a2f8e79cbb48703df955d9a"
+}

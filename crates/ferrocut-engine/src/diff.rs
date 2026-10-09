@@ -16,6 +16,7 @@ use ferrocut_core::RationalTime;
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::generator::GeneratorSpec;
 use crate::project::{dir_of, read_timeline, resolved, timeline_hash};
 use crate::timeline::Timeline;
 use crate::{compile, plan};
@@ -510,9 +511,11 @@ pub fn diff(a: &Timeline, b: &Timeline) -> TimelineDiff {
                 let reordered = !track_changed && x.index != y.index && fields.is_empty();
                 for (root, tag) in [
                     ("source", "source_changed"),
+                    ("fit", "fit_changed"),
                     ("opacity", "opacity_changed"),
                     ("transform", "transform_changed"),
                     ("generator", "generator_changed"),
+                    ("masks", "masks_changed"),
                     ("three_d", "three_d_changed"),
                     ("motion_blur", "motion_blur_changed"),
                     ("markers", "markers_changed"),
@@ -603,22 +606,52 @@ fn normalized(tl: &Timeline, dir: &Path) -> Timeline {
             *s = c;
         }
     }
+    for s in t.assets_mut() {
+        if let Ok(c) = std::fs::canonicalize(&*s) {
+            *s = c;
+        }
+    }
     t
+}
+
+/// Comparison-only copy: these content labels are never compiled or written as
+/// asset paths. Preserve individual slots so fallback reordering is observable.
+fn font_contents(tl: &Timeline) -> anyhow::Result<Timeline> {
+    let mut t = tl.clone();
+    for clip in t.tracks.iter_mut().flat_map(|track| &mut track.clips) {
+        if let Some(GeneratorSpec::Text { text }) = &mut clip.generator {
+            let hashes = text.font_content_hashes()?;
+            for (path, hash) in text.font_paths_mut().zip(hashes) {
+                *path = format!("blake3:{hash}").into();
+            }
+        }
+    }
+    Ok(t)
 }
 
 /// Diff two timeline files. Sources are resolved against each file's
 /// directory first (so the same media referenced differently isn't a change);
-/// hashes are of the files as written. With `with_render`, also computes the
-/// [`RenderImpact`] (needs the media; on failure `render_error` says why).
+/// hashes are of the files as written. With `with_render`, font fields compare
+/// content identities in primary/fallback order, and [`RenderImpact`] compares
+/// planned chunks. Missing/invalid fonts preserve the structural diff with a
+/// `render_error`; they are never treated as equivalent empty assets. Without
+/// `with_render`, the comparison is structural and never reads font contents.
 pub fn diff_files(a: &Path, b: &Path, with_render: bool) -> anyhow::Result<TimelineDiff> {
     let (ta, tb) = (read_timeline(a)?, read_timeline(b)?);
     let (na, nb) = (normalized(&ta, &dir_of(a)), normalized(&tb, &dir_of(b)));
     let mut d = diff(&na, &nb);
+    if with_render {
+        match font_contents(&na).and_then(|fa| Ok((fa, font_contents(&nb)?))) {
+            Ok((fa, fb)) => d = diff(&fa, &fb),
+            Err(e) => d.render_error = Some(format!("{e:#}")),
+        }
+    }
     d.a_hash = timeline_hash(&ta);
     d.b_hash = timeline_hash(&tb);
-    d.identical = d.a_hash == d.b_hash
-        || (d.settings.is_empty() && d.tracks.is_empty() && d.clips.is_empty());
-    if with_render {
+    // Identical JSON in different directories can reference different font
+    // bytes. File hashes describe the documents, not their resolved assets.
+    d.identical = d.settings.is_empty() && d.tracks.is_empty() && d.clips.is_empty();
+    if with_render && d.render_error.is_none() {
         match render_impact(&na, &nb) {
             Ok(r) => d.render = Some(r),
             Err(e) => d.render_error = Some(format!("{e:#}")),

@@ -1,0 +1,10 @@
+{
+  "output": "/tmp/ferrocut-storytold-workflow.json",
+  "dry_run": false,
+  "written": true,
+  "changes": [],
+  "before": "a37c9320dd4a94846c7920236046e9db2a98313d85e634a7e0059282c3b12c4c",
+  "after": "a37c9320dd4a94846c7920236046e9db2a98313d85e634a7e0059282c3b12c4c",
+  "journal_seq": 1,
+  "sources_absolutized": true
+}

@@ -17,18 +17,109 @@
 //! (`Rational::to_f64`), independent of interpolation. Bezier segments solve
 //! `x(u) = s` by fixed 64-step bisection, which is monotone in `s`, so an
 //! easing whose control values are monotone yields a monotone curve.
+//!
+//! Expressions: an [`Expression`] (`{"expression": "wiggle(2, 30)", "value":
+//! ...}`) is an After Effects-style script over the parameter. This crate only
+//! stores it (structural hash, shifting, validation of its shape); the engine
+//! (`ferrocut_engine::expr`) evaluates it deterministically and bakes it into
+//! a per-frame [`KeyframeTrack`] before anything renders. Evaluated unbaked,
+//! an expression yields its `value` (or 0).
 
 use serde::{Deserialize, Serialize};
 
 use crate::time::{Rational, RationalTime};
 
-/// A constant or keyframed parameter. JSON: `"1/2"`, `3`, or
-/// `{"keyframes": [{"t": "0", "v": "0", "interp": "ease_in_out"}, ...]}`.
+/// A constant or keyframed parameter. JSON: `"1/2"`, `3`,
+/// `{"keyframes": [{"t": "0", "v": "0", "interp": "ease_in_out"}, ...]}`, or
+/// an expression `{"expression": "value + wiggle(2, 30)", "value": "960"}`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Animatable {
     Constant(Rational),
     Keyframes(KeyframeTrack),
+    Expression(Expression),
+}
+
+/// Longest accepted expression source, in bytes.
+pub const MAX_EXPRESSION_LEN: usize = 16 * 1024;
+
+/// An expression over a parameter (see the module docs).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Expression {
+    /// The script (the engine's expression language: rhai syntax).
+    pub expression: String,
+    /// The pre-expression value (`value` in the script): a constant or
+    /// keyframes in the parameter's time base. Default: the parameter's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Box<Animatable>>,
+    /// Added to the parameter time to get the script's `time` (a split moves
+    /// the second half's clip-local origin; this keeps its expression in place).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub time_offset: Rational,
+}
+
+impl<'de> Deserialize<'de> for Expression {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // A derived struct deserializer also accepts positional arrays. In an
+        // untagged Animatable this misread ["1.5","0.75"] scale as a script
+        // with a pre-expression value. The documented expression form is a map.
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            expression: String,
+            #[serde(default)]
+            value: Option<Box<Animatable>>,
+            #[serde(default)]
+            time_offset: Rational,
+        }
+        struct MapOnly;
+        impl<'de> serde::de::Visitor<'de> for MapOnly {
+            type Value = Expression;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str(
+                    "an expression object with expression, optional value and time_offset",
+                )
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                map: M,
+            ) -> Result<Expression, M::Error> {
+                let f = Fields::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(Expression {
+                    expression: f.expression,
+                    value: f.value,
+                    time_offset: f.time_offset,
+                })
+            }
+        }
+        deserializer.deserialize_map(MapOnly)
+    }
+}
+
+fn is_zero(r: &Rational) -> bool {
+    r.is_zero()
+}
+
+impl Expression {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.expression.trim().is_empty() {
+            return Err("expression is empty".into());
+        }
+        if self.expression.len() > MAX_EXPRESSION_LEN {
+            return Err(format!(
+                "expression is {} bytes; the limit is {MAX_EXPRESSION_LEN}",
+                self.expression.len()
+            ));
+        }
+        match self.value.as_deref() {
+            Some(Animatable::Expression(_)) => Err(
+                "an expression's value must be a constant or keyframes, not another expression"
+                    .into(),
+            ),
+            Some(v) => v.validate().map_err(|e| format!("value: {e}")),
+            None => Ok(()),
+        }
+    }
 }
 
 impl Default for Animatable {
@@ -56,7 +147,12 @@ impl Animatable {
                 let v = k.keyframes.first()?.v;
                 k.keyframes.iter().all(|kf| kf.v == v).then_some(v)
             }
+            Animatable::Expression(_) => None,
         }
+    }
+
+    pub fn is_expression(&self) -> bool {
+        matches!(self, Animatable::Expression(_))
     }
 
     pub fn is_animated(&self) -> bool {
@@ -67,6 +163,7 @@ impl Animatable {
         match self {
             Animatable::Constant(v) => v.to_f64(),
             Animatable::Keyframes(k) => k.eval(t),
+            Animatable::Expression(e) => e.value.as_ref().map_or(0.0, |v| v.eval(t)),
         }
     }
 
@@ -74,11 +171,14 @@ impl Animatable {
         match self {
             Animatable::Constant(_) => Ok(()),
             Animatable::Keyframes(k) => k.validate(),
+            Animatable::Expression(e) => e.validate(),
         }
     }
 
     /// Smallest and largest key value (the constant for a constant). Bezier
     /// segments may overshoot these; callers clamp where the range matters.
+    /// An expression reports its `value`'s range (0 without one): its real
+    /// range is only known once the engine evaluates it.
     pub fn key_range(&self) -> (Rational, Rational) {
         match self {
             Animatable::Constant(v) => (*v, *v),
@@ -87,6 +187,10 @@ impl Animatable {
                 let first = it.next().unwrap_or_default();
                 it.fold((first, first), |(lo, hi), v| (lo.min(v), hi.max(v)))
             }
+            Animatable::Expression(e) => e
+                .value
+                .as_ref()
+                .map_or((Rational::ZERO, Rational::ZERO), |v| v.key_range()),
         }
     }
 
@@ -105,6 +209,11 @@ impl Animatable {
                     })
                     .collect(),
             }),
+            Animatable::Expression(e) => Animatable::Expression(Expression {
+                expression: e.expression.clone(),
+                value: e.value.as_ref().map(|v| Box::new(v.shifted(dt))),
+                time_offset: e.time_offset - dt,
+            }),
         }
     }
 
@@ -122,6 +231,21 @@ impl Animatable {
                     h.update(&kf.t.hash_bytes());
                     h.update(&kf.v.hash_bytes());
                     kf.interp.hash_into(h);
+                }
+            }
+            Animatable::Expression(e) => {
+                h.update(b"x");
+                h.update(&(e.expression.len() as u64).to_le_bytes());
+                h.update(e.expression.as_bytes());
+                h.update(&e.time_offset.hash_bytes());
+                match &e.value {
+                    Some(v) => {
+                        h.update(b"v");
+                        v.hash_into(h);
+                    }
+                    None => {
+                        h.update(b"-");
+                    }
                 }
             }
         }
@@ -477,5 +601,45 @@ mod tests {
             serde_json::from_str::<Animatable>(r#"{"keyframes": [{"t": 0, "v": 0, "x": 1}]}"#)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn expressions_roundtrip_shift_and_hash() {
+        let a: Animatable =
+            serde_json::from_str(r#"{"expression": "wiggle(2, 30)", "value": "960"}"#).unwrap();
+        a.validate().unwrap();
+        assert!(a.is_expression() && a.is_animated() && a.as_constant().is_none());
+        // Unbaked, an expression evaluates as its value.
+        assert_eq!(a.eval(t("1")), 960.0);
+        assert_eq!(a.key_range(), (r("960"), r("960")));
+        let back: Animatable = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+        assert_eq!(a, back);
+        let s = a.shifted(r("-1"));
+        let Animatable::Expression(e) = &s else {
+            panic!()
+        };
+        assert_eq!(e.time_offset, r("1"));
+        assert!(
+            serde_json::to_string(&s)
+                .unwrap()
+                .contains(r#""time_offset":"1""#)
+        );
+        let h = |x: &Animatable| {
+            let mut h = blake3::Hasher::new();
+            x.hash_into(&mut h);
+            h.finalize()
+        };
+        assert_ne!(h(&a), h(&s));
+        let b: Animatable =
+            serde_json::from_str(r#"{"expression": "wiggle(2, 31)", "value": "960"}"#).unwrap();
+        assert_ne!(h(&a), h(&b));
+        for bad in [
+            r#"{"expression": " "}"#,
+            r#"{"expression": "1", "value": {"expression": "2"}}"#,
+        ] {
+            let x: Animatable = serde_json::from_str(bad).unwrap();
+            assert!(x.validate().is_err(), "{bad}");
+        }
+        assert!(serde_json::from_str::<Animatable>(r#"{"expression": "1", "x": 1}"#).is_err());
     }
 }

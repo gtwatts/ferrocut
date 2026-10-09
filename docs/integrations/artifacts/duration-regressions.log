@@ -1,0 +1,10 @@
+   Compiling ferrocut-engine v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.02s
+     Running tests/proxy.rs (target/debug/deps/proxy-bada59ec439264f7)
+
+running 2 tests
+test proxies_are_half_size_cached_by_content_and_codec_by_size ... ok
+test sources_status_and_draft_vs_final_renders ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.15s
+

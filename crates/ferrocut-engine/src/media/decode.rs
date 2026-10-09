@@ -62,12 +62,7 @@ impl Decoder {
         } else {
             stream.start_time()
         };
-        let rate = to_core(stream.avg_frame_rate());
-        let rate = if rate > Rational::ZERO {
-            rate
-        } else {
-            to_core(stream.rate())
-        };
+        let rate = super::stream_rate(&stream).unwrap_or(Rational::ZERO);
         if rate <= Rational::ZERO {
             bail!("cannot determine frame rate");
         }

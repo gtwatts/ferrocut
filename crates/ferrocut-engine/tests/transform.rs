@@ -136,6 +136,95 @@ fn integer_translation_is_an_exact_copy() {
     }
 }
 
+fn placed_node(output: (u32, u32), fit: ferrocut_engine::placement::Fit) -> TransformNode {
+    TransformNode {
+        start: RationalTime::ZERO,
+        spec: TransformSpec::default(),
+        placement: ferrocut_engine::placement::Placement {
+            native: (W, H),
+            output,
+            fit,
+        },
+        three_d: false,
+        camera: None,
+        blur: None,
+        fps: Rational::from_int(24),
+    }
+}
+
+fn render_placed(gpu: &GpuContext, node: &TransformNode) -> (Frame, Vec<[u16; 4]>) {
+    let (mut worker, _) = worker(gpu);
+    let cancel = CancelToken::new();
+    let mut ctx = RenderCtx::new(gpu, &mut worker, &cancel, None);
+    let input = Arc::new(frame(PixelRect::full(W, H), Rational::ONE, pattern).to_gpu(gpu));
+    let out = node.render(&mut ctx, RationalTime::ZERO, &[input]).unwrap();
+    ctx.flush();
+    let bits = display_bits(gpu, &out);
+    (Arc::try_unwrap(out).ok().unwrap(), bits)
+}
+
+#[test]
+fn fitted_native_pixels_have_the_output_display_and_transparent_bars() {
+    let Some(gpu) = gpu() else { return };
+    use ferrocut_engine::placement::Fit;
+    for fit in [Fit::Native, Fit::Contain] {
+        let node = placed_node((W * 2, H), fit);
+        let (out, bits) = render_placed(gpu, &node);
+        assert_eq!((out.width, out.height), (W * 2, H));
+        for y in 0..H {
+            for x in 0..W * 2 {
+                let expected = if (W / 2..W / 2 + W).contains(&x) {
+                    pattern((x - W / 2) as i32, y as i32).map(|x| f16::from_f32(x).to_bits())
+                } else {
+                    [0; 4]
+                };
+                assert_eq!(
+                    bits[(y * W * 2 + x) as usize],
+                    expected,
+                    "fit {fit:?} ({x},{y})"
+                );
+            }
+        }
+        assert_eq!(bits, render_placed(gpu, &node).1, "repeat is deterministic");
+    }
+}
+
+#[test]
+fn display_size_is_keyed_even_when_the_placed_affine_is_identity() {
+    let mut node = placed_node((W * 2, H), ferrocut_engine::placement::Fit::Native);
+    node.spec = serde_json::from_str(r#"{"anchor":[0,0],"position":[0,0]}"#).unwrap();
+    assert!(node.at(RationalTime::ZERO).is_identity());
+    let key = node.content_hash_at(RationalTime::ZERO);
+    assert_ne!(key, NodeHash::of("transform.identity", &[]));
+    node.placement.output.0 += 1;
+    assert_ne!(key, node.content_hash_at(RationalTime::ZERO));
+    let Some(gpu) = gpu() else { return };
+    let (out, _) = render_placed(gpu, &node);
+    assert_eq!((out.width, out.height), node.placement.output);
+}
+
+#[test]
+fn mismatched_3d_and_empty_layers_keep_the_output_canvas() {
+    let Some(gpu) = gpu() else { return };
+    let mut node = placed_node((W * 2, H * 4), ferrocut_engine::placement::Fit::Contain);
+    let (_, flat) = render_placed(gpu, &node);
+    node.three_d = true;
+    let (out, projected) = render_placed(gpu, &node);
+    assert_eq!((out.width, out.height), node.placement.output);
+    for (a, b) in flat.into_iter().zip(projected) {
+        for (a, b) in to_f32(a).into_iter().zip(to_f32(b)) {
+            assert!((a - b).abs() < 0.003, "2D/3D default camera: {a} vs {b}");
+        }
+    }
+    for three_d in [false, true] {
+        node.three_d = three_d;
+        node.spec = serde_json::from_str(r#"{"scale":0}"#).unwrap();
+        let (out, bits) = render_placed(gpu, &node);
+        assert_eq!((out.width, out.height), node.placement.output);
+        assert!(bits.into_iter().all(|b| b == [0; 4]));
+    }
+}
+
 #[test]
 fn data_window_does_not_change_the_result() {
     let Some(gpu) = gpu() else { return };
@@ -156,6 +245,29 @@ fn data_window_does_not_change_the_result() {
     let (_, b) = run(gpu, &full, t);
     assert_eq!(a, b);
     assert!(a.iter().any(|p| p[3] != 0), "something is visible");
+}
+
+#[test]
+fn mismatched_motion_blur_keeps_the_output_display_and_is_deterministic() {
+    let Some(gpu) = gpu() else { return };
+    let mut node = placed_node((W * 2, H * 4), ferrocut_engine::placement::Fit::Contain);
+    node.spec =
+        serde_json::from_str(r#"{"position":[{"keyframes":[{"t":0,"v":32},{"t":1,"v":128}]},32]}"#)
+            .unwrap();
+    for three_d in [false, true] {
+        node.three_d = three_d;
+        node.blur = None;
+        let (_, sharp) = render_placed(gpu, &node);
+        node.blur = Some(ferrocut_engine::layer3d::MotionBlurSpec {
+            shutter_angle: Rational::from_int(360),
+            shutter_phase: Rational::ZERO,
+            samples: 4,
+        });
+        let (out, blurred) = render_placed(gpu, &node);
+        assert_eq!((out.width, out.height), node.placement.output);
+        assert_ne!(sharp, blurred, "moving layer is blurred");
+        assert_eq!(blurred, render_placed(gpu, &node).1);
+    }
 }
 
 #[test]
@@ -304,8 +416,11 @@ fn keyframed_parameters_drive_frame_keys() {
     let node = TransformNode {
         start: secs(2, 1),
         spec,
-        width: W,
-        height: H,
+        placement: ferrocut_engine::placement::Placement {
+            native: (W, H),
+            output: (W, H),
+            fit: Default::default(),
+        },
         three_d: false,
         camera: None,
         blur: None,

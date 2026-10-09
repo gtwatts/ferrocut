@@ -324,3 +324,192 @@ fn real_whisper_finds_the_gatekeepers_line() {
         "{a}..{b}"
     );
 }
+
+/// A whisper-cli stand-in whose behavior follows `<dir>/mode`: `fail` exits 1
+/// (GPU and CPU), `garbage` writes unparsable output, `silent` writes an
+/// empty transcription (no speech), otherwise WHISPER_JSON. Counts runs.
+fn moody_whisper(dir: &Path) -> PathBuf {
+    let json = dir.join("fixture.json");
+    std::fs::write(&json, WHISPER_JSON).unwrap();
+    let p = dir.join("whisper-cli");
+    std::fs::write(
+        &p,
+        format!(
+            r#"#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in -of) of=$2; shift;; esac
+  shift
+done
+echo run >> "{d}/runs"
+case "$(cat "{d}/mode" 2>/dev/null)" in
+  fail) echo "model load failed" >&2; exit 1;;
+  garbage) echo "not json" > "$of.json";;
+  silent) echo '{{"transcription":[]}}' > "$of.json";;
+  *) cp "{j}" "$of.json";;
+esac
+"#,
+            d = dir.display(),
+            j = json.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+fn index_files(media: &Path) -> usize {
+    std::fs::read_dir(media.parent().unwrap().join(".ferrocut-index"))
+        .map(|d| d.count())
+        .unwrap_or(0)
+}
+
+#[test]
+fn unavailable_transcripts_recover_without_deleting_the_cache() {
+    // Seen on an installed build indexing narration: it found neither whisper-cli
+    // nor a model and cached that; after only the CLI was fixed it still
+    // answered "whisper-cli not found", from the cache.
+    let d = tempfile::tempdir().unwrap();
+    let tools = d.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    let cli = moody_whisper(&tools);
+    let model = tools.join("ggml-test.bin");
+    let media = d.path().join("vo.wav");
+    write_tone(&media, 1.0);
+    let opts = |cli: &Path, model: &Path| IndexOptions {
+        transcribe: true,
+        shots: false,
+        whisper: WhisperConfig {
+            cli: Some(cli.into()),
+            model: Some(model.into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let reason = |ix: &index::MediaIndex| match &ix.transcript {
+        Part::Unavailable { reason } => reason.clone(),
+        other => panic!("{other:?}"),
+    };
+    let missing_cli = tools.join("no-such-whisper-cli");
+    // Neither exists: unavailable, naming the CLI.
+    let (ix, _) = index::index_media(&media, &opts(&missing_cli, &model)).unwrap();
+    assert!(
+        reason(&ix).contains("no-such-whisper-cli does not exist"),
+        "{}",
+        reason(&ix)
+    );
+    // CLI fixed, model still missing: same key (cached file), but the reason
+    // is today's, not the saved one.
+    let (ix, info) = index::index_media(&media, &opts(&cli, &model)).unwrap();
+    assert!(info.cached);
+    assert!(
+        reason(&ix).contains("ggml-test.bin does not exist"),
+        "{}",
+        reason(&ix)
+    );
+    // Both fixed: transcribed, no cache deletion needed.
+    std::fs::write(&model, b"model v1").unwrap();
+    let (ix, info) = index::index_media(&media, &opts(&cli, &model)).unwrap();
+    assert!(!info.cached && runs(&tools) == 1);
+    assert_eq!(ix.transcript.done().unwrap().words(), 6);
+    // A successful transcript is reused as before.
+    let (ix2, info) = index::index_media(&media, &opts(&cli, &model)).unwrap();
+    assert!(info.cached && ix2 == ix && runs(&tools) == 1);
+}
+
+#[test]
+fn failed_or_unparsable_transcription_is_retried_and_no_speech_is_kept() {
+    let d = tempfile::tempdir().unwrap();
+    let tools = d.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    let cli = moody_whisper(&tools);
+    let model = tools.join("ggml-test.bin");
+    std::fs::write(&model, b"model v1").unwrap();
+    let opts = IndexOptions {
+        transcribe: true,
+        shots: false,
+        whisper: WhisperConfig {
+            cli: Some(cli),
+            model: Some(model),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mode = |m: &str| std::fs::write(tools.join("mode"), m).unwrap();
+    for (bad, want) in [("fail", "whisper-cli failed"), ("garbage", "whisper JSON")] {
+        let media = d.path().join(format!("{bad}.wav"));
+        write_tone(&media, 1.0 + runs(&tools) as f32 / 10.0);
+        mode(bad);
+        let before = runs(&tools);
+        let (ix, info) = index::index_media(&media, &opts).unwrap();
+        let Part::Unavailable { reason } = &ix.transcript else {
+            panic!("{bad}: {:?}", ix.transcript)
+        };
+        assert!(reason.contains(want), "{bad}: {reason}");
+        assert!(!info.cached && index_files(&media) == 0, "{bad}: cached");
+        // The next request runs whisper again; once it works, it is kept.
+        mode("ok");
+        let (ix, info) = index::index_media(&media, &opts).unwrap();
+        assert!(!info.cached && ix.transcript.done().is_some(), "{bad}");
+        assert!(runs(&tools) > before + 1);
+        std::fs::remove_dir_all(d.path().join(".ferrocut-index")).unwrap();
+    }
+    // No speech is a transcript (empty), not an error, and it is cached.
+    let media = d.path().join("room-tone.wav");
+    write_tone(&media, 0.5);
+    mode("silent");
+    let (ix, _) = index::index_media(&media, &opts).unwrap();
+    let t = ix.transcript.done().expect("an empty transcript");
+    assert_eq!(t.words(), 0);
+    let n = runs(&tools);
+    let (ix2, info) = index::index_media(&media, &opts).unwrap();
+    assert!(info.cached && ix2 == ix && runs(&tools) == n);
+}
+
+#[test]
+fn legacy_cached_transcription_errors_are_retried() {
+    // Before this fix a parse or decode error was cached under the model's
+    // key and returned on every later request.
+    let d = tempfile::tempdir().unwrap();
+    let tools = d.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    let cli = moody_whisper(&tools);
+    let model = tools.join("ggml-test.bin");
+    std::fs::write(&model, b"model v1").unwrap();
+    let media = d.path().join("vo.wav");
+    write_tone(&media, 1.0);
+    let opts = |cached_only: bool| IndexOptions {
+        transcribe: true,
+        shots: true,
+        cached_only,
+        whisper: WhisperConfig {
+            cli: Some(cli.clone()),
+            model: Some(model.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let (good, info) = index::index_media(&media, &opts(false)).unwrap();
+    // Rewrite it as the old code left it: same key, unavailable transcript.
+    // The shots reason marks whether the cached shots are reused.
+    let mut legacy = serde_json::to_value(&good).unwrap();
+    legacy["transcript"] =
+        serde_json::json!({"status":"unavailable","reason":"whisper JSON: expected value"});
+    legacy["shots"] = serde_json::json!({"status":"unavailable","reason":"cached shots"});
+    std::fs::write(&info.index_path, legacy.to_string()).unwrap();
+    // cached_only reads it as it is and never runs whisper.
+    let (ix, info) = index::index_media(&media, &opts(true)).unwrap();
+    assert!(info.cached && ix.transcript.done().is_none() && runs(&tools) == 1);
+    // A normal request retries the transcript and keeps the cached shots.
+    let (ix, info) = index::index_media(&media, &opts(false)).unwrap();
+    assert!(!info.cached && runs(&tools) == 2);
+    assert_eq!(ix.transcript, good.transcript);
+    assert_eq!(
+        ix.shots,
+        Part::Unavailable {
+            reason: "cached shots".into()
+        }
+    );
+    // Rewritten: the next request is a plain cache hit.
+    let (ix2, info) = index::index_media(&media, &opts(false)).unwrap();
+    assert!(info.cached && ix2 == ix && runs(&tools) == 2);
+}

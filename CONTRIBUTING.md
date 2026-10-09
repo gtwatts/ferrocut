@@ -101,6 +101,8 @@ encode only with a codec you already provide, via `FERROCUT_OPENH264_LIB=/path/l
 - Commit small, self-contained changes with a message explaining the why.
 - Stage only your own paths explicitly. Never use `git add -A` or `git commit -a`: the tree may hold other
   people's work in progress.
+- Keep active development on a pushed feature branch with an open PR. Push verified milestones promptly
+  so GitHub backs up the work; completed work should not remain only on this machine.
 - If you hit `.git/index.lock`, wait and retry; don't delete it.
 - Run the checks above before pushing.
 

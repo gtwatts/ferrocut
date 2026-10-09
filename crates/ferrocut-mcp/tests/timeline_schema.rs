@@ -40,6 +40,9 @@ fn timelines() -> Vec<PathBuf> {
 #[test]
 fn every_example_and_task_timeline_validates_and_engine_output_too() {
     let schema = ferrocut_mcp::schema::timeline();
+    // The published form (docs://timeline/schema.json) must accept the same files.
+    let published = ferrocut_mcp::compact::compact(schema.clone());
+    ferrocut_mcp::compact::refs_are_well_placed(&published).unwrap();
     let files = timelines();
     assert!(files.len() >= 8, "{files:?}");
     for f in files {
@@ -47,6 +50,8 @@ fn every_example_and_task_timeline_validates_and_engine_output_too() {
         let v: Value = serde_json::from_str(&text).unwrap();
         let errs = mini_schema::validate(&schema, &v);
         assert!(errs.is_empty(), "{}: {errs:#?}", f.display());
+        let errs = mini_schema::validate(&published, &v);
+        assert!(errs.is_empty(), "{} (published): {errs:#?}", f.display());
         // What the engine writes back (all defaults made explicit) validates too.
         let tl = Timeline::from_json(&text).unwrap();
         let out = serde_json::to_value(&tl).unwrap();
@@ -69,6 +74,8 @@ fn schema_rejects_what_the_engine_rejects() {
         ("/tracks/0/clips/0/duration", json!(2.5)),
         ("/tracks/0/clips/0/bogus", json!(1)),
         ("/output/fps", json!("24fps")),
+        ("/output/fit", json!("fill")),
+        ("/tracks/0/clips/0/fit", json!("fill")),
         ("/tracks/0/clips/0/opacity", json!({"keyframes": []})),
     ] {
         let mut v = base.clone();
@@ -93,7 +100,7 @@ fn timelines_built_with_every_op_validate() {
     .unwrap();
     let ops = parse_ops(
         r#"[
-      {"op":"add_clip","track":"V1","source":"a.mkv","id":"a","duration":"5"},
+      {"op":"add_clip","track":"V1","source":"a.mkv","id":"a","duration":"5","fit":"contain"},
       {"op":"add_clip","track":"V1","source":"b.mkv","id":"b","source_in":"1","duration":"5"},
       {"op":"add_transition","clip":"b","duration":"1"},
       {"op":"set_keyframes","clip":"a","param":"opacity","keyframes":[{"t":"0","v":"0"},{"t":"1","v":"1","interp":"ease_out"}]},

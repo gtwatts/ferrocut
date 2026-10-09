@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use ferrocut_core::{AdapterPreference, GpuContext};
-use ferrocut_perceive::check::{CheckError, CheckThresholds, grade, parse_brief_cuts};
+use ferrocut_perceive::check::{CheckError, grade_resolved, parse_brief_cuts};
 use ferrocut_perceive::input::{RenderReport, Timeline};
+use ferrocut_perceive::targets::{Authored, Resolved};
 use ferrocut_perceive::{AudioInput, CheckReport, Options, Report, Request, analyze, diff};
 
 #[derive(Parser)]
@@ -114,10 +115,14 @@ struct CheckArgs {
     /// CPU scopes only.
     #[arg(long)]
     cpu: bool,
+    /// Integrated loudness target, LUFS (default: what the render was normalized to, else the
+    /// timeline's audio.loudness, else -14; the report's threshold_sources says which).
     #[arg(long, allow_negative_numbers = true)]
     loudness_target: Option<f64>,
+    /// Allowed deviation from the target, LU (default 1).
     #[arg(long)]
     loudness_tolerance: Option<f64>,
+    /// True-peak ceiling, dBTP (default: the render's limiter ceiling, else the timeline's, else -1).
     #[arg(long, allow_negative_numbers = true)]
     true_peak_max: Option<f64>,
     #[arg(long)]
@@ -138,26 +143,28 @@ struct CheckArgs {
     no_cut_check: bool,
 }
 
-fn thresholds(a: &CheckArgs) -> anyhow::Result<CheckThresholds> {
-    let mut t = CheckThresholds::load(a.config.as_deref())?;
-    macro_rules! set {
-        ($($f:ident => $k:ident),*) => { $( if let Some(v) = a.$f { t.$k = v; } )* };
+/// Thresholds and their sources: defaults, the render's recorded loudness
+/// target and ceiling (else the timeline's), the config keys, then flags.
+fn thresholds(a: &CheckArgs, rr: &RenderReport, tl: &Timeline) -> anyhow::Result<Resolved> {
+    use serde_json::Value;
+    let mut flags: Vec<(&str, Value)> = Vec::new();
+    macro_rules! flag {
+        ($($f:ident => $k:literal),*) => { $( if let Some(v) = a.$f { flags.push(($k, Value::from(v))); } )* };
     }
-    set!(loudness_target => loudness_target_lufs, loudness_tolerance => loudness_tolerance_lu,
-         true_peak_max => true_peak_max_dbtp, cut_tolerance_frames => cut_tolerance_frames,
-         max_black_frames => max_black_frames, max_edge_black_s => max_edge_black_s,
-         max_frozen_s => max_frozen_s, max_flash_frames => max_flash_frames);
+    flag!(loudness_target => "loudness_target_lufs", loudness_tolerance => "loudness_tolerance_lu",
+          true_peak_max => "true_peak_max_dbtp", cut_tolerance_frames => "cut_tolerance_frames",
+          max_black_frames => "max_black_frames", max_edge_black_s => "max_edge_black_s",
+          max_frozen_s => "max_frozen_s", max_flash_frames => "max_flash_frames");
     if a.allow_no_audio {
-        t.require_audio = false;
+        flags.push(("require_audio", Value::Bool(false)));
     }
     if a.no_cut_check {
-        t.check_cuts = false;
+        flags.push(("check_cuts", Value::Bool(false)));
     }
-    Ok(t)
+    Resolved::resolve(&Authored::new(rr, tl)?, a.config.as_deref(), &flags)
 }
 
 fn run_check(a: &CheckArgs) -> anyhow::Result<CheckReport> {
-    let th = thresholds(a)?;
     let rr_path = match &a.render_report {
         Some(p) => p.clone(),
         None if a.render.extension().is_some_and(|e| e == "json") => a.render.clone(),
@@ -165,6 +172,7 @@ fn run_check(a: &CheckArgs) -> anyhow::Result<CheckReport> {
     };
     let rr = RenderReport::load(&rr_path)?;
     let tl = Timeline::load(&a.timeline)?;
+    let resolved = thresholds(a, &rr, &tl)?;
     let report_dir = rr_path.parent().unwrap_or(Path::new(".")).to_path_buf();
     let cache_dir = a.cache_dir.clone().unwrap_or_else(|| {
         rr.chunk_dir
@@ -211,7 +219,7 @@ fn run_check(a: &CheckArgs) -> anyhow::Result<CheckReport> {
     if let Some(o) = &a.out {
         std::fs::write(o.join("perceive.json"), report.to_json())?;
     }
-    Ok(grade(&report, &tl, brief.as_deref(), &th))
+    Ok(grade_resolved(&report, &tl, brief.as_deref(), &resolved))
 }
 
 fn main() -> anyhow::Result<()> {

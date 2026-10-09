@@ -1,0 +1,117 @@
+   Compiling ferrocut-engine v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.36s
+     Running tests/captions.rs (target/debug/deps/captions-1584df8bb501123e)
+
+running 8 tests
+test caption_cli_import_export_and_existing_output_protection ... ok
+test captions_use_normal_atomic_edits_dry_run_and_undo ... ok
+test exact_srt_crlf_bom_unicode_and_multiline_round_trip ... ok
+test export_quantization_is_explicit_and_cannot_collapse_cues ... ok
+test malformed_or_unsupported_subtitles_report_instead_of_losing_data ... ok
+test overlaps_round_trip_but_single_track_import_refuses_them ... ok
+test webvtt_comments_short_clocks_named_ids_and_entities ... ok
+test webvtt_reserved_identifiers_cannot_silently_turn_cues_into_comments ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/expressions.rs (target/debug/deps/expressions-feab651a117988bb)
+
+running 8 tests
+test basic_variables_and_interpolation ... ok
+test edits_keep_expressions_in_place ... ok
+test errors_are_precise ... ok
+test expressions_are_part_of_cache_keys ... ok
+test loops_follow_after_effects ... ok
+test references_and_cycles ... ok
+test sandbox_limits_hold ... ok
+test wiggle_is_deterministic_bounded_and_seeded_per_parameter ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+     Running tests/finishing.rs (target/debug/deps/finishing-e0d906f5f1ae810f)
+
+running 11 tests
+test animated_edits_invalidate_only_changed_frames_and_render_in_source_order ... ok
+test clip_track_and_adjustment_finishing_share_the_same_rendered_behavior ... ok
+test encoded_to_linear_stack_conversion_saturates_instead_of_overflowing ... ok
+test expression_driven_video_grade_survives_split_and_preserves_frame_keys ... ok
+test extreme_gamma_and_zero_gain_stay_finite_at_half_float_storage_limits ... ok
+test gpu_matches_independent_references_with_alpha_hdr_and_partial_windows ... ok
+test keyed_layer_reveals_the_background_through_the_actual_compiler ... ok
+test keying_repremultiplies_soft_edges_and_despill_preserves_luma ... ok
+test neutral_grades_and_disabled_effects_return_the_original_frame ... ok
+test parameter_bounds_working_spaces_and_nonfinite_samples_are_checked ... ok
+test worker_pipeline_cache_is_device_specific_and_cancellation_is_respected ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.30s
+
+     Running tests/native_text_timeline.rs (target/debug/deps/native_text_timeline-e9cf7ea50143009e)
+
+running 8 tests
+test agent_add_text_content_keys_and_whole_range_array_produce_real_output ... ok
+test constant_speed_and_time_remap_drive_text_keys_in_source_seconds ... ok
+test font_bytes_invalidate_only_frames_that_use_that_asset ... ok
+test journaled_text_revisions_dry_run_invalid_batch_and_undo_preserve_exact_project_state ... ok
+test keyframed_typography_keeps_source_animation_through_split_and_in_trim ... ok
+test relative_font_assets_survive_directory_relocation_and_edit_output_relocation ... ok
+test source_time_expressions_follow_retiming_and_remain_equivalent_after_split ... ok
+test timeline_time_keyframe_edits_convert_through_actual_speed_and_remap ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.48s
+
+     Running tests/source_expressions.rs (target/debug/deps/source_expressions-91a68cd3dc771691)
+
+running 4 tests
+test ambiguous_repeated_source_and_expression_timing_combinations_fail_with_guidance ... ok
+test cross_clip_source_reads_reject_unbaked_timing_but_local_reads_remain_valid ... ok
+test frozen_source_expression_can_hold_a_source_function_but_not_changing_timeline_state ... ok
+test source_time_comp_time_and_cross_clock_param_follow_forward_reverse_and_remap ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/text.rs (target/debug/deps/text-3914b4d2a9f7e8f3)
+
+running 19 tests
+test animated_text_is_seekable_and_frame_hashes_follow_evaluated_values ... ok
+test antialiased_outside_stroke_expands_all_glyph_edges ... ok
+test bad_font_bytes_face_index_and_output_geometry_fail_before_render ... ok
+test empty_spaces_and_zero_opacity_render_transparent_frames ... ok
+test explicit_arabic_fallback_shapes_and_reorders_logical_clusters ... ok
+test explicit_font_content_changes_hashes_and_existing_nodes_keep_snapshot_pixels ... ok
+test fractional_range_weights_ligatures_without_changing_shaping ... ok
+test invalid_layout_paint_and_selector_parameters_fail_structurally ... ok
+test kerning_ligatures_and_combining_sequences_use_real_shaping ... ok
+test line_selector_targets_visual_wrapped_lines ... ok
+test parameter_enumeration_and_asset_rewrite_cover_nested_animation ... ok
+test per_word_offset_and_color_keep_source_geometry_editable ... ok
+test render_node_uploads_identical_working_pixels_and_reuses_worker_font_state ... ok
+test schema_is_strict_and_structural_validation_does_not_open_fonts ... ok
+test text_opacity_is_applied_once_after_outline_and_fill_compositing ... ok
+test tracking_line_height_and_vertical_alignment_are_independent ... ok
+test transparent_background_and_linear_premultiplied_fill_match_generator_color ... ok
+test word_selector_hides_a_whole_word_and_character_selector_keeps_combining_cluster ... ok
+test wrapping_and_paragraph_alignment_have_measurable_geometry ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+     Running tests/vector.rs (target/debug/deps/vector-8f63da81c54ac29a)
+
+running 15 tests
+test cubic_paths_and_even_odd_holes_are_real_geometry ... ok
+test empty_clipped_and_zero_width_geometry_is_transparent ... ok
+test fill_and_stroke_composite_in_linear_premultiplied_working_space ... ok
+test geometry_and_style_animation_evaluate_at_source_time ... ok
+test gradients_match_existing_generator_color_and_alpha_semantics ... ok
+test hashes_sample_values_and_preserve_geometry_style_and_dimensions ... ok
+test malformed_shape_requests_fail_before_rasterization ... ok
+test multiple_gradient_stops_hard_edges_and_radial_alpha_are_supported ... ok
+test path_control_points_and_gradient_stops_can_be_animated ... ok
+test rectangle_coverage_is_exact_and_subpixels_are_antialiased ... ok
+test rounded_rectangles_clamp_radius_and_ellipses_keep_correct_area ... ok
+test shape_timelines_bake_expressions_and_supply_animated_alpha_track_mattes ... ok
+test stroke_caps_dashes_and_animated_offsets_change_coverage ... ok
+test stroke_joins_and_animated_miter_limit_change_corner_geometry ... ok
+test vector_color_is_not_quantized_to_rgba8 ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+

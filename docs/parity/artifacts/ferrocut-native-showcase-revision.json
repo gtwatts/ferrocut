@@ -1,0 +1,42 @@
+{
+  "output": "/tmp/ferrocut-native-showcase-revised.json",
+  "dry_run": false,
+  "written": true,
+  "changes": [
+    {
+      "op": 0,
+      "kind": "set_param",
+      "summary": "headline generator.text.content: \"CUT. COMPOSE.\\nCREATE.\" -> \"EDIT. ANIMATE.\\nCOMPOSE.\"",
+      "span": [
+        "0",
+        "4"
+      ]
+    }
+  ],
+  "before": "e88271c1c69d236008cc901fc5446de7c44f8809a7a7a5f4ac5fd5d27d146146",
+  "after": "6276acaf54fccb1e6282327e0486eb6fe164dc5c1a672e27f5823ed8333186ef",
+  "journal_seq": 1,
+  "sources_absolutized": false,
+  "render": {
+    "total_chunks": 4,
+    "total_frames": 96,
+    "chunk_frames": 24,
+    "dirty_chunks": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "dirty_frames": 96,
+    "reused_chunks": 0,
+    "ranges": [
+      {
+        "start_frame": 0,
+        "end_frame": 96,
+        "start": "0",
+        "end": "4"
+      }
+    ],
+    "audio": "audio is re-mixed on every render (not chunk-cached)"
+  }
+}

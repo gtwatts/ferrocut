@@ -43,9 +43,9 @@ impl WhisperConfig {
     }
 }
 
-/// `rel` under the first ancestor of the running executable (or the current
-/// directory) that has it.
-fn find_up(rel: &str) -> Option<PathBuf> {
+/// Where [`find_up`] starts: the running executable and the current
+/// directory (as a child, so the directory itself is searched first).
+fn find_up_starts() -> Vec<PathBuf> {
     let mut starts = Vec::new();
     if let Ok(e) = std::env::current_exe() {
         starts.push(e);
@@ -53,7 +53,13 @@ fn find_up(rel: &str) -> Option<PathBuf> {
     if let Ok(d) = std::env::current_dir() {
         starts.push(d.join("x"));
     }
-    for s in starts {
+    starts
+}
+
+/// `rel` under the first ancestor of the running executable (or the current
+/// directory) that has it.
+fn find_up(rel: &str) -> Option<PathBuf> {
+    for s in find_up_starts() {
         for dir in s.ancestors().skip(1).take(6) {
             let p = dir.join(rel);
             if p.is_file() {
@@ -64,12 +70,29 @@ fn find_up(rel: &str) -> Option<PathBuf> {
     None
 }
 
+/// The directories [`find_up`] searched, for a not-found message.
+fn searched() -> String {
+    find_up_starts()
+        .iter()
+        .filter_map(|s| s.parent())
+        .map(|d| d.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+/// An explicit choice (option or environment variable) wins over discovery,
+/// so a wrong one is an error naming it rather than a silent fallback.
+fn explicit(p: PathBuf, what: &str) -> anyhow::Result<PathBuf> {
+    anyhow::ensure!(p.is_file(), "{what} {} does not exist", p.display());
+    Ok(p)
+}
+
 pub fn find_cli(cfg: &WhisperConfig) -> anyhow::Result<PathBuf> {
     if let Some(p) = &cfg.cli {
-        return Ok(p.clone());
+        return explicit(p.clone(), "whisper-cli");
     }
     if let Some(p) = std::env::var_os("FERROCUT_WHISPER_CLI") {
-        return Ok(PathBuf::from(p));
+        return explicit(PathBuf::from(p), "FERROCUT_WHISPER_CLI");
     }
     if let Some(p) = find_up("third_party/whisper.cpp/build/bin/whisper-cli") {
         return Ok(p);
@@ -80,15 +103,18 @@ pub fn find_cli(cfg: &WhisperConfig) -> anyhow::Result<PathBuf> {
             return Ok(p);
         }
     }
-    bail!("whisper-cli not found: run scripts/build-whisper.sh or set FERROCUT_WHISPER_CLI")
+    bail!(
+        "whisper-cli not found: FERROCUT_WHISPER_CLI is unset, no third_party/whisper.cpp/build/bin/whisper-cli up to 6 levels above {}, none on PATH. scripts/install-local.py links an existing checkout whisper build when present; otherwise set FERROCUT_WHISPER_CLI (and FERROCUT_WHISPER_MODEL) to a checkout's third_party build (scripts/build-whisper.sh). Nothing is downloaded automatically; an MCP server reads environment overrides when it starts",
+        searched()
+    )
 }
 
 pub fn find_model(cfg: &WhisperConfig) -> anyhow::Result<PathBuf> {
     if let Some(p) = &cfg.model {
-        return Ok(p.clone());
+        return explicit(p.clone(), "whisper model");
     }
     if let Some(p) = std::env::var_os("FERROCUT_WHISPER_MODEL") {
-        return Ok(PathBuf::from(p));
+        return explicit(PathBuf::from(p), "FERROCUT_WHISPER_MODEL");
     }
     for m in [
         "ggml-medium.en.bin",
@@ -100,7 +126,10 @@ pub fn find_model(cfg: &WhisperConfig) -> anyhow::Result<PathBuf> {
             return Ok(p);
         }
     }
-    bail!("no whisper model: run scripts/fetch-whisper-model.sh or set FERROCUT_WHISPER_MODEL")
+    bail!(
+        "no whisper model: FERROCUT_WHISPER_MODEL is unset and no third_party/whisper-models/ggml-{{medium,small}}{{.en,}}.bin up to 6 levels above {}. Set FERROCUT_WHISPER_MODEL (scripts/fetch-whisper-model.sh fetches one; nothing is downloaded automatically)",
+        searched()
+    )
 }
 
 /// 16-bit PCM mono WAV.

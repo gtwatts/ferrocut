@@ -20,7 +20,7 @@ pub use color::{AlphaMode, ColorSpace};
 pub use error::{ErrorKind, GpuFault, NodeError};
 pub use hash::{FrameKey, NodeHash};
 pub use image::{CpuFrame, CpuImage, PixelRect};
-pub use keyframe::{Animatable, Interp, Keyframe, KeyframeTrack};
+pub use keyframe::{Animatable, Expression, Interp, Keyframe, KeyframeTrack};
 pub use manifest::FileManifest;
 pub use param::{ParamKind, ParamSpec, TimeBase};
 pub use shot::{BoundaryKind, ShotBoundary};

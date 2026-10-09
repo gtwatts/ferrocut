@@ -168,7 +168,8 @@ fn ops_on_retimed_clips_keep_content_in_place() {
 }
 
 fn stub_keys(tl: &Timeline) -> Vec<ferrocut_core::FrameKey> {
-    let c = compile_with(tl, |p, w, h| {
+    let c = compile_with(tl, |p| {
+        let (w, h) = (tl.output.width, tl.output.height);
         Ok(SourceNode {
             path: p.clone(),
             file_hash: *blake3::hash(p.to_string_lossy().as_bytes()).as_bytes(),

@@ -1,0 +1,43 @@
+{
+  "status": "completed",
+  "output": "/home/gordontwatts/Documents/projects/ferrocut/docs/parity/artifacts/native-revision-compare.png",
+  "dry_run": false,
+  "commands": [
+    "/home/gordontwatts/.local/share/codex-ffmpeg-skill/runtime/usr/bin/ffmpeg -hide_banner -loglevel error -nostdin -y -ss 1.500 -i /tmp/ferrocut-native-showcase.mkv -ss 1.500 -i /tmp/ferrocut-native-showcase-revised.mkv -filter_complex '[0:v]scale=1280:-2,drawtext=text='\\''00\\:00\\:01.500'\\'':fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8[a];[1:v]scale=1280:-2,drawtext=text='\\''00\\:00\\:01.500'\\'':fontcolor=white:fontsize=h/18:box=1:boxcolor=black@0.55:boxborderw=6:x=8:y=8[b];[a][b]scale2ref=w=iw:h=ih[a2][b2];[a2][b2]hstack=inputs=2[out]' -map '[out]' -frames:v 1 /home/gordontwatts/Documents/projects/ferrocut/docs/parity/artifacts/native-revision-compare.png"
+  ],
+  "probe": {
+    "file": "/home/gordontwatts/Documents/projects/ferrocut/docs/parity/artifacts/native-revision-compare.png",
+    "format": "png_pipe",
+    "duration": null,
+    "size_bytes": 141136,
+    "bitrate": null,
+    "video": {
+      "codec": "png",
+      "profile": null,
+      "width": 2560,
+      "height": 720,
+      "display_aspect": "32:9",
+      "fps": 25.0,
+      "r_frame_rate": "25/1",
+      "avg_frame_rate": "25/1",
+      "variable_frame_rate_suspected": false,
+      "pix_fmt": "rgb24",
+      "bit_depth": 8,
+      "hdr": false,
+      "hdr_format": null,
+      "dolby_vision": null,
+      "color_space": "gbr",
+      "color_primaries": null,
+      "color_transfer": null,
+      "color_range": "pc",
+      "rotation": 0,
+      "nb_frames": null,
+      "bitrate": null
+    },
+    "audio": null,
+    "subtitle_streams": 0
+  },
+  "outputs": [
+    "/home/gordontwatts/Documents/projects/ferrocut/docs/parity/artifacts/native-revision-compare.png"
+  ]
+}

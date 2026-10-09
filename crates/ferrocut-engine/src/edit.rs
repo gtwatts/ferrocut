@@ -155,6 +155,8 @@ pub enum EditOp {
     },
     AddClip {
         track: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fit: Option<crate::placement::Fit>,
         /// Media file or comp (omit for a generator clip).
         #[serde(default, skip_serializing_if = "path_is_empty")]
         source: PathBuf,
@@ -510,7 +512,7 @@ pub trait Item: Clone {
     fn audio(&self) -> &ClipAudio;
     fn audio_mut(&mut self) -> &mut ClipAudio;
     /// Shift clip-local keyframe times by `dt`.
-    fn shift_local_keys(&mut self, dt: Rational);
+    fn shift_local_keys(&mut self, dt: Rational) -> anyhow::Result<()>;
     /// Remove the incoming transition (video dissolve, audio crossfade).
     fn drop_transition_in(&mut self);
     fn speed(&self) -> &Animatable;
@@ -578,10 +580,10 @@ macro_rules! item_common {
 
 impl Item for Clip {
     item_common!();
-    fn shift_local_keys(&mut self, dt: Rational) {
+    fn shift_local_keys(&mut self, dt: Rational) -> anyhow::Result<()> {
         self.audio.gain_db = self.audio.gain_db.shifted(dt);
         self.audio.pan = self.audio.pan.shifted(dt);
-        self.shift_video_keys(dt);
+        self.shift_video_keys(dt)
     }
     fn drop_transition_in(&mut self) {
         self.transition_in = None;
@@ -591,11 +593,12 @@ impl Item for Clip {
 
 impl Item for AudioClip {
     item_common!();
-    fn shift_local_keys(&mut self, dt: Rational) {
+    fn shift_local_keys(&mut self, dt: Rational) -> anyhow::Result<()> {
         self.audio.gain_db = self.audio.gain_db.shifted(dt);
         self.audio.pan = self.audio.pan.shifted(dt);
         self.speed = self.speed.shifted(dt);
         self.time_remap = self.time_remap.as_ref().map(|a| a.shifted(dt));
+        Ok(())
     }
     fn drop_transition_in(&mut self) {
         self.audio.crossfade_in = None;
@@ -707,7 +710,7 @@ fn split<T: Item>(
     right.drop_transition_in();
     right.audio_mut().in_offset = z();
     right.audio_mut().fade_in = None;
-    right.shift_local_keys(-off.0);
+    right.shift_local_keys(-off.0)?;
     clips[ci] = left;
     clips.insert(ci + 1, right);
     Ok(Change {
@@ -737,7 +740,7 @@ fn trim<T: Item>(
             *c.start_mut() = c.start() + d;
             *c.source_in_mut() = c.source_at(d);
             *c.duration_mut() = c.duration() - d;
-            c.shift_local_keys(-d.0);
+            c.shift_local_keys(-d.0)?;
         }
         Edge::Out => {
             ensure!(
@@ -817,7 +820,7 @@ fn roll<T: Item>(clips: &mut [T], ci: usize, d: RationalTime) -> anyhow::Result<
     *r.start_mut() = b.start() + d;
     *r.source_in_mut() = b.source_at(d);
     *r.duration_mut() = b.duration() - d;
-    r.shift_local_keys(-d.0);
+    r.shift_local_keys(-d.0)?;
     let new = old + d;
     Ok(Change {
         op: 0,
@@ -854,7 +857,7 @@ fn slide<T: Item>(clips: &mut [T], ci: usize, d: RationalTime) -> anyhow::Result
         *n.start_mut() = n.start() + d;
         *n.source_in_mut() = n.source_at(d);
         *n.duration_mut() = n.duration() - d;
-        n.shift_local_keys(-d.0);
+        n.shift_local_keys(-d.0)?;
     }
     *clips[ci].start_mut() = c.start() + d;
     let lo = c.start().min(c.start() + d);
@@ -992,6 +995,7 @@ pub struct MediaFacts {
     pub duration: Option<RationalTime>,
     pub has_video: bool,
     pub has_audio: bool,
+    pub size: Option<(u32, u32)>,
 }
 
 /// Media length lookup with a cache; `probe` returns `None` if unknown.
@@ -1371,6 +1375,7 @@ fn apply_one(
         EditOp::Unnest { clip } => unnest(tl, clip, media)?,
         EditOp::AddClip {
             track,
+            fit,
             source,
             generator,
             id,
@@ -1389,6 +1394,7 @@ fn apply_one(
             *source_in,
             *duration,
             *adjustment,
+            *fit,
         )?,
         EditOp::AddTransition {
             clip,
@@ -1548,6 +1554,7 @@ fn apply_one(
             value,
         } => set_param(
             tl,
+            media,
             "set_param",
             clip.as_deref(),
             track.as_deref(),
@@ -1562,31 +1569,51 @@ fn apply_one(
             mode,
             timeline_time,
         } => {
-            let clip_start = match clip {
+            let clip_place = match clip {
                 Some(c) => {
                     let (tr, ci) = locate(tl, c)?;
                     Some(on_track!(tl, tr, |clips| (
                         clips[ci].start(),
-                        clips[ci].source_in()
+                        clips[ci].time_map()
                     )))
                 }
                 None => None,
             };
             set_param(
                 tl,
+                media,
                 "set_keyframes",
                 clip.as_deref(),
                 track.as_deref(),
                 param,
                 |spec, cur| {
                     crate::params::ensure_animatable(spec)?;
-                    let shift = match (timeline_time, spec.time, clip_start) {
+                    let mut mapped = keyframes.clone();
+                    if *timeline_time
+                        && spec.time == ferrocut_core::TimeBase::Source
+                        && let Some((start, map)) = &clip_place
+                    {
+                        let mut seen = std::collections::HashSet::new();
+                        for key in &mut mapped {
+                            let time: RationalTime = serde_json::from_value(
+                                key.get("t").cloned().unwrap_or(serde_json::Value::Null),
+                            )
+                            .context("source keyframe timeline time")?;
+                            let source_time = map.source_at(RationalTime(time.0 - start.0));
+                            ensure!(
+                                seen.insert(source_time),
+                                "multiple timeline keyframes map to source time {source_time}; use distinct source times or clip-local controls"
+                            );
+                            key.as_object_mut()
+                                .context("keyframe must be an object")?
+                                .insert("t".into(), serde_json::to_value(source_time)?);
+                        }
+                    }
+                    let shift = match (timeline_time, spec.time, &clip_place) {
                         (true, ferrocut_core::TimeBase::ClipLocal, Some((s, _))) => s.0,
-                        // Source time of an unretimed clip: t - start + source_in.
-                        (true, ferrocut_core::TimeBase::Source, Some((s, si))) => s.0 - si.0,
                         _ => Rational::ZERO,
                     };
-                    crate::params::keyframes_value(cur, keyframes, shift, *mode == KeyMode::Merge)
+                    crate::params::keyframes_value(cur, &mapped, shift, *mode == KeyMode::Merge)
                 },
             )?
         }
@@ -1910,18 +1937,26 @@ fn edit_video_effects(
         clip.is_some() != track.is_some(),
         "{kind}: give a clip or a video track"
     );
-    let (mut change, refs) = set_param(tl, kind, clip, track, "effects", |_, cur| {
-        let mut fx: Vec<crate::fx::VideoEffectSpec> = match cur {
-            Some(v @ serde_json::Value::Array(_)) => serde_json::from_value(v.clone())?,
-            _ => Vec::new(),
-        };
-        f(&mut fx)?;
-        Ok(if fx.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::to_value(fx)?
-        })
-    })?;
+    let (mut change, refs) = set_param(
+        tl,
+        &mut MediaLengths::unbounded(),
+        kind,
+        clip,
+        track,
+        "effects",
+        |_, cur| {
+            let mut fx: Vec<crate::fx::VideoEffectSpec> = match cur {
+                Some(v @ serde_json::Value::Array(_)) => serde_json::from_value(v.clone())?,
+                _ => Vec::new(),
+            };
+            f(&mut fx)?;
+            Ok(if fx.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::to_value(fx)?
+            })
+        },
+    )?;
     change.kind = kind;
     Ok((change, refs))
 }
@@ -1943,18 +1978,26 @@ fn edit_effects(
     } else {
         "bus.effects"
     };
-    let (mut change, refs) = set_param(tl, kind, clip, track, name, |_, cur| {
-        let mut fx = match cur {
-            Some(serde_json::Value::Array(a)) => a.clone(),
-            _ => Vec::new(),
-        };
-        f(&mut fx)?;
-        Ok(if fx.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::Value::Array(fx)
-        })
-    })?;
+    let (mut change, refs) = set_param(
+        tl,
+        &mut MediaLengths::unbounded(),
+        kind,
+        clip,
+        track,
+        name,
+        |_, cur| {
+            let mut fx = match cur {
+                Some(serde_json::Value::Array(a)) => a.clone(),
+                _ => Vec::new(),
+            };
+            f(&mut fx)?;
+            Ok(if fx.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::Array(fx)
+            })
+        },
+    )?;
     change.kind = kind;
     Ok((change, refs))
 }
@@ -2022,6 +2065,7 @@ fn add_clip(
     source_in: Option<RationalTime>,
     duration: Option<RationalTime>,
     adjustment: bool,
+    fit: Option<crate::placement::Fit>,
 ) -> anyhow::Result<(Change, Vec<TrackRef>)> {
     let tr = track_by_name(tl, track).map_err(|e| {
         let names: Vec<&str> = tl.track_names().collect();
@@ -2155,6 +2199,10 @@ fn add_clip(
             }
         }
     };
+    ensure!(
+        fit.is_none() || matches!(tr, TrackRef::Video(_)),
+        "add_clip: fit applies to video clips only"
+    );
     match tr {
         TrackRef::Video(i) => tl.tracks[i].clips.push(Clip {
             id: id.clone(),
@@ -2165,6 +2213,7 @@ fn add_clip(
             duration,
             opacity: Animatable::constant(Rational::ONE),
             transform: None,
+            fit,
             three_d: false,
             motion_blur: false,
             transition_in: None,
@@ -2175,6 +2224,7 @@ fn add_clip(
             audio: ClipAudio::default(),
             markers: Vec::new(),
             effects: Vec::new(),
+            masks: Default::default(),
             adjustment,
         }),
         TrackRef::Audio(i) => tl.audio_tracks[i].clips.push(AudioClip {
@@ -2268,7 +2318,7 @@ fn add_transition(
         pb.start = pb.start - ext_b;
         pb.source_in = pb.source_in - ext_b;
         pb.duration = pb.duration + ext_b;
-        pb.shift_local_keys(ext_b.0);
+        pb.shift_local_keys(ext_b.0)?;
         (
             (cut - ext_b, cut + ext_a),
             format!(
@@ -2310,6 +2360,7 @@ fn add_transition(
 /// Shared by set_param / set_keyframes: `make(spec, current)` builds the new value.
 fn set_param(
     tl: &mut Timeline,
+    media: &mut MediaLengths<'_>,
     kind: &'static str,
     clip: Option<&str>,
     track: Option<&str>,
@@ -2347,7 +2398,7 @@ fn set_param(
         }
         (None, None) => (Scope::Timeline, None),
     };
-    let (spec, comp) = params::lookup(scope, name)?;
+    let (spec, comp, path) = params::resolve_path(scope, name)?;
     ensure!(
         !(scope == (Scope::Track { audio_track: true }) && spec.name == "matte"),
         "matte applies to video tracks only"
@@ -2365,11 +2416,35 @@ fn set_param(
         Some((TrackRef::Audio(i), None)) => serde_json::to_value(&tl.audio_tracks[i])?,
         None => serde_json::to_value(&*tl)?,
     };
-    let cur = params::get(&obj, scope, spec, comp);
+    let cur = params::get_path(&obj, &path, comp);
     let before = cur.clone().unwrap_or(serde_json::Value::Null);
     let value = make(spec, cur.as_ref())?;
-    params::set(&mut obj, scope, spec, comp, value.clone(), frame)?;
-    params::check_range(&obj, scope, spec)?;
+    let frame = if spec.name == "transform.anchor"
+        && comp.is_some()
+        && params::get_path(&obj, &path, None).is_none()
+    {
+        let Some((TrackRef::Video(ti), Some(ci))) = tr else {
+            unreachable!("anchor is a video parameter")
+        };
+        let c = &tl.tracks[ti].clips[ci];
+        if c.is_generator() || media.placeholder {
+            // Path-only MCP preflight must not open media. The real edit
+            // repeats this step after all source paths have been checked.
+            frame
+        } else {
+            let size = if crate::comp::is_comp(&c.source) {
+                let inner = media.comp(&media.full(&c.source))?;
+                Some((inner.output.width, inner.output.height))
+            } else {
+                media.facts(&c.source)?.and_then(|f| f.size)
+            };
+            size.context(format!("{name}: the source size is needed to fill the other component; set both components, or enable probing / relink the media"))?
+        }
+    } else {
+        frame
+    };
+    params::set_path(&mut obj, spec, comp, value.clone(), frame, &path)?;
+    params::check_range_path(&obj, spec, &path)?;
     let bad = |e: serde_json::Error| anyhow!("{name}: invalid value {value}: {e}");
     let span = match tr {
         Some((TrackRef::Video(i), Some(ci))) => {
@@ -2409,7 +2484,7 @@ fn set_param(
             Some((TrackRef::Audio(i), None)) => serde_json::to_value(&tl.audio_tracks[i])?,
             None => serde_json::to_value(&*tl)?,
         };
-        params::get(&obj, scope, spec, comp).unwrap_or(serde_json::Value::Null)
+        params::get_path(&obj, &path, comp).unwrap_or(serde_json::Value::Null)
     };
     let target = match (clip, track) {
         (Some(c), _) => c.to_string(),
@@ -2545,29 +2620,30 @@ fn freeze_frame(
             None => Ok(unique_id(tl, base)),
         }
     };
-    let make_hold = |c: &Clip, id: String, start: RationalTime, dur: RationalTime| {
-        let mut h = c.clone();
-        h.shift_local_keys(-(start - c.start).0);
-        h.id = id;
-        h.start = start;
-        h.duration = dur;
-        h.source_in = src;
-        h.speed = Animatable::constant(Rational::ZERO);
-        h.time_remap = None;
-        h.sampling = crate::retime::Sampling::Nearest;
-        h.transition_in = None;
-        h.audio = ClipAudio {
-            mute: true,
-            ..ClipAudio::default()
+    let make_hold =
+        |c: &Clip, id: String, start: RationalTime, dur: RationalTime| -> anyhow::Result<Clip> {
+            let mut h = c.clone();
+            h.shift_local_keys(-(start - c.start).0)?;
+            h.id = id;
+            h.start = start;
+            h.duration = dur;
+            h.source_in = src;
+            h.speed = Animatable::constant(Rational::ZERO);
+            h.time_remap = None;
+            h.sampling = crate::retime::Sampling::Nearest;
+            h.transition_in = None;
+            h.audio = ClipAudio {
+                mute: true,
+                ..ClipAudio::default()
+            };
+            Ok(h)
         };
-        h
-    };
     let mut touched = vec![tr];
     let summary;
     match duration {
         None => {
             if at == c.start {
-                let h = make_hold(&c, c.id.clone(), c.start, c.duration);
+                let h = make_hold(&c, c.id.clone(), c.start, c.duration)?;
                 let keep_tx = c.transition_in.clone();
                 tl.tracks[ti].clips[ci] = Clip {
                     transition_in: keep_tx,
@@ -2580,7 +2656,7 @@ fn freeze_frame(
                 on_track!(tl, tr, |clips| split(clips, ci, at, id.clone()))?;
                 let (_, ri) = locate(tl, &id)?;
                 let right = tl.tracks[ti].clips[ri].clone();
-                let mut h = make_hold(&c, id.clone(), at, right.duration);
+                let mut h = make_hold(&c, id.clone(), at, right.duration)?;
                 h.audio.mute = true;
                 tl.tracks[ti].clips[ri] = h;
                 summary = format!(
@@ -2616,7 +2692,7 @@ fn freeze_frame(
             for t in &targets {
                 on_track!(tl, *t, |clips| shift_after(clips, at, d, false));
             }
-            let h = make_hold(&c, hold_id.clone(), at, d);
+            let h = make_hold(&c, hold_id.clone(), at, d)?;
             tl.tracks[ti].clips.push(h);
             touched = targets;
             summary = format!(
@@ -2849,6 +2925,15 @@ fn unnest(
         .comp(&full)
         .with_context(|| format!("unnest: reading {}", full.display()))?;
     ensure!(
+        c.fit.is_none()
+            && (inner.output.width, inner.output.height) == (tl.output.width, tl.output.height),
+        "unnest would change the picture; reset explicit fit and match the composition size first"
+    );
+    ensure!(
+        inner.output.fit.unwrap_or_default() == tl.output.fit.unwrap_or_default(),
+        "unnest would change the picture: inner and parent output.fit differ"
+    );
+    ensure!(
         inner.audio_tracks.iter().all(|t| t.clips.is_empty()),
         "unnest: {} has audio tracks; unnesting those isn't supported yet",
         full.display()
@@ -2900,7 +2985,7 @@ fn unnest(
                 n.source_in = ic.source_at(d);
                 n.start = w0;
                 n.duration = n.duration - d;
-                n.shift_local_keys(-d.0);
+                n.shift_local_keys(-d.0)?;
                 n.drop_transition_in();
                 n.audio.in_offset = z();
                 n.audio.fade_in = None;

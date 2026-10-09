@@ -1,0 +1,26 @@
+[
+  {
+    "op": "set_param",
+    "clip": "headline",
+    "param": "generator.text.content",
+    "value": "REUSED CORES.\nEDITABLE RESULTS."
+  },
+  {
+    "op": "set_param",
+    "clip": "star",
+    "param": "generator.shape.operators.1.angle",
+    "value": {
+      "keyframes": [
+        {
+          "t": 0,
+          "v": 0,
+          "interp": "ease_in_out"
+        },
+        {
+          "t": 2,
+          "v": 85
+        }
+      ]
+    }
+  }
+]

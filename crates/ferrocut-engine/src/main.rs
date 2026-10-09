@@ -105,14 +105,94 @@ enum Cmd {
         /// checker supports it, else as --allow-no-audio when it resolves to no.
         #[arg(long, default_value = "auto")]
         expect_audio: ferrocut_engine::perceive::ExpectAudio,
-        /// Passed to the checker verbatim (after `--`), e.g. threshold flags or a config file.
+        /// Passed to the checker verbatim (after `--`), e.g. threshold flags or a config file
+        /// (`ferrocut-perceive check --help` lists them). Loudness target and true-peak ceiling:
+        /// a flag, else a config key, else what the render was normalized to (a recorded null means no
+        /// target: the default), else the timeline's audio.loudness (only when the render report lacks
+        /// those keys), else -14 LUFS / -1 dBTP; the output's loudness_target names each source.
         #[arg(last = true)]
         args: Vec<String>,
     },
     /// Print the chunk plan (frame/chunk keys) without decoding or touching the GPU.
     Plan { timeline: PathBuf },
+    /// Render chosen output frames to PNG stills and a labeled contact sheet: the
+    /// same pixels a master render would hold (8-bit Rec.709), no video encode.
+    Stills {
+        timeline: PathBuf,
+        /// Directory for the PNGs.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Timeline time of a frame to render (exact rational, e.g. 2 or 5/2); repeatable.
+        #[arg(long = "at")]
+        at: Vec<String>,
+        /// Output frame index to render; repeatable.
+        #[arg(long)]
+        frame: Vec<i64>,
+        /// Also render N evenly spaced frames over the whole timeline (default 12
+        /// when no --at/--frame is given).
+        #[arg(long)]
+        spread: Option<usize>,
+        /// Write one full-resolution PNG per frame (<prefix>-f<frame>.png).
+        #[arg(long)]
+        each: bool,
+        /// Skip the contact sheet (implies --each).
+        #[arg(long)]
+        no_sheet: bool,
+        /// Contact sheet columns.
+        #[arg(long, default_value_t = 4)]
+        cols: u32,
+        /// Contact sheet cell width in pixels.
+        #[arg(long, default_value_t = 480)]
+        cell_width: u32,
+        /// File name prefix (default: the timeline file stem).
+        #[arg(long)]
+        prefix: Option<String>,
+        /// Render on a software (CPU) Vulkan adapter (Mesa lavapipe).
+        #[arg(long)]
+        cpu: bool,
+        /// Print the result as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import/export plain-text SRT/WebVTT captions as editable native text clips.
+    Captions {
+        #[command(subcommand)]
+        command: CaptionCmd,
+    },
     /// Probe a media file: duration, frame rate, size, streams, audio presence (JSON).
     Probe { media: PathBuf },
+    /// Discover pinned core libraries and features actually connected for agents.
+    Capabilities,
+    /// Discover usable and unsupported effects. Use --details with a narrow query.
+    Effects {
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+        #[arg(long)]
+        details: bool,
+    },
+    /// Numeric FilmCraft scopes for one decoded video/render frame.
+    Scopes {
+        media: PathBuf,
+        #[arg(long, default_value = "0")]
+        at: ferrocut_core::Rational,
+        /// ScopeOptions JSON; defaults to Rec.709, RGB waveform/parade, 16 columns.
+        #[arg(long)]
+        options: Option<PathBuf>,
+    },
+    /// Import/export OTIO or FCP7 XML using pinned FilmCraft core code.
+    Interchange {
+        #[command(subcommand)]
+        command: InterchangeCmd,
+    },
+    /// Analyze source point motion or generate reviewable position edit ops.
+    Tracking {
+        #[command(subcommand)]
+        command: TrackingCmd,
+    },
     /// Make half-resolution proxies (DNxHR LB, or FFV1 when tiny or with alpha) of
     /// media files, or of every video source of timelines (nested comps followed),
     /// in `<media dir>/.ferrocut-proxies/`. `render --proxies` reads them for draft
@@ -239,9 +319,369 @@ enum Cmd {
     Ffmpeg,
 }
 
+#[derive(Subcommand)]
+enum TrackingCmd {
+    /// Measure source motion and save a new analysis JSON (never overwrites).
+    Analyze {
+        media: PathBuf,
+        #[arg(long)]
+        settings: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Cooperative deadline, observed between complete frames.
+        #[arg(long, default_value_t = 60.0)]
+        timeout: f64,
+    },
+    /// Print ordinary set_keyframes operations; writes no timeline.
+    Keyframes {
+        analysis: PathBuf,
+        #[arg(long)]
+        timeline: PathBuf,
+        #[arg(long)]
+        options: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum CaptionCmd {
+    /// Import cues through normal atomic edits and undo journal. Fonts are
+    /// resolved relative to the style JSON file and stored relative to the
+    /// timeline when their real (symlink-resolved) file is inside its
+    /// directory; others are stored absolute and reported as not portable
+    /// (`nonportable_fonts`). With `--output` in another directory every
+    /// relative path is written absolute, so all fonts are reported. A
+    /// missing font is an error.
+    /// Overlaps need separate tracks.
+    Import {
+        timeline: PathBuf,
+        subtitles: PathBuf,
+        /// TextSpec JSON, including an explicit font asset (content is replaced per cue).
+        #[arg(long)]
+        style: PathBuf,
+        #[arg(long, default_value = "Captions")]
+        track: String,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        dry_run: bool,
+        /// Print the generated edit list without writing a timeline/journal.
+        #[arg(long)]
+        ops_only: bool,
+        /// Snap cue boundaries to the output frame grid (first frame at or
+        /// after each time, so no displayed frame changes).
+        #[arg(long, value_enum, default_value_t = CaptionSnap::Frames)]
+        snap: CaptionSnap,
+        /// Close gaps between cues up to this many seconds (rational, max 2;
+        /// 0 disables). Short gaps blink the caption off for a frame or two.
+        #[arg(long, default_value = "1/10")]
+        close_gaps: ferrocut_core::Rational,
+        /// Extend cues shorter than this many seconds into the following gap
+        /// (never over the next cue, never adding an output frame: the last cue
+        /// may end at the end of the program's last frame). Off by default.
+        #[arg(long)]
+        min_duration: Option<ferrocut_core::Rational>,
+        /// Keep the subtitle file's times exactly: no snap, gap closing or
+        /// extension (the behavior before these options).
+        #[arg(long, conflicts_with_all = ["snap", "close_gaps", "min_duration"])]
+        exact_timing: bool,
+    },
+    /// Export text and timing from the explicitly selected text-only track.
+    Export {
+        timeline: PathBuf,
+        #[arg(long)]
+        track: String,
+        /// .srt or .vtt; refuses to overwrite an existing file.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum CaptionSnap {
+    Frames,
+    None,
+}
+
+#[derive(Subcommand)]
+enum InterchangeCmd {
+    /// Create a new native .json timeline (and generated nested siblings).
+    Import {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        format: Option<String>,
+        #[arg(long, default_value_t = 0)]
+        sequence: usize,
+        #[arg(long)]
+        allow_loss: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Export to a new OTIO/FCP7 file; refusing known losses is the default.
+    Export {
+        timeline: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        format: Option<String>,
+        #[arg(long)]
+        allow_loss: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     ferrocut_engine::media::init();
     match Cli::parse().cmd {
+        Cmd::Tracking { command } => {
+            use ferrocut_engine::{interchange_io::absolute, tracking_io as io};
+            let result = match command {
+                TrackingCmd::Analyze {
+                    media,
+                    settings,
+                    output,
+                    timeout,
+                } => {
+                    anyhow::ensure!(
+                        timeout.is_finite() && (1.0..=3600.0).contains(&timeout),
+                        "tracking timeout must be 1..3600 seconds"
+                    );
+                    let settings = io::read_json(&settings, 1024 * 1024)?;
+                    let cancel = ferrocut_core::CancelToken::new();
+                    let deadline =
+                        std::time::Instant::now() + std::time::Duration::from_secs_f64(timeout);
+                    io::analyze_file(
+                        &media,
+                        &output,
+                        &settings,
+                        &cancel,
+                        |progress| {
+                            eprintln!(
+                                "tracking {}/{} frames; {} active points",
+                                progress.completed_frames,
+                                progress.total_frames,
+                                progress.active_points
+                            );
+                            if std::time::Instant::now() >= deadline {
+                                cancel.cancel();
+                            }
+                        },
+                        &mut absolute,
+                    )?
+                }
+                TrackingCmd::Keyframes {
+                    analysis,
+                    timeline,
+                    options,
+                } => {
+                    let options = io::read_json(&options, 1024 * 1024)?;
+                    io::keyframes_file(&analysis, &timeline, &options, &mut absolute)?
+                }
+            };
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Cmd::Interchange { command } => {
+            use ferrocut_engine::interchange_io as io;
+            let result = match command {
+                InterchangeCmd::Import {
+                    input,
+                    output,
+                    format,
+                    sequence,
+                    allow_loss,
+                    dry_run,
+                } => io::import_file(
+                    &input,
+                    &output,
+                    format.as_deref(),
+                    sequence,
+                    allow_loss,
+                    dry_run,
+                    &mut io::absolute,
+                )?,
+                InterchangeCmd::Export {
+                    timeline,
+                    output,
+                    format,
+                    allow_loss,
+                    dry_run,
+                } => io::export_file(
+                    &timeline,
+                    &output,
+                    format.as_deref(),
+                    allow_loss,
+                    dry_run,
+                    &mut io::absolute,
+                )?,
+            };
+            println!("{}", serde_json::to_string_pretty(&result)?);
+        }
+        Cmd::Capabilities => println!(
+            "{}",
+            serde_json::to_string_pretty(&ferrocut_engine::storytold::capabilities())?
+        ),
+        Cmd::Effects {
+            query,
+            offset,
+            limit,
+            details,
+        } => println!(
+            "{}",
+            serde_json::to_string_pretty(&ferrocut_engine::storytold::effects_catalog(
+                query.as_deref(),
+                offset,
+                limit,
+                details
+            )?)?
+        ),
+        Cmd::Scopes { media, at, options } => {
+            let options = options
+                .map(
+                    |p| -> anyhow::Result<ferrocut_engine::scopes::ScopeOptions> {
+                        Ok(serde_json::from_str(&std::fs::read_to_string(p)?)?)
+                    },
+                )
+                .transpose()?
+                .unwrap_or_default();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ferrocut_engine::scopes::read(
+                    &media,
+                    ferrocut_core::RationalTime(at),
+                    &options
+                )?)?
+            );
+        }
+        Cmd::Captions { command } => {
+            use ferrocut_engine::captions::{self, CaptionFormat};
+            match command {
+                CaptionCmd::Import {
+                    timeline,
+                    subtitles,
+                    style,
+                    track,
+                    output,
+                    dry_run,
+                    ops_only,
+                    snap,
+                    close_gaps,
+                    min_duration,
+                    exact_timing,
+                } => {
+                    let tl = Timeline::load(&timeline)?;
+                    let cues = captions::parse(
+                        &std::fs::read_to_string(&subtitles)
+                            .with_context(|| format!("reading {}", subtitles.display()))?,
+                        CaptionFormat::from_path(&subtitles)?,
+                    )?;
+                    let mut spec: ferrocut_engine::text::TextSpec = serde_json::from_str(
+                        &std::fs::read_to_string(&style)
+                            .with_context(|| format!("reading style {}", style.display()))?,
+                    )?;
+                    // Fonts resolve against the style file; the timeline
+                    // keeps those inside its directory relative.
+                    let outside = captions::place_style_fonts(
+                        &mut spec,
+                        &project::dir_of(&style),
+                        &project::dir_of(&timeline),
+                    )?;
+                    for f in &outside {
+                        eprintln!(
+                            "note: font {} is outside the timeline's directory, so it is stored as an absolute path and the project is not portable; copy it into the project",
+                            f.display()
+                        );
+                    }
+                    let timing = if exact_timing {
+                        captions::CaptionTiming::exact()
+                    } else {
+                        captions::CaptionTiming {
+                            snap: matches!(snap, CaptionSnap::Frames),
+                            close_gaps: ferrocut_core::RationalTime(close_gaps),
+                            min_duration: min_duration.map(ferrocut_core::RationalTime),
+                        }
+                    };
+                    let (ops, report) =
+                        captions::import_ops_timed(&tl, &cues, &track, &spec, &timing)?;
+                    for w in &report.warnings {
+                        eprintln!("warning: {w}");
+                    }
+                    eprintln!(
+                        "captions: {} of {} cues retimed, {} uncaptioned gaps kept",
+                        report.changed.len(),
+                        cues.len(),
+                        report.gaps_kept.len()
+                    );
+                    if ops_only {
+                        println!("{}", serde_json::to_string_pretty(&ops)?);
+                    } else {
+                        let outcome = project::edit_file(
+                            &timeline,
+                            &ops,
+                            &project::EditOptions {
+                                output,
+                                dry_run,
+                                probe: false,
+                                ..Default::default()
+                            },
+                        )?;
+                        let mut v = serde_json::to_value(&outcome)?;
+                        v["caption_timing"] = serde_json::to_value(&report)?;
+                        // Portability of the file actually written: an output
+                        // in another directory gets every relative path
+                        // absolutized (sources_absolutized), fonts included.
+                        let nonportable = if outcome.sources_absolutized {
+                            let base = std::fs::canonicalize(project::dir_of(&timeline))?;
+                            let mut all: Vec<std::path::PathBuf> = Vec::new();
+                            for f in spec.font_paths() {
+                                let f = base.join(f);
+                                if !all.contains(&f) {
+                                    all.push(f);
+                                }
+                            }
+                            eprintln!(
+                                "note: the output is in another directory than the timeline, so every relative path (these {} font(s) included) is written absolute and the output project is not portable; write it next to its assets instead",
+                                all.len()
+                            );
+                            all
+                        } else {
+                            outside
+                        };
+                        v["nonportable_fonts"] = serde_json::to_value(&nonportable)?;
+                        println!("{}", serde_json::to_string_pretty(&v)?);
+                    }
+                }
+                CaptionCmd::Export {
+                    timeline,
+                    track,
+                    output,
+                } => {
+                    let tl = Timeline::load(&timeline)?;
+                    let cues = captions::from_track(&tl, &track)?;
+                    // Report the timeline's own blinks (overlapping tracks
+                    // have none to report); the export is unchanged.
+                    if let Ok((_, report)) = captions::retime(
+                        &cues,
+                        tl.output.fps,
+                        tl.duration(),
+                        &captions::CaptionTiming::exact(),
+                    ) {
+                        for w in &report.warnings {
+                            eprintln!("warning: {w}");
+                        }
+                    }
+                    let text = captions::write(&cues, CaptionFormat::from_path(&output)?)?;
+                    use std::io::Write as _;
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&output)?;
+                    file.write_all(text.as_bytes())?;
+                    println!("{}", serde_json::json!({"output":output,"cues":cues.len()}));
+                }
+            }
+        }
         Cmd::Ffmpeg => {
             let (v, l, c) = ferrocut_engine::media::ffmpeg_info();
             println!("version: {v}\nlicense: {l}\nconfiguration: {c}");
@@ -507,6 +947,10 @@ fn main() -> anyhow::Result<()> {
         Cmd::Plan { timeline } => {
             let tl = Timeline::load(&timeline)?;
             let c = compile(&tl)?;
+            println!("placements: {}", serde_json::to_string(&c.placements)?);
+            for warning in &c.warnings {
+                eprintln!("warning: {warning}");
+            }
             for p in plan(&tl, &c) {
                 println!(
                     "chunk {:>3}  frames {:>5}..{:<5}  key {}",
@@ -515,6 +959,64 @@ fn main() -> anyhow::Result<()> {
                     p.start_frame + p.frames,
                     &p.key[..16]
                 );
+            }
+        }
+        Cmd::Stills {
+            timeline,
+            output,
+            at,
+            frame,
+            spread,
+            each,
+            no_sheet,
+            cols,
+            cell_width,
+            prefix,
+            cpu,
+            json,
+        } => {
+            use ferrocut_engine::preview;
+            let tl = Timeline::load(&timeline)?;
+            let prefix = prefix.unwrap_or_else(|| {
+                timeline
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "stills".into())
+            });
+            preview::check_prefix(&prefix)?;
+            anyhow::ensure!(
+                (1..=64).contains(&cols) && (16..=4096).contains(&cell_width),
+                "--cols must be 1..=64 and --cell-width 16..=4096"
+            );
+            let c = compile(&tl)?;
+            let at = at
+                .iter()
+                .map(|s| preview::parse_time(s))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let frames = preview::select_frames(&tl, &at, &frame, spread)?;
+            let gpu =
+                GpuContext::with_requirements(adapter_pref(cpu), &c.graph.gpu_requirements())?;
+            let stills =
+                preview::render_stills(&tl, &c, &gpu, &frames, &ferrocut_core::CancelToken::new())?;
+            let sheet = (!no_sheet).then_some((cols, cell_width));
+            let r = preview::write_stills(&tl, &stills, &output, &prefix, each || no_sheet, sheet)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            } else {
+                for f in &r.frames {
+                    println!(
+                        "frame {:>6}  {:<16} {}",
+                        f.frame,
+                        f.timecode,
+                        f.path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_default()
+                    );
+                }
+                if let Some(s) = &r.sheet {
+                    println!("sheet {}", s.display());
+                }
             }
         }
         Cmd::Render {
@@ -577,8 +1079,8 @@ fn main() -> anyhow::Result<()> {
             let jobs = jobs.unwrap_or_else(|| {
                 let (j, why) = ferrocut_engine::vram::default_jobs(
                     &gpu.get().info,
-                    tl.output.width,
-                    tl.output.height,
+                    c.max_layer_size.0,
+                    c.max_layer_size.1,
                 );
                 println!("jobs:    {why}");
                 j
@@ -878,7 +1380,11 @@ fn check_line(o: &ferrocut_engine::perceive::CheckOutcome) -> String {
             CheckOutcome::codes(&o.warnings).join(", ")
         )
     };
-    match o.status {
+    let loudness = o
+        .loudness_line()
+        .map(|l| format!("\n  {l}"))
+        .unwrap_or_default();
+    let line = match o.status {
         CheckStatus::Pass => format!("quality check: PASS{warnings}"),
         CheckStatus::Fail => format!(
             "quality check: FAIL ({} problem(s): {}{warnings})",
@@ -893,5 +1399,6 @@ fn check_line(o: &ferrocut_engine::perceive::CheckOutcome) -> String {
             "quality check: skipped ({})",
             o.message.as_deref().unwrap_or("")
         ),
-    }
+    };
+    format!("{line}{loudness}")
 }

@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "repositories": {
+    "filmcraft": {
+      "revision": "5231852443363f001c3f6b396dd9b1e6461ae2be",
+      "core_packages": 42,
+      "unchanged_source_files": 758,
+      "documented_patches": 1,
+      "provenance_files": 9
+    },
+    "effectcraft": {
+      "revision": "6943872cf65b3da1275f1e0f808b60b2e51d84dc",
+      "core_packages": 31,
+      "unchanged_source_files": 653,
+      "documented_patches": 0,
+      "provenance_files": 9
+    }
+  },
+  "errors": []
+}

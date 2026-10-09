@@ -1,0 +1,72 @@
+   Compiling ferrocut-types v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-types)
+   Compiling ferrocut-core v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-core)
+   Compiling ferrocut-deliver v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-deliver)
+   Compiling ferrocut-audio v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-audio)
+   Compiling ferrocut-perceive v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-perceive)
+   Compiling ferrocut-engine v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.87s
+     Running tests/effectcraft.rs (target/debug/deps/effectcraft-01c455821199daf2)
+
+running 17 tests
+test extreme_clock_shifts_are_fallible_including_i64_min_and_coprime_denominators ... ok
+test failed_extreme_clock_split_and_trim_leave_the_input_and_prior_edits_untouched ... ok
+test hostile_pixels_parameters_bounds_and_workloads_fail_without_inert_fallback ... ok
+test extreme_clocks_hash_without_panics_and_adapter_time_bounds_fail_cleanly ... ok
+test cancellation_is_checked_before_during_copies_and_after_the_upstream_call ... ok
+test exposure_linear_bypass_preserves_hdr_negative_and_premultiplied_alpha ... ok
+test intrinsic_time_seed_animation_frame_rate_and_parameter_edits_change_cache_keys ... ok
+test curves_and_fixed_enums_render_real_changes_with_clear_malformed_errors ... ok
+test padding_prediction_preserves_overscan_for_nondefault_spatial_effects ... ok
+test nondefault_parameters_and_normalized_points_match_upstream_at_two_resolutions ... ok
+EffectCraft adapter default: "llvmpipe (LLVM 20.1.2, 256 bits)" Vulkan Cpu
+EffectCraft adapter cpu: "llvmpipe (LLVM 20.1.2, 256 bits)" Vulkan Cpu
+test unrepresentable_effect_clocks_return_contextual_permanent_render_errors ... ok
+test actual_gpu_readback_upload_and_worker_recreation_match_cpu_pixels ... ok
+test every_connected_effect_accepts_a_nondefault_typed_control_and_matches_reference ... ok
+EffectCraft: 170 connected, 136 explicitly unsupported
+test complete_catalogue_is_unique_and_every_connected_default_reaches_upstream ... ok
+test warm_frame_cache_does_not_hide_static_effect_clock_errors ... ok
+test timeline_edit_expressions_retime_and_split_preserve_numeric_effect_clocks ... ok
+test split_and_in_trim_preserve_constant_procedural_noise_phase_and_hashes ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+
+     Running tests/effects.rs (target/debug/deps/effects-8fb9504c760414cf)
+
+running 8 tests
+test edit_ops_build_and_change_stacks ... ok
+test clip_effects_render_like_the_stack_on_the_clip ... ok
+test regions_of_interest_do_not_change_pixels ... ok
+test adjustment_layers_follow_their_matte ... ok
+test gaussian_blur_matches_the_cpu_reference_at_the_edges ... ok
+test adjustment_layers_apply_to_the_composite_below ... ok
+test plugin_effects_get_their_working_space_and_errors_keep_their_kind ... ok
+max difference between adapters: 0.0000 codes
+test every_effect_matches_across_adapters ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.56s
+
+     Running tests/expressions.rs (target/debug/deps/expressions-c013cfeaac8fe49f)
+
+running 8 tests
+test errors_are_precise ... ok
+test sandbox_limits_hold ... ok
+test edits_keep_expressions_in_place ... ok
+test expressions_are_part_of_cache_keys ... ok
+test loops_follow_after_effects ... ok
+test references_and_cycles ... ok
+test basic_variables_and_interpolation ... ok
+test wiggle_is_deterministic_bounded_and_seeded_per_parameter ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/source_expressions.rs (target/debug/deps/source_expressions-2b99fb1890ea8a6f)
+
+running 4 tests
+test ambiguous_repeated_source_and_expression_timing_combinations_fail_with_guidance ... ok
+test frozen_source_expression_can_hold_a_source_function_but_not_changing_timeline_state ... ok
+test cross_clip_source_reads_reject_unbaked_timing_but_local_reads_remain_valid ... ok
+test source_time_comp_time_and_cross_clock_param_follow_forward_reverse_and_remap ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+

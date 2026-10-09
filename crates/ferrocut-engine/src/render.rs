@@ -77,9 +77,9 @@ use crate::timeline::Timeline;
 
 /// Part of every chunk key (with [`ferrocut_colorspace::VERSION`]): bump when
 /// the engine's output for the same inputs changes.
-/// v2: color transforms from `ferrocut-colorspace` (OCIO 2.5 matrices).
+/// v3: native finishing and finite f16 effect-space conversion saturation.
 pub const ENGINE_VERSION: &str =
-    concat!("ferrocut-engine ", env!("CARGO_PKG_VERSION"), " render.v2");
+    concat!("ferrocut-engine ", env!("CARGO_PKG_VERSION"), " render.v3");
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ChunkPlan {
@@ -115,6 +115,8 @@ pub struct ChunkReport {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RenderReport {
+    pub placements: Vec<crate::placement::PlacementReport>,
+    pub warnings: Vec<String>,
     pub engine: String,
     pub adapter: String,
     /// FFmpeg version + license of the libavcodec actually loaded.
@@ -907,6 +909,8 @@ pub fn render(
         0.0
     };
     Ok(RenderReport {
+        placements: c.placements.clone(),
+        warnings: c.warnings.clone(),
         engine: ENGINE_VERSION.to_string(),
         adapter: gpu_end.describe(),
         ffmpeg: {

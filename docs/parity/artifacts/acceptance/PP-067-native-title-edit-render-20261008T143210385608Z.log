@@ -1,0 +1,42 @@
+{"capability": "PP-067", "argv": ["cargo", "test", "--locked", "--offline", "-p", "ferrocut-engine", "--test", "text", "--test", "native_text_timeline", "--", "--test-threads=1"], "recorded_at": "2026-10-08T14:32:10.385608+00:00", "revision": "701b88f0991a6f9a5fa7c9123b065c60c6904079", "input_digest": "8fc755a80d54dec510da98664ba9059377419dea62f8ca061fc928635053fb40"}
+   Compiling ferrocut-engine v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.05s
+     Running tests/native_text_timeline.rs (target/debug/deps/native_text_timeline-a57c1321878d3e97)
+
+running 8 tests
+test agent_add_text_content_keys_and_whole_range_array_produce_real_output ... ok
+test constant_speed_and_time_remap_drive_text_keys_in_source_seconds ... ok
+test font_bytes_invalidate_only_frames_that_use_that_asset ... ok
+test journaled_text_revisions_dry_run_invalid_batch_and_undo_preserve_exact_project_state ... ok
+test keyframed_typography_keeps_source_animation_through_split_and_in_trim ... ok
+test relative_font_assets_survive_directory_relocation_and_edit_output_relocation ... ok
+test source_time_expressions_follow_retiming_and_remain_equivalent_after_split ... ok
+test timeline_time_keyframe_edits_convert_through_actual_speed_and_remap ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.44s
+
+     Running tests/text.rs (target/debug/deps/text-0cb0b6f6c3df6b61)
+
+running 19 tests
+test animated_text_is_seekable_and_frame_hashes_follow_evaluated_values ... ok
+test antialiased_outside_stroke_expands_all_glyph_edges ... ok
+test bad_font_bytes_face_index_and_output_geometry_fail_before_render ... ok
+test empty_spaces_and_zero_opacity_render_transparent_frames ... ok
+test explicit_arabic_fallback_shapes_and_reorders_logical_clusters ... ok
+test explicit_font_content_changes_hashes_and_existing_nodes_keep_snapshot_pixels ... ok
+test fractional_range_weights_ligatures_without_changing_shaping ... ok
+test invalid_layout_paint_and_selector_parameters_fail_structurally ... ok
+test kerning_ligatures_and_combining_sequences_use_real_shaping ... ok
+test line_selector_targets_visual_wrapped_lines ... ok
+test parameter_enumeration_and_asset_rewrite_cover_nested_animation ... ok
+test per_word_offset_and_color_keep_source_geometry_editable ... ok
+test render_node_uploads_identical_working_pixels_and_reuses_worker_font_state ... ok
+test schema_is_strict_and_structural_validation_does_not_open_fonts ... ok
+test text_opacity_is_applied_once_after_outline_and_fill_compositing ... ok
+test tracking_line_height_and_vertical_alignment_are_independent ... ok
+test transparent_background_and_linear_premultiplied_fill_match_generator_color ... ok
+test word_selector_hides_a_whole_word_and_character_selector_keeps_combining_cluster ... ok
+test wrapping_and_paragraph_alignment_have_measurable_geometry ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+

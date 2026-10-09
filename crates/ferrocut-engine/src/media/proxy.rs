@@ -16,6 +16,7 @@
 //! source's content hash: an edited or replaced source never picks up a
 //! stale proxy.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, anyhow, bail};
@@ -28,7 +29,7 @@ use serde::Serialize;
 use super::init;
 
 /// Bump when the proxy encoding changes (part of proxy frame keys).
-pub const PROXY_VERSION: &str = "proxy.v1:half:dnxhr_lb|ffv1";
+pub const PROXY_VERSION: &str = "proxy.v3:half:dnxhr_lb|ffv1:source-timing:declared-rate";
 pub const PROXY_DIR: &str = ".ferrocut-proxies";
 /// DNxHR's smallest frame.
 pub const DNXHR_MIN: (u32, u32) = (256, 120);
@@ -66,7 +67,9 @@ pub fn proxy_path(source: &Path, hash: &[u8; 32]) -> PathBuf {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "media".into());
-    let hex = blake3::Hash::from(*hash).to_hex();
+    // A codec/timestamp fix must also invalidate the on-disk proxy, not just
+    // the draft-render frame key derived from it.
+    let hex = blake3::Hash::from(proxied_hash(hash)).to_hex();
     dir.join(format!("{stem}.{}.mkv", &hex[..16]))
 }
 
@@ -167,12 +170,7 @@ fn encode(source: &Path, out: &Path) -> anyhow::Result<(String, u32, u32, u64)> 
     } else {
         stream.start_time()
     };
-    let rate = stream.avg_frame_rate();
-    let rate = if rate.numerator() > 0 {
-        rate
-    } else {
-        stream.rate()
-    };
+    let source_rate = super::stream_rate(&stream);
     let mut dec = codec::context::Context::from_parameters(stream.parameters())?
         .decoder()
         .video()?;
@@ -200,8 +198,8 @@ fn encode(source: &Path, out: &Path) -> anyhow::Result<(String, u32, u32, u64)> 
     enc.set_height(ph);
     enc.set_format(pix);
     enc.set_time_base(in_tb);
-    if rate.numerator() > 0 {
-        enc.set_frame_rate(Some(rate));
+    if let Some(r) = source_rate {
+        enc.set_frame_rate(Some(super::to_ff(r)));
     }
     let mut flags = codec::Flags::BITEXACT;
     if global_header {
@@ -221,6 +219,10 @@ fn encode(source: &Path, out: &Path) -> anyhow::Result<(String, u32, u32, u64)> 
     let mut ost = octx.add_stream(codec)?;
     ost.set_parameters(&enc);
     ost.set_time_base(in_tb);
+    if let Some(r) = source_rate {
+        // Declared as the Matroska DefaultDuration and the exact tag (see encode.rs).
+        super::declare_rate(&mut ost, r);
+    }
     octx.write_header()?;
     let ost_tb = octx.stream(0).expect("stream").time_base();
     let mut pipe = Pipe {
@@ -230,9 +232,19 @@ fn encode(source: &Path, out: &Path) -> anyhow::Result<(String, u32, u32, u64)> 
         size: (pw, ph),
         start,
         tbs: (in_tb, ost_tb),
+        durations: BTreeMap::new(),
+        pending: None,
+        source_end: super::media_duration(source)?.map(|end| end.to_pts(super::to_core(in_tb))),
     };
     for (s, p) in ictx.packets() {
         if s.index() == si {
+            // Some decoders omit AVFrame.duration even when the demuxed
+            // packet carries it. These intra proxy encoders retain frame PTS.
+            if let Some(pts) = p.pts()
+                && p.duration() > 0
+            {
+                pipe.durations.insert(pts - start, p.duration());
+            }
             dec.send_packet(&p)?;
             pipe.receive(&mut dec, &mut enc, &mut octx)?;
         }
@@ -241,6 +253,7 @@ fn encode(source: &Path, out: &Path) -> anyhow::Result<(String, u32, u32, u64)> 
     pipe.receive(&mut dec, &mut enc, &mut octx)?;
     enc.send_eof()?;
     pipe.drain(&mut enc, &mut octx)?;
+    pipe.flush(&mut octx)?;
     octx.write_trailer()?;
     let codec = profile.unwrap_or(name).to_string();
     Ok((codec, pw, ph, pipe.frames))
@@ -255,6 +268,12 @@ struct Pipe {
     start: i64,
     /// Encoder (= input stream) and output stream time bases.
     tbs: (ffmpeg_next::Rational, ffmpeg_next::Rational),
+    /// Decoded frame durations, keyed by encoder PTS in the input time base.
+    durations: BTreeMap<i64, i64>,
+    /// Hold one packet so a missing duration can follow the next real PTS.
+    pending: Option<Packet>,
+    /// Known source end, relative to video start, in the input time base.
+    source_end: Option<i64>,
 }
 
 impl Pipe {
@@ -266,8 +285,47 @@ impl Pipe {
         let mut pkt = Packet::empty();
         while enc.receive_packet(&mut pkt).is_ok() {
             pkt.set_stream(0);
-            pkt.rescale_ts(self.tbs.0, self.tbs.1);
-            pkt.write_interleaved(octx)?;
+            if let Some(pts) = pkt.pts()
+                && let Some(duration) = self.durations.remove(&pts)
+                && pkt.duration() <= 0
+            {
+                pkt.set_duration(duration);
+            }
+            if let Some(mut previous) = self.pending.take() {
+                if previous.duration() <= 0
+                    && let (Some(next), Some(start)) = (pkt.pts(), previous.pts())
+                    && let Some(duration) = next.checked_sub(start).filter(|duration| *duration > 0)
+                {
+                    previous.set_duration(duration);
+                }
+                previous.rescale_ts(self.tbs.0, self.tbs.1);
+                previous.write_interleaved(octx)?;
+            }
+            self.pending = Some(pkt);
+            pkt = Packet::empty();
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self, octx: &mut format::context::Output) -> anyhow::Result<()> {
+        if let Some(mut packet) = self.pending.take() {
+            // Matroska often supplies only a container end, without per-frame
+            // durations, or (with a declared default duration) a per-frame
+            // duration truncated to the millisecond time base. The proxy must
+            // end exactly where the source ends, so the final frame extends to
+            // the known source end; nothing is inferred from an average frame
+            // rate (VFR input). A demuxed duration is only ever lengthened, and
+            // by less than one frame: a container end far beyond the last
+            // frame (audio outlasting the video) is not a video duration.
+            if let (Some(end), Some(start)) = (self.source_end, packet.pts())
+                && let Some(to_end) = end.checked_sub(start).filter(|d| *d > 0)
+                && (packet.duration() <= 0
+                    || (packet.duration() < to_end && to_end <= 2 * packet.duration()))
+            {
+                packet.set_duration(to_end);
+            }
+            packet.rescale_ts(self.tbs.0, self.tbs.1);
+            packet.write_interleaved(octx)?;
         }
         Ok(())
     }
@@ -298,6 +356,9 @@ impl Pipe {
         let mut o = frame::Video::empty();
         self.scaler.as_mut().expect("scaler").3.run(f, &mut o)?;
         o.set_pts(Some(pts - self.start));
+        if f.packet().duration > 0 {
+            self.durations.insert(pts - self.start, f.packet().duration);
+        }
         enc.send_frame(&o)?;
         self.frames += 1;
         self.drain(enc, octx)

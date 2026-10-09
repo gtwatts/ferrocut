@@ -4,18 +4,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 
 use crate::comp::{CompStack, is_comp};
 use crate::fx::{AdjustClip, AdjustNode, EffectNode, EffectStack};
 use ferrocut_core::RationalTime;
 
-use crate::generator::GeneratorNode;
 use crate::graph::{Graph, NodeId};
 use crate::nodes::{
     BlendNode, ClipNode, ClipRange, MatteNode, OverNode, SequenceNode, SourceNode, StackClip,
     StackNode, TransformNode,
 };
+use crate::placement::{Placement, PlacementReport};
 use crate::timeline::Timeline;
 
 enum TrackOut {
@@ -36,42 +36,75 @@ fn empty_sequence(tl: &Timeline) -> SequenceNode {
 pub struct Compiled {
     pub graph: Graph,
     pub output: NodeId,
+    pub placements: Vec<PlacementReport>,
+    pub warnings: Vec<String>,
+    /// Largest native or output canvas used for conservative job sizing.
+    pub max_layer_size: (u32, u32),
+}
+
+#[derive(Default)]
+struct BuildInfo {
+    placements: Vec<PlacementReport>,
+    warnings: Vec<String>,
+    max_layer_size: (u32, u32),
+}
+
+impl BuildInfo {
+    fn include_size(&mut self, size: (u32, u32)) {
+        let pixels = |(w, h): (u32, u32)| u64::from(w) * u64::from(h);
+        if pixels(size) > pixels(self.max_layer_size) {
+            self.max_layer_size = size;
+        }
+    }
 }
 
 /// Source nodes (and compiled nested comps) by canonical path, with their
 /// frame rate.
-type Sources = HashMap<PathBuf, (NodeId, Option<ferrocut_core::FrameRate>)>;
+type Sources = HashMap<PathBuf, (NodeId, Option<ferrocut_core::FrameRate>, (u32, u32))>;
 
 /// Build the graph. `source_factory` lets tests stub out file hashing.
 /// Nested comps (clip sources that are timeline files, see [`crate::comp`])
 /// are compiled into the same graph, so their frame keys compose.
 pub fn compile_with(
     tl: &Timeline,
-    mut source_factory: impl FnMut(&PathBuf, u32, u32) -> anyhow::Result<SourceNode>,
+    mut source_factory: impl FnMut(&PathBuf) -> anyhow::Result<SourceNode>,
 ) -> anyhow::Result<Compiled> {
     let mut g = Graph::new();
     let mut sources = Sources::new();
+    let mut info = BuildInfo::default();
     let out = build(
         &mut g,
         tl,
         &mut source_factory,
         &mut sources,
         &mut CompStack::new(),
+        &mut info,
+        None,
     )?;
     Ok(Compiled {
         graph: g,
         output: out,
+        placements: info.placements,
+        warnings: info.warnings,
+        max_layer_size: info.max_layer_size,
     })
 }
 
 fn build(
     g: &mut Graph,
     tl: &Timeline,
-    source_factory: &mut dyn FnMut(&PathBuf, u32, u32) -> anyhow::Result<SourceNode>,
+    source_factory: &mut dyn FnMut(&PathBuf) -> anyhow::Result<SourceNode>,
     sources: &mut Sources,
     stack: &mut CompStack,
+    info: &mut BuildInfo,
+    composition: Option<&std::path::Path>,
 ) -> anyhow::Result<NodeId> {
+    // Expressions become per-frame keyframes (part of every frame key);
+    // nested comps are baked here too.
+    let baked = crate::expr::bake(tl)?;
+    let tl: &Timeline = &baked;
     let (w, h) = (tl.output.width, tl.output.height);
+    info.include_size((w, h));
     // Painter's sort only when there are 3D layers (otherwise the plain
     // over/blend chain, so 2D graphs and keys are unchanged).
     let any_3d = tl.tracks.iter().any(|t| t.clips.iter().any(|c| c.three_d));
@@ -92,7 +125,8 @@ fn build(
                         end: c.end(),
                         dissolve_in: None,
                     },
-                    stack: EffectStack::new(format!("clip {}", c.id), &c.effects, c.start)?,
+                    stack: EffectStack::new(format!("clip {}", c.id), &c.effects, c.start)?
+                        .with_frame_rate(tl.output.fps),
                     opacity: c.opacity.clone(),
                 });
             }
@@ -101,46 +135,75 @@ fn build(
         }
         for c in clips {
             let key = c.source.canonicalize().unwrap_or_else(|_| c.source.clone());
-            let (src, source_fps) = match sources.get(&key) {
+            let (src, source_fps, native) = match sources.get(&key) {
                 _ if c.is_generator() => {
-                    let node = GeneratorNode {
-                        spec: c.generator.clone().expect("generator clip"),
-                        width: w,
-                        height: h,
-                    };
-                    (g.add(Arc::new(node), vec![]), None)
+                    let node =
+                        crate::generator::node(c.generator.clone().expect("generator clip"), w, h)
+                            .with_context(|| format!("clip {}: native generator", c.id))?;
+                    (g.add(node, vec![]), None, (w, h))
                 }
                 Some(&s) => s,
                 None if is_comp(&c.source) => {
                     let (ckey, inner) = stack
                         .load(&c.source)
                         .with_context(|| format!("clip {}", c.id))?;
-                    ensure!(
-                        (inner.output.width, inner.output.height) == (w, h),
-                        "clip {}: nested composition {} is {}x{}, this timeline is {w}x{h} (comps must match the frame size; scale with the clip transform)",
-                        c.id,
-                        c.source.display(),
-                        inner.output.width,
-                        inner.output.height
-                    );
                     stack.push(ckey);
-                    let id = build(g, &inner, source_factory, sources, stack).with_context(|| {
+                    let id = build(
+                        g,
+                        &inner,
+                        source_factory,
+                        sources,
+                        stack,
+                        info,
+                        Some(&c.source),
+                    )
+                    .with_context(|| {
                         format!("clip {}: nested composition {}", c.id, c.source.display())
                     });
                     stack.pop();
-                    let s = (id?, Some(inner.output.fps));
+                    let s = (
+                        id?,
+                        Some(inner.output.fps),
+                        (inner.output.width, inner.output.height),
+                    );
                     sources.insert(key, s);
                     s
                 }
                 None => {
-                    let node = source_factory(&c.source, w, h)
-                        .with_context(|| format!("clip {}", c.id))?;
+                    let node =
+                        source_factory(&c.source).with_context(|| format!("clip {}", c.id))?;
                     let fps = node.fps;
+                    let native = (node.width, node.height);
+                    anyhow::ensure!(
+                        native.0 > 0 && native.1 > 0,
+                        "clip {}: native size must be nonzero",
+                        c.id
+                    );
                     let id = g.add(Arc::new(node), vec![]);
-                    sources.insert(key, (id, fps));
-                    (id, fps)
+                    sources.insert(key, (id, fps, native));
+                    (id, fps, native)
                 }
             };
+            let placement = Placement {
+                native,
+                output: (w, h),
+                fit: c.effective_fit(&tl.output),
+            };
+            info.include_size(native);
+            if !c.is_generator() {
+                if let Some(warning) = placement.warning(&c.id) {
+                    info.warnings.push(warning);
+                }
+                info.placements.push(PlacementReport {
+                    clip: c.id.clone(),
+                    composition: composition.map(|p| p.display().to_string()),
+                    fit: placement.fit,
+                    explicit: c.fit.is_some(),
+                    native,
+                    output: (w, h),
+                    fit_scale: placement.fit_scale(),
+                });
+            }
             // With effects, the clip opacity applies after them.
             let has_fx = !c.effects.is_empty();
             let clip = ClipNode {
@@ -157,20 +220,30 @@ fn build(
                 source_fps,
             };
             let mut top = g.add(Arc::new(clip), vec![src]);
+            if !c.masks.is_empty() {
+                top = g.add(
+                    Arc::new(crate::mask_node::MaskNode {
+                        masks: c.masks.clone(),
+                        start: c.start,
+                        map: c.time_map(),
+                    }),
+                    vec![top],
+                );
+            }
             if has_fx {
                 let node = EffectNode {
-                    stack: EffectStack::new(format!("clip {}", c.id), &c.effects, c.start)?,
+                    stack: EffectStack::new(format!("clip {}", c.id), &c.effects, c.start)?
+                        .with_frame_rate(tl.output.fps),
                     opacity: Some((c.opacity.clone(), c.start)),
                 };
                 top = g.add(Arc::new(node), vec![top]);
             }
             let blur = tl.motion_blur.filter(|_| c.motion_blur);
-            if c.transform.is_some() || c.three_d || blur.is_some() {
+            if !placement.is_trivial() || c.transform.is_some() || c.three_d || blur.is_some() {
                 let node = TransformNode {
                     start: c.start,
                     spec: c.transform.clone().unwrap_or_default(),
-                    width: w,
-                    height: h,
+                    placement,
                     three_d: c.three_d,
                     camera: tl.camera.clone().filter(|_| c.three_d),
                     blur,
@@ -187,7 +260,7 @@ fn build(
                 mode: c.blend_mode,
                 depth: c
                     .three_d
-                    .then(|| (c.transform.clone().unwrap_or_default(), c.start)),
+                    .then(|| (c.transform.clone().unwrap_or_default(), c.start, placement)),
             });
             clip_ids.push(top);
             ranges.push(ClipRange {
@@ -210,7 +283,8 @@ fn build(
         if !track.effects.is_empty() {
             let owner = format!("track {:?}", track.name);
             let node = EffectNode {
-                stack: EffectStack::new(owner, &track.effects, RationalTime::ZERO)?,
+                stack: EffectStack::new(owner, &track.effects, RationalTime::ZERO)?
+                    .with_frame_rate(tl.output.fps),
                 opacity: None,
             };
             layer = g.add(Arc::new(node), vec![layer]);
@@ -293,8 +367,8 @@ fn build(
 /// Final renders use [`compile`] (always the original media).
 pub fn compile_proxies(tl: &Timeline) -> anyhow::Result<(Compiled, Vec<PathBuf>)> {
     let mut used = Vec::new();
-    let c = compile_with(tl, |p, w, h| {
-        let mut s = SourceNode::new(p.clone(), w, h)?;
+    let c = compile_with(tl, |p| {
+        let mut s = SourceNode::new(p.clone())?;
         if let Some(px) = crate::media::proxy::find(p, &s.file_hash) {
             s.file_hash = crate::media::proxy::proxied_hash(&s.file_hash);
             s.path = px.clone();
@@ -306,5 +380,5 @@ pub fn compile_proxies(tl: &Timeline) -> anyhow::Result<(Compiled, Vec<PathBuf>)
 }
 
 pub fn compile(tl: &Timeline) -> anyhow::Result<Compiled> {
-    compile_with(tl, |p, w, h| SourceNode::new(p.clone(), w, h))
+    compile_with(tl, |p| SourceNode::new(p.clone()))
 }

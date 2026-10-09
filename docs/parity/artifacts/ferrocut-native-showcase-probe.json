@@ -1,0 +1,32 @@
+{
+  "file": "/tmp/ferrocut-native-showcase.mkv",
+  "format": "matroska,webm",
+  "duration": 4.0,
+  "size_bytes": 11964897,
+  "bitrate": 23929794,
+  "video": {
+    "codec": "ffv1",
+    "profile": null,
+    "width": 1280,
+    "height": 720,
+    "display_aspect": "16:9",
+    "fps": 24.0,
+    "r_frame_rate": "24/1",
+    "avg_frame_rate": "24/1",
+    "variable_frame_rate_suspected": false,
+    "pix_fmt": "bgr0",
+    "bit_depth": 8,
+    "hdr": false,
+    "hdr_format": null,
+    "dolby_vision": null,
+    "color_space": null,
+    "color_primaries": null,
+    "color_transfer": null,
+    "color_range": null,
+    "rotation": 0,
+    "nb_frames": null,
+    "bitrate": null
+  },
+  "audio": null,
+  "subtitle_streams": 0
+}

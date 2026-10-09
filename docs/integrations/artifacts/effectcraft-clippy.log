@@ -1,0 +1,7 @@
+    Checking ferrocut-types v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-types)
+    Checking ferrocut-core v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-core)
+    Checking ferrocut-deliver v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-deliver)
+    Checking ferrocut-audio v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-audio)
+    Checking ferrocut-perceive v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-perceive)
+    Checking ferrocut-engine v0.0.1 (/home/gordontwatts/Documents/projects/ferrocut/crates/ferrocut-engine)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.95s

@@ -15,6 +15,8 @@
 //! ([`AdjustNode`]). Evaluation, regions of interest, working-space
 //! conversions, cache keys and error wrapping are in [`EffectStack`].
 
+pub mod effectcraft;
+pub mod finishing;
 pub mod kernels;
 pub mod native;
 
@@ -46,6 +48,9 @@ pub struct VideoEffectSpec {
     pub id: Option<String>,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub enabled: bool,
+    /// Intrinsic procedural phase, adjusted automatically by split/trim.
+    #[serde(default, skip_serializing_if = "is_zero_time")]
+    pub clock_offset: RationalTime,
     /// Parameters by name (see the type's [`VideoEffect::params`]).
     #[serde(flatten)]
     pub params: BTreeMap<String, Value>,
@@ -57,15 +62,18 @@ fn yes() -> bool {
 fn is_true(b: &bool) -> bool {
     *b
 }
+fn is_zero_time(t: &RationalTime) -> bool {
+    *t == RationalTime::ZERO
+}
 
 impl VideoEffectSpec {
     /// The same effect with every key time of its animated parameters
     /// shifted by `dt` (clip-local keys after a split / trim).
-    pub fn shifted(&self, dt: ferrocut_core::Rational) -> VideoEffectSpec {
+    pub fn shifted(&self, dt: ferrocut_core::Rational) -> anyhow::Result<VideoEffectSpec> {
         fn shift(v: &Value, dt: ferrocut_core::Rational) -> Value {
             match v {
                 Value::Array(a) => Value::Array(a.iter().map(|x| shift(x, dt)).collect()),
-                Value::Object(o) if o.contains_key("keyframes") => {
+                Value::Object(o) if o.contains_key("keyframes") || o.contains_key("expression") => {
                     match serde_json::from_value::<Animatable>(v.clone()) {
                         Ok(a) => serde_json::to_value(a.shifted(dt)).unwrap_or_else(|_| v.clone()),
                         Err(_) => v.clone(),
@@ -74,14 +82,21 @@ impl VideoEffectSpec {
                 _ => v.clone(),
             }
         }
-        VideoEffectSpec {
+        let offset = self.clock_offset.0;
+        let clock_offset = ferrocut_core::Rational::try_new(
+            offset.num() as i128 * dt.den() as i128 - dt.num() as i128 * offset.den() as i128,
+            offset.den() as i128 * dt.den() as i128,
+        )
+        .map_err(|error| anyhow::anyhow!("{}: procedural clock shift: {error}", self.kind))?;
+        Ok(VideoEffectSpec {
+            clock_offset: RationalTime(clock_offset),
             params: self
                 .params
                 .iter()
                 .map(|(k, v)| (k.clone(), shift(v, dt)))
                 .collect(),
             ..self.clone()
-        }
+        })
     }
 
     /// `"id"` or `#index`, for messages.
@@ -163,6 +178,7 @@ pub fn set_effect_param(e: &mut VideoEffectSpec, param: &str, value: Value) -> R
             return Ok(());
         }
         "type" => return Err("type cannot be changed; remove the effect and add another".into()),
+        "clock_offset" => return Err("clock_offset is maintained by split/trim; edit the timeline effect object to set it explicitly".into()),
         _ => {}
     }
     ensure_builtins();
@@ -228,7 +244,11 @@ pub fn set_effect_param(e: &mut VideoEffectSpec, param: &str, value: Value) -> R
 pub fn ensure_builtins() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        for e in native::all() {
+        for e in native::all()
+            .into_iter()
+            .chain(finishing::all())
+            .chain(effectcraft::all())
+        {
             effect::register(e).expect("native video effect registers");
         }
     });
@@ -321,6 +341,16 @@ fn parse_value(spec: &ParamSpec, v: &Value) -> Result<Val, String> {
             ));
         }
     })
+}
+
+/// The spec of parameter `name` of the registered effect `kind`.
+pub(crate) fn param_spec(kind: &str, name: &str) -> Option<ParamSpec> {
+    ensure_builtins();
+    effect::lookup(kind)?
+        .params()
+        .iter()
+        .find(|s| s.name == name)
+        .copied()
 }
 
 /// Defaults are JSON text written by effect authors: decimals there (`0.8`)
@@ -484,6 +514,8 @@ pub struct EffectStack {
     /// Parameter time = frame time minus this (the clip start for clip-local
     /// parameters, zero for timeline time).
     pub time_offset: RationalTime,
+    /// Output rate used by frame-based effects (30 for standalone stacks).
+    pub frame_rate: ferrocut_core::FrameRate,
 }
 
 impl EffectStack {
@@ -498,7 +530,13 @@ impl EffectStack {
             owner,
             effects,
             time_offset,
+            frame_rate: ferrocut_core::FrameRate::new(30, 1),
         })
+    }
+
+    pub fn with_frame_rate(mut self, rate: ferrocut_core::FrameRate) -> Self {
+        self.frame_rate = rate;
+        self
     }
 
     pub fn is_empty(&self) -> bool {
@@ -544,11 +582,13 @@ impl EffectStack {
                 b.extend_from_slice(s.as_bytes());
             }
             b.push(e.spec.enabled as u8);
+            b.extend_from_slice(&e.spec.clock_offset.hash_bytes());
             let j = serde_json::to_string(&e.spec.params).unwrap_or_default();
             b.extend_from_slice(&(j.len() as u32).to_le_bytes());
             b.extend_from_slice(j.as_bytes());
         }
         b.extend_from_slice(&self.time_offset.hash_bytes());
+        b.extend_from_slice(&self.frame_rate.hash_bytes());
         b
     }
 
@@ -568,6 +608,28 @@ impl EffectStack {
             let p = a.params.hash_bytes();
             b.extend_from_slice(&(p.len() as u32).to_le_bytes());
             b.extend_from_slice(&p);
+            b.extend_from_slice(&self.frame_rate.hash_bytes());
+            b.push(a.fx.effect.time_dependent() as u8);
+            let pt = self.param_time(t);
+            let clock =
+                pt.0.checked_add(a.fx.spec.clock_offset.0)
+                    .ok()
+                    .map(RationalTime);
+            if let Some(clock) =
+                clock.filter(|clock| a.fx.effect.validate_clocks(t, pt, *clock).is_ok())
+            {
+                b.push(0);
+                if a.fx.effect.time_dependent() {
+                    b.extend_from_slice(&clock.hash_bytes());
+                }
+            } else {
+                // Planning remains total for invalid requests. Distinct error
+                // keys prevent a warm valid frame from bypassing render checks.
+                b.push(1);
+                b.extend_from_slice(&t.hash_bytes());
+                b.extend_from_slice(&pt.hash_bytes());
+                b.extend_from_slice(&a.fx.spec.clock_offset.hash_bytes());
+            }
         }
         b
     }
@@ -596,11 +658,30 @@ impl EffectStack {
             width: input.width,
             height: input.height,
             pixel_aspect: input.pixel_aspect.to_f64(),
+            frame_rate: self.frame_rate.to_f64(),
         };
         let max_dim = ctx.gpu.device.limits().max_texture_dimension_2d;
         let bound = overscan_bound(display, max_dim);
         let pt = self.param_time(t);
         for a in &active {
+            let clock = RationalTime(pt.0.checked_add(a.fx.spec.clock_offset.0).map_err(
+                |error| {
+                    self.wrap(
+                        a.index,
+                        &a.fx.spec.kind,
+                        NodeError::permanent(format!("at {pt}: procedural clock: {error}")),
+                    )
+                },
+            )?);
+            a.fx.effect
+                .validate_clocks(t, pt, clock)
+                .map_err(|message| {
+                    self.wrap(
+                        a.index,
+                        &a.fx.spec.kind,
+                        NodeError::permanent(format!("at {pt}: {message}")),
+                    )
+                })?;
             if a.fx.animated() {
                 a.fx.check_sampled(&a.params).map_err(|m| {
                     self.wrap(
@@ -658,6 +739,15 @@ impl EffectStack {
             let req = EffectRequest {
                 time: t,
                 param_time: pt,
+                effect_time: RationalTime(pt.0.checked_add(a.fx.spec.clock_offset.0).map_err(
+                    |error| {
+                        self.wrap(
+                            a.index,
+                            kind,
+                            NodeError::permanent(format!("at {pt}: procedural clock: {error}")),
+                        )
+                    },
+                )?),
                 region: out[i],
                 canvas,
                 label: self.effects[a.index].spec.label(a.index),

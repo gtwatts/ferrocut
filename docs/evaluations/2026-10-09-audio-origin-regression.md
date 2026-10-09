@@ -1,0 +1,19 @@
+# Audio packet-timebase repair and public regressions
+
+Status: **source, release and installed milestone accepted.** The accepted source and build run is on exact revision 69c75cbdf7e47e1667865a30e1f106989adebcb7. The earlier focused replay remains valid evidence for decoder behavior: six integration tests and one selected unit passed on the repair; the old control had two integration passes, four expected integration failures and a passing selected unit.
+
+The repair calls set_packet_time_base(ist.time_base()) before opening the audio decoder. This gives automatic leading-sample trimming the stream timebase; no manual skip, seek, codec-specific correction, timestamp replacement or new resampling rule was added. The decoded-audio identity is audio-decode.v2:pkt-timebase:swr-default:f32p:mono-or-stereo, so old decoded sources and dependent mixes cannot be reused while video keys remain unchanged. See [audio.rs](../../crates/ferrocut-engine/src/media/audio.rs).
+
+On the tagged synthetic MP3, the old control was 1105 stereo frames short at 44.1 kHz and 1203 short at 48 kHz. The repaired decoder matched the fixture's own exact reference PCM and lengths at both rates. The old second drop advanced this fixture's retained content by 25.0625 ms at 48 kHz; the repair removes that advance. The result does not explain every historical private-film or mixed-film residual.
+
+The repair preserves exact rational placement: at 48 kHz source [12000,60000) maps to program [6000,54000); at 44.1 kHz source [11026,55126) maps to [5513,49613). Cache checks changed source identity, rejected stale v1 premix/final entries, and produced bit-identical warm, forced and fresh mixdown PCM. WAV, FLAC, untagged MP3, linked A/V origin and missing-first-PTS controls remained passing. The public fixture and assertions are in [audio_origin.rs](../../crates/ferrocut-engine/tests/audio_origin.rs) and the [fixture README](../../crates/ferrocut-engine/tests/data/audio-origin/README.md).
+
+## Combined milestone
+
+The accepted combined run on 69c75cb passed formatting, all-target Clippy, the workspace test run, delivery tests, release builds and unchanged render CI. Cargo reported 637 workspace passes with two ignored doctests and eight delivery passes. The test-only successor preserves decoder, fixture and assertion semantics; it only changes reference-byte iteration.
+
+The release CLI and fresh release MCP route passed five exact original-reference PCM placements: tagged source [12000,60000) maps to program [6000,54000), with the linked A/V case preserving 4800 additional silent stereo frames. The four tagged CLI/MCP masters were byte-identical across cold, warm and forced runs and the requested j1/j2 cases; the linked master separately matched its reference. The fresh MCP route passed containment and clean EOF checks. The installed 69c75cb CLI and configured fresh MCP route passed the same five PCM/reference checks. Installation preserved configuration bytes, four recoverable binary backups and the existing Whisper executable/model links. No existing-harness reload, listening or private-film synchronization claim follows.
+
+The known relative chunk_dir limitation remains: a check run from a different working directory than a render made with a relative output path cannot find the render's chunks. The accepted installed proof used absolute output/cache paths as a workaround; it does not claim a fix. Earlier frozen bda8a21 production artifacts are historical evidence only.
+
+The combined run retains explicit boundaries: the hardware-comparison test returned early on the software adapter, and two OpenH264-dependent positive paths returned early because that optional codec was unavailable. Cargo totals therefore do not represent every optional behavior. These checks establish source, build, regression and signal evidence, not normal-speed playback, listening or human creative acceptance. No broad Adobe parity claim follows.

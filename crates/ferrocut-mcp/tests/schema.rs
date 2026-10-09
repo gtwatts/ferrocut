@@ -1,9 +1,12 @@
 //! Tool schemas: complete, strict, and in sync with the engine's edit ops.
 
+#[path = "support/mini_schema.rs"]
+mod mini_schema;
+
 use std::collections::BTreeSet;
 
 use ferrocut_engine::edit::parse_ops;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[test]
 fn every_edit_op_has_a_strict_schema_whose_example_parses() {
@@ -82,6 +85,9 @@ fn every_edit_op_has_a_strict_schema_whose_example_parses() {
 }
 
 fn sample(p: &Value) -> Value {
+    if let Some(value) = p.get("default") {
+        return value.clone();
+    }
     if let Some(e) = p.get("enum") {
         return e[0].clone();
     }
@@ -103,16 +109,18 @@ fn sample(p: &Value) -> Value {
     if p.get("anyOf").is_some() {
         return Value::from("1/2");
     }
-    if let Some(b) = p.get("oneOf").and_then(|b| b.get(0))
-        && b.get("type") == Some(&Value::from("object"))
-    {
-        // An object branch (e.g. a generator): its required properties.
+    if p.get("type") == Some(&Value::from("object")) {
+        // Required object fields can themselves be strict nested objects, such
+        // as a native generator's text/shape payload.
         let mut o = serde_json::Map::new();
-        for r in b["required"].as_array().into_iter().flatten() {
+        for r in p["required"].as_array().into_iter().flatten() {
             let k = r.as_str().unwrap();
-            o.insert(k.into(), sample(&b["properties"][k]));
+            o.insert(k.into(), sample(&p["properties"][k]));
         }
         return Value::Object(o);
+    }
+    if let Some(b) = p.get("oneOf").and_then(|b| b.get(0)) {
+        return sample(b);
     }
     panic!("no sample for {p}");
 }
@@ -145,6 +153,7 @@ fn every_tool_schema_is_a_strict_object() {
             "diff",
             "plan",
             "render",
+            "preview_frames",
             "markers_list",
             "media_status",
             "proxy_generate",
@@ -153,7 +162,15 @@ fn every_tool_schema_is_a_strict_object() {
             "log",
             "undo",
             "branch",
-            "openh264"
+            "openh264",
+            "capabilities",
+            "effects_catalog",
+            "scopes_read",
+            "timeline_import",
+            "timeline_export",
+            "tracking_analyze",
+            "tracking_keyframes",
+            "captions_import"
         ]
     );
     for t in &tools {
@@ -165,4 +182,70 @@ fn every_tool_schema_is_a_strict_object() {
         }
         assert!(t.description.as_ref().unwrap().len() > 40);
     }
+}
+
+/// Agents receive the tool list on every session: keep it small. The expanded
+/// edit_apply schema alone used to be ~15 MB.
+#[test]
+fn published_tool_list_stays_small() {
+    let total: usize = ferrocut_mcp::tools()
+        .iter()
+        .map(|t| serde_json::to_string(&*t.input_schema).unwrap().len())
+        .sum();
+    assert!(total < 200_000, "tool input schemas total {total} bytes");
+}
+
+/// Compaction only moves repeated subtrees into `$defs`: resolving the refs
+/// gives back exactly the hand-written schemas.
+#[test]
+fn published_schemas_expand_to_the_source_schemas() {
+    use ferrocut_mcp::compact::{compact, expand};
+    let tl = ferrocut_mcp::schema::timeline();
+    let c = compact(tl.clone());
+    assert!(c.to_string().len() * 20 < tl.to_string().len());
+    assert_eq!(expand(&c), tl);
+    let ops = ferrocut_mcp::schema::edit_op();
+    assert_eq!(
+        expand(&compact(serde_json::json!({ "items": ops.clone() })))["items"],
+        ops
+    );
+    // edit_apply: exact apart from the per-type video effect branches.
+    let published = expand(&ferrocut_mcp::schema::edit_apply_published());
+    let full = ferrocut_mcp::schema::edit_apply();
+    assert_eq!(published["required"], full["required"]);
+    assert_eq!(
+        published["properties"]["ops"]["items"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .len(),
+        full["properties"]["ops"]["items"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .len()
+    );
+}
+
+/// The published (compacted) schemas are valid JSON Schema: every `$ref`
+/// sits in schema position, and every op example validates against the
+/// published edit_apply schema through those refs.
+#[test]
+fn published_schemas_place_refs_in_schema_position_and_accept_examples() {
+    use ferrocut_mcp::compact::refs_are_well_placed;
+    for t in ferrocut_mcp::tools() {
+        let s = Value::Object((*t.input_schema).clone());
+        refs_are_well_placed(&s).unwrap_or_else(|at| panic!("{}: $ref at {at}", t.name));
+    }
+    let published = ferrocut_mcp::schema::edit_apply_published();
+    for b in ferrocut_mcp::schema::edit_op()["oneOf"].as_array().unwrap() {
+        let call = json!({ "timeline": "t.json", "ops": [b["examples"][0].clone()] });
+        let errs = mini_schema::validate(&published, &call);
+        assert!(errs.is_empty(), "{}: {errs:#?}", b["title"]);
+    }
+    assert!(
+        !mini_schema::validate(
+            &published,
+            &json!({ "timeline": "t.json", "ops": [{ "op": "nope" }] })
+        )
+        .is_empty()
+    );
 }

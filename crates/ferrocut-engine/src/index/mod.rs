@@ -265,19 +265,37 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
     let media_hash = blake3_file(media)?;
     let p = plan(&media_hash, opts);
     let path = index_path(media, &p.key);
-    if !opts.force
-        && let Ok(text) = std::fs::read_to_string(&path)
-        && let Ok(ix) = serde_json::from_str::<MediaIndex>(&text)
-        && ix.key == p.key
-    {
-        return Ok((
-            ix,
-            IndexInfo {
-                index_path: path,
-                cached: true,
-                elapsed_ms: t0.elapsed().as_millis(),
-            },
-        ));
+    let cached = (!opts.force)
+        .then(|| std::fs::read_to_string(&path).ok())
+        .flatten()
+        .and_then(|text| serde_json::from_str::<MediaIndex>(&text).ok())
+        .filter(|ix| ix.key == p.key);
+    // Shots of a cached index rebuilt only to retry its transcript.
+    let mut keep_shots = None;
+    if let Some(mut ix) = cached {
+        let unavailable = ix.media.has_audio && matches!(ix.transcript, Part::Unavailable { .. });
+        if unavailable && p.whisper.is_some() && !opts.cached_only {
+            // Written before transcription errors stopped being cached: an
+            // unavailable transcript under a key whose whisper and model
+            // exist. Retry it, keeping the shots.
+            keep_shots = Some(ix.shots);
+        } else {
+            // A missing whisper or model: report why as of now (the CLI may
+            // have been fixed but not the model), not a saved reason.
+            if unavailable && let Some(err) = &p.whisper_err {
+                ix.transcript = Part::Unavailable {
+                    reason: err.clone(),
+                };
+            }
+            return Ok((
+                ix,
+                IndexInfo {
+                    index_path: path,
+                    cached: true,
+                    elapsed_ms: t0.elapsed().as_millis(),
+                },
+            ));
+        }
     }
     if opts.cached_only {
         bail!(
@@ -286,6 +304,7 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
         );
     }
     let info = crate::media::probe(media)?;
+    let mut transcribe_failed = false;
     let transcript = if !opts.transcribe {
         Part::Skipped
     } else if !info.has_audio {
@@ -295,16 +314,21 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
     } else if let Some((cli, model, mh)) = &p.whisper {
         match transcribe(media, cli, model, mh, &p.key, &opts.whisper) {
             Ok(t) => Part::Done(t),
-            Err(e) => Part::Unavailable {
-                reason: format!("{e:#}"),
-            },
+            Err(e) => {
+                transcribe_failed = true;
+                Part::Unavailable {
+                    reason: format!("{e:#}"),
+                }
+            }
         }
     } else {
         Part::Unavailable {
             reason: p.whisper_err.clone().unwrap_or_default(),
         }
     };
-    let shots = if !opts.shots {
+    let shots = if let Some(s) = keep_shots {
+        s
+    } else if !opts.shots {
         Part::Skipped
     } else if !info.has_video {
         Part::Unavailable {
@@ -334,10 +358,12 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
         transcript,
         shots,
     };
-    // A failed transcription is not cached (it may be transient); everything
-    // else is.
-    let failed = matches!(&ix.transcript, Part::Unavailable { reason } if reason.starts_with("whisper-cli failed"));
-    if !failed {
+    // A failed transcription (whisper-cli exit, missing or unparsable
+    // output, audio decode) is not cached: it may be transient, and the key
+    // (model, flags, bytes) would otherwise pin it. A missing whisper/model
+    // is cached under its own key, but its reason is refreshed on read; a
+    // transcript, including an empty one (no speech), is cached.
+    if !transcribe_failed {
         let dir = path.parent().expect("index dir");
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         let tmp = path.with_extension(format!("tmp{}", std::process::id()));

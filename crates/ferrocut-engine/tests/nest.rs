@@ -24,7 +24,7 @@ fn stub(p: &Path, w: u32, h: u32) -> anyhow::Result<SourceNode> {
 
 fn keys(path: &Path) -> anyhow::Result<Vec<FrameKey>> {
     let tl = Timeline::load(path)?;
-    let c = compile_with(&tl, |p, w, h| stub(p, w, h))?;
+    let c = compile_with(&tl, |p| stub(p, 64, 32))?;
     Ok((0..tl.frame_count())
         .map(|i| {
             c.graph
@@ -99,7 +99,7 @@ fn inner_edits_change_only_the_outer_frames_that_show_them() {
 }
 
 #[test]
-fn cycles_and_size_mismatches_are_errors() {
+fn cycles_fail_and_other_canvas_sizes_are_fitted() {
     let d = tempfile::tempdir().unwrap();
     let a = write(
         d.path(),
@@ -136,7 +136,20 @@ fn cycles_and_size_mismatches_are_errors() {
         r#"{ "output": { "width": 64, "height": 32, "fps": "24" },
              "tracks": [ { "name": "V1", "clips": [ { "id": "c", "source": "big.json", "start": 0, "duration": "1" } ] } ] }"#,
     );
-    assert!(format!("{:#}", keys(&o).unwrap_err()).contains("comps must match the frame size"));
+    assert_eq!(keys(&o).unwrap().len(), 24);
+    let tl = Timeline::load(&o).unwrap();
+    let compiled = compile_with(&tl, |p| stub(p, 64, 32)).unwrap();
+    let placed = compiled.placements.iter().find(|p| p.clip == "c").unwrap();
+    assert_eq!(placed.native, (128, 32));
+    assert_eq!(placed.output, (64, 32));
+    assert_eq!(placed.fit_scale, [Rational::new(1, 2); 2]);
+    assert!(
+        format!(
+            "{:#}",
+            edit(&o, r#"[{"op":"unnest","clip":"c"}]"#).unwrap_err()
+        )
+        .contains("unnest would change the picture")
+    );
 }
 
 const FLAT: &str = r#"{

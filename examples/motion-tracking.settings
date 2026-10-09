@@ -1,0 +1,26 @@
+{
+  "start": 0,
+  "fps": 16,
+  "width": 320,
+  "height": 180,
+  "frame_count": 32,
+  "points": [
+    {
+      "id": "target",
+      "center": [
+        "197/2",
+        "173/2"
+      ],
+      "feature_size": [
+        25,
+        25
+      ],
+      "search_size": [
+        61,
+        61
+      ]
+    }
+  ],
+  "min_confidence": 80,
+  "subpixel": true
+}

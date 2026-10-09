@@ -430,12 +430,12 @@ pub fn layer_depth(
     start: RationalTime,
     camera: Option<&CameraSpec>,
     t: RationalTime,
-    w: u32,
-    h: u32,
+    placement: crate::placement::Placement,
 ) -> f64 {
+    let (w, h) = placement.output;
     let local = t - start;
     layer_homography(
-        &spec.at(local, w, h),
+        &placement.placed(spec, local),
         spec.at_3d(local),
         camera,
         t,
@@ -460,6 +460,8 @@ pub fn hash_mats(ms: &[Mat3]) -> Vec<u8> {
 /// What the multi-sample projective kernel needs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MultiSetup {
+    /// Destination display dimensions.
+    pub display: (u32, u32),
     /// Output pixel -> full-resolution source pixel, per sample (`None`:
     /// singular, the sample is transparent). Averaged with equal weights.
     pub inverses: Vec<Option<Mat3>>,
@@ -574,6 +576,7 @@ pub fn plan_multi(fwds: &[Mat3], src: PixelRect, width: u32, height: u32) -> Opt
         }
     };
     Some(MultiSetup {
+        display: (width, height),
         inverses,
         mip,
         window,

@@ -21,9 +21,14 @@
 //! [`Problem::extra`]; unknown reason codes are kept as [`Reason::Other`].
 //! Anything else (another schema version, a missing field, a pass flag that
 //! contradicts the problems or the exit code) is reported as an error, never
-//! as a pass. Defaults: loudness -14 LUFS ±1 LU, true peak ≤ -1 dBTP; other
-//! thresholds via flags or a config file (passed through verbatim in
-//! `extra_args`).
+//! as a pass. Loudness target and true-peak ceiling: a flag, else a config
+//! key, else what the render was normalized/limited to (its report's audio
+//! analysis; a recorded `null` means no target and gives the default), else
+//! the timeline's `audio.loudness` (only when the report lacks those keys),
+//! else -14 LUFS / -1 dBTP;
+//! tolerance ±1 LU unless set. The checker reports each threshold's source,
+//! kept in [`CheckOutcome::loudness_target`]. Flags and a config file are
+//! passed through verbatim in `extra_args`.
 //!
 //! Audio expectation ([`ExpectAudio`], default `auto`): a timeline with no
 //! audio (no audio-track clips, and no video clip whose source has an audio
@@ -69,6 +74,9 @@ pub enum Reason {
     MissingAudio,
     /// The master's audio doesn't match the render report's audio hash.
     AudioJoinMismatch,
+    /// Warning: the render's recorded loudness target/ceiling differs from
+    /// the timeline's current `audio.loudness` (re-render to grade it).
+    LoudnessTargetMismatch,
     #[serde(untagged)]
     Other(String),
 }
@@ -118,6 +126,11 @@ pub struct CheckOutcome {
     /// The checker's JSON as printed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub report: Option<Value>,
+    /// The audio thresholds the checker used, each `{value, source}` with
+    /// source `flag`, `config`, `render`, `timeline` or `default` (from the
+    /// report; absent with an older checker).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loudness_target: Option<Value>,
     /// Arguments the engine added for the audio expectation (see the module docs).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub added_args: Vec<String>,
@@ -135,9 +148,30 @@ impl CheckOutcome {
             warnings: vec![],
             message: Some(message.into()),
             report: None,
+            loudness_target: None,
             added_args: vec![],
             elapsed_ms: 0,
         }
+    }
+    /// `loudness target -16 LUFS (render) ±1 LU (default), true peak ≤ -1.5
+    /// dBTP (render)`, when the checker reported its thresholds.
+    pub fn loudness_line(&self) -> Option<String> {
+        let t = self.loudness_target.as_ref()?;
+        let k = |key: &str| -> Option<(f64, String)> {
+            let v = t.get(key)?;
+            Some((
+                v.get("value")?.as_f64()?,
+                v.get("source")?.as_str()?.to_string(),
+            ))
+        };
+        let ((tv, ts), (lv, ls), (pv, ps)) = (
+            k("target_lufs")?,
+            k("tolerance_lu")?,
+            k("true_peak_max_dbtp")?,
+        );
+        Some(format!(
+            "loudness target {tv} LUFS ({ts}) ±{lv} LU ({ls}), true peak ≤ {pv} dBTP ({ps})"
+        ))
     }
     /// Exit code for a CLI wrapping this: 0 pass/skipped, 1 fail, 2 error
     /// (skipped is 2 when `require` is set).
@@ -423,6 +457,10 @@ pub fn interpret(exit: Option<i32>, stdout: &str, stderr: &str) -> CheckOutcome 
     };
     let report: Option<Value> = serde_json::from_str(stdout.trim()).ok();
     o.report = report.clone();
+    o.loudness_target = report
+        .as_ref()
+        .and_then(|r| r.get("loudness_target"))
+        .cloned();
     o.schema_version = report
         .as_ref()
         .and_then(|r| r.get("schema_version"))

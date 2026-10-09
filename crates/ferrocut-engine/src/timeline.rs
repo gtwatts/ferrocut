@@ -268,6 +268,9 @@ pub struct OutputSpec {
     pub width: u32,
     pub height: u32,
     pub fps: FrameRate,
+    /// Default media/comp fit; absent means contain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<crate::placement::Fit>,
     /// Output GOP length in frames; every GOP is closed and starts with a keyframe.
     #[serde(default = "default_gop")]
     pub gop: u32,
@@ -329,6 +332,9 @@ pub struct Clip {
     /// Animated 2D layer transform (position/scale/rotation/anchor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<TransformSpec>,
+    /// Fit native source pixels before the transform; absent inherits output.fit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<crate::placement::Fit>,
     /// After Effects' 3D layer switch: the clip is a card in 3D space seen
     /// through the timeline camera, with z / X / Y rotation / orientation
     /// transform fields, depth-sorted against neighbouring 3D layers.
@@ -361,6 +367,9 @@ pub struct Clip {
     /// Clip markers (source seconds; see [`crate::markers`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<Marker>,
+    /// Ordered native masks in source time, before video effects and transform.
+    #[serde(default, skip_serializing_if = "crate::masks::MaskStack::is_empty")]
+    pub masks: crate::masks::MaskStack,
     /// Video effects in order (see [`crate::fx`]), keyframes in clip-local
     /// time. They run on the clip's picture before its transform; the clip
     /// opacity applies after them.
@@ -412,6 +421,10 @@ impl AudioClip {
 }
 
 impl Clip {
+    pub fn effective_fit(&self, output: &OutputSpec) -> crate::placement::Fit {
+        self.fit.or(output.fit).unwrap_or_default()
+    }
+
     pub fn end(&self) -> RationalTime {
         self.start + self.duration
     }
@@ -423,14 +436,20 @@ impl Clip {
         TimeMap::new(self.source_in, &self.speed, self.time_remap.as_ref())
     }
     /// Shift clip-local video keyframes (opacity, transform, speed, remap) by `dt`.
-    pub(crate) fn shift_video_keys(&mut self, dt: Rational) {
+    pub(crate) fn shift_video_keys(&mut self, dt: Rational) -> anyhow::Result<()> {
+        let effects = self
+            .effects
+            .iter()
+            .map(|e| e.shifted(dt))
+            .collect::<anyhow::Result<Vec<_>>>()?;
         self.opacity = self.opacity.shifted(dt);
         self.speed = self.speed.shifted(dt);
         self.time_remap = self.time_remap.as_ref().map(|a| a.shifted(dt));
         if let Some(t) = &self.transform {
             self.transform = Some(t.shifted(dt));
         }
-        self.effects = self.effects.iter().map(|e| e.shifted(dt)).collect();
+        self.effects = effects;
+        Ok(())
     }
     pub fn audio_region(&self) -> (RationalTime, RationalTime) {
         audio_region(self.start, self.duration, &self.audio)
@@ -470,9 +489,27 @@ impl Timeline {
             )
     }
 
+    /// Non-media assets read by native generators. Keep these separate from
+    /// decoder sources so probing/proxy generation never tries to decode fonts.
+    pub fn assets_mut(&mut self) -> impl Iterator<Item = &mut PathBuf> {
+        self.tracks
+            .iter_mut()
+            .flat_map(|t| t.clips.iter_mut())
+            .filter_map(|c| match c.generator.as_mut() {
+                Some(GeneratorSpec::Text { text }) => Some(text),
+                _ => None,
+            })
+            .flat_map(|text| text.font_paths_mut())
+    }
+
     /// Join relative sources onto `base` (the timeline file's directory).
     pub fn resolve_sources(&mut self, base: &Path) {
         for s in self.sources_mut() {
+            if s.is_relative() {
+                *s = base.join(&*s);
+            }
+        }
+        for s in self.assets_mut() {
             if s.is_relative() {
                 *s = base.join(&*s);
             }
@@ -488,6 +525,12 @@ impl Timeline {
                 *s = std::fs::canonicalize(&j).unwrap_or(j);
             }
         }
+        for s in self.assets_mut() {
+            if s.is_relative() {
+                let j = base.join(&*s);
+                *s = std::fs::canonicalize(&j).unwrap_or(j);
+            }
+        }
     }
 
     pub fn from_json(text: &str) -> anyhow::Result<Self> {
@@ -496,7 +539,13 @@ impl Timeline {
         Ok(tl)
     }
 
+    /// Validate the timeline. Expressions are evaluated (see [`crate::expr`])
+    /// and the rest is checked on their baked values.
     pub fn validate(&self) -> anyhow::Result<()> {
+        crate::expr::bake(self)?.validate_baked()
+    }
+
+    fn validate_baked(&self) -> anyhow::Result<()> {
         let o = &self.output;
         ensure!(o.width > 0 && o.height > 0, "output size must be non-zero");
         ensure!(o.fps > Rational::ZERO, "fps must be positive");
@@ -573,6 +622,11 @@ impl Timeline {
                     "clip {}: source_in must be >= 0",
                     c.id
                 );
+                ensure!(
+                    c.fit.is_none() || (!c.is_generator() && !c.adjustment),
+                    "clip {}: fit applies to media and nested-composition clips (generators and adjustment layers render at the frame size)",
+                    c.id
+                );
                 match &c.generator {
                     _ if c.adjustment => {
                         ensure!(
@@ -590,6 +644,7 @@ impl Timeline {
                             (c.transform.is_some(), "transform"),
                             (c.three_d, "three_d"),
                             (c.motion_blur, "motion_blur"),
+                            (!c.masks.is_empty(), "masks"),
                             (c.transition_in.is_some(), "transition_in"),
                             (!c.blend_mode.is_normal(), "blend_mode"),
                             (
@@ -619,6 +674,9 @@ impl Timeline {
                         c.id
                     ),
                 }
+                c.masks
+                    .validate()
+                    .map_err(|e| anyhow::anyhow!("clip {}: masks: {e}", c.id))?;
                 crate::fx::validate_list(&c.effects, &format!("clip {}", c.id))
                     .map_err(|e| anyhow::anyhow!(e))?;
                 c.opacity

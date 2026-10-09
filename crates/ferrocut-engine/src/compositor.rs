@@ -664,7 +664,7 @@ impl Compositor {
     }
 
     /// Resample `a` through a planned layer transform (see [`crate::transform`]).
-    /// The result covers `k.window` with `a`'s display window and pixel aspect.
+    /// The result covers `k.window` with `k.display` and `a`'s pixel aspect.
     /// Downscales past the kernel cap first run `k.mip` box levels.
     pub fn transform(
         &self,
@@ -697,7 +697,7 @@ impl Compositor {
 
     /// Resample `a` through one or more projective maps and average them
     /// (3D layers, motion blur; see [`crate::layer3d`]). The result covers
-    /// `k.window` with `a`'s display window and pixel aspect.
+    /// `k.window` with `k.display` and `a`'s pixel aspect.
     pub fn transform_multi(
         &self,
         ctx: &mut RenderCtx<'_>,
@@ -716,8 +716,8 @@ impl Compositor {
         let win = k.window;
         let out = Frame::new_gpu_window(
             ctx.gpu,
-            a.width,
-            a.height,
+            k.display.0,
+            k.display.1,
             win,
             a.pixel_aspect,
             a.color_space.clone(),
@@ -781,8 +781,8 @@ impl Compositor {
         let win = k.window;
         let out = Frame::new_gpu_window(
             ctx.gpu,
-            a.width,
-            a.height,
+            k.display.0,
+            k.display.1,
             win,
             a.pixel_aspect,
             a.color_space.clone(),
@@ -825,10 +825,21 @@ impl Compositor {
 
     /// Fully transparent frame covering only `window`.
     pub fn clear_window(&self, ctx: &mut RenderCtx<'_>, like: &Frame, window: PixelRect) -> Frame {
+        self.clear_display(ctx, like, window, (like.width, like.height))
+    }
+
+    /// Transparent frame with a destination display independent of the input.
+    pub fn clear_display(
+        &self,
+        ctx: &mut RenderCtx<'_>,
+        like: &Frame,
+        window: PixelRect,
+        display: (u32, u32),
+    ) -> Frame {
         let out = Frame::new_gpu_window(
             ctx.gpu,
-            like.width,
-            like.height,
+            display.0,
+            display.1,
             window,
             like.pixel_aspect,
             like.color_space.clone(),

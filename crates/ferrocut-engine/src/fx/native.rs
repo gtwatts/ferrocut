@@ -1,6 +1,6 @@
 //! The engine's native GPU video effects. Every one works in ACEScg linear
 //! (the frame working space) on premultiplied pixels; parameters are in
-//! display pixels / degrees and keyframe in the stack's time base
+//! layer pixels (native source pixels for clip effects, output pixels for track effects) / degrees and keyframe in the stack's time base
 //! (clip-local on clips and adjustment clips, timeline time on tracks).
 
 use std::sync::Arc;
@@ -567,6 +567,7 @@ impl VideoEffect for Transform {
             width: 2,
             height: 2,
             pixel_aspect: 1.0,
+            frame_rate: 30.0,
         };
         let mut t = Self::at(p, c);
         if p.vec2("position").is_none() && p.vec2("anchor").is_none() {
@@ -643,7 +644,7 @@ impl VideoEffect for Crop {
         "crop"
     }
     fn doc(&self) -> &str {
-        "crop the frame edges (display pixels) with an optional inward feather; the data window shrinks"
+        "crop the frame edges (layer pixels (native source pixels for clip effects, output pixels for track effects)) with an optional inward feather; the data window shrinks"
     }
     fn params(&self) -> &[ParamSpec] {
         CROP_PARAMS
@@ -765,6 +766,7 @@ mod tests {
             width: 100,
             height: 50,
             pixel_aspect: 1.0,
+            frame_rate: 30.0,
         };
         let full = PixelRect::full(100, 50);
         let b = params(&[("sigma", ParamValue::Scalar(2.0))]);

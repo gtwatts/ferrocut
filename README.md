@@ -2,6 +2,24 @@
 
 Headless, agent-native video editing and compositing engine (Rust).
 
+Product target: one professional editor combining Premiere-style editing and audio
+with After Effects-style motion graphics and compositing, designed for AI agents.
+Current status is an early implementation, not Adobe feature or production parity.
+The [capability roadmap](docs/parity/README.md) records the researched requirements,
+implementation limits and verification evidence. Start with the
+[agent guide](docs/parity/AGENT_GUIDE.md) and [native graphics example](examples/native-showcase.json).
+
+[FilmCraft and EffectCraft core integration](docs/integrations/STORYTOLD.md) adds
+170 effects, ordered native shape operators, OTIO/FCP7 interchange and numeric
+video scopes. Agents discover exact controls through `capabilities` and the paged
+`effects_catalog`; the [editable integration example](examples/storytold-showcase.json)
+uses the reused engines through Ferrocut's normal renderer.
+
+The [native motion milestone](docs/integrations/NATIVE_MOTION.md) adds animated
+mask stacks, nested shape groups/repeaters, measured point tracking and translation
+stabilization. [Reproduce its full agent workflow](scripts/motion-showcase.py),
+including editable revisions, cached repeats and exact-byte undo.
+
 Brief: Obsidian vault `Pi Memory/Projects/cutline-research-brief-2026-10-07.md` (written before the rename to Ferrocut).
 
 License: Apache-2.0 (see `LICENSE`).
@@ -34,6 +52,7 @@ cargo test --release
 ./target/release/ferrocut adapters           # which GPU wgpu picks (discrete NVIDIA preferred; FERROCUT_ADAPTER=<name> overrides)
 ./target/release/ferrocut render examples/demo.json -o out/demo-cpu.mkv --cpu   # software Vulkan (lavapipe), no GPU needed
 ./target/release/ferrocut plan examples/demo.json          # chunk keys, no decode/GPU
+./target/release/ferrocut stills examples/demo-av.json -o out/stills --spread 12 --each   # PNG stills + labeled contact sheet, no video encode
 ./target/release/ferrocut render examples/demo.json -o out/demo.mkv
 ./target/release/ferrocut render examples/demo-edit-opacity.json -o out/edit.mkv   # only chunks 8,9 re-render
 ./target/release/ferrocut render examples/demo-av.json -o out/av.mkv   # dialogue + ducked music, J/L cuts, animated overlay, -14 LUFS
@@ -56,6 +75,9 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
   all. `<adapter>` hashes the adapter's name, ids, backend and driver version, because output is bit-exact
   per adapter and driver but only perceptually equal across them, so a master never mixes chunks from two
   adapters. Keys themselves stay adapter-free, so `plan` and `diff` need no GPU.
+  Native text keys use font bytes in primary/fallback order plus rendering controls, including the face index;
+  font paths only locate those assets. Relocating identical fonts preserves text keys. The content-only font
+  identity change invalidates older text keys once; non-text keys are unchanged.
 - **Chunks** are `gop * gops_per_chunk` frames, GOP-aligned, each an independent closed-GOP encode.
 - **Determinism**: bit-exact on the same machine/driver (any `--jobs`). Across GPUs expect a
   perceptual match (NVIDIA vs Intel Arc on watts: SSIM 0.99989, PSNR 72.7 dB), not identical bytes.
@@ -70,6 +92,9 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
   | `demo-av.json` fps | 28.3 (`-j 4`), 29.6 (`-j 8`), 31.1 (`-j 24`) | 72.8 (`-j 4`) |
   | `demo.json` blake3 | `f9ae266e…` | `2b5f6c89…` |
   | `demo-av.json` blake3 | `7348f127…` | `e9759227…` |
+
+  (File hashes from before masters carried a declared frame rate and the `FERROCUT_FRAME_RATE` tag; the video
+  stream hashes in the render report are unchanged.)
 
   - Lavapipe is bit-exact run to run and across `-j`.
   - Against the NVIDIA output: mean SSIM 0.99976 / 0.99991 (demo / demo-av; minimum 0.99104 on the last dissolve
@@ -121,6 +146,11 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
 - **Decode.** FFmpeg decode + swresample to the project rate (default 48 kHz) as f32 planar, mono kept
   mono, >2 channels downmixed to stereo. Source time 0 is the video stream's start (A/V files) so linked
   audio lines up with the decoder's frames. Mono pans with constant power (-3 dB center), stereo with balance.
+  Audio-only sources use their audio stream's start. The decoder receives the stream packet timebase
+  before opening, so automatic priming removal advances retained-sample timestamps before source-origin
+  alignment. Audio decode cache version 2 invalidates older decoded sources and dependent mixes once;
+  video chunk keys are unchanged. Public regression and validation status:
+  [audio-origin evaluation](docs/evaluations/2026-10-09-audio-origin-regression.md).
 - **Sample-exact placement.** Every position is `RationalTime -> sample` with the same rounding as the video
   side (nearest, halves away from zero). Chunk `[f0, f1)` gets samples `[S(f0/fps), S(f1/fps))`, and the master
   carries one PCM packet per video frame `[S(i), S(i+1))`, so 48000/23.976 = 2002.002 samples/frame
@@ -174,6 +204,13 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
   - `render`: the output chunks that would re-render (`dirty_chunks`, merged frame/second `ranges`, reuse counts).
     This compares chunk keys exactly as the content-addressed cache does, so the media must exist; otherwise
     `render_error` says why. Audio is re-mixed on every render. `--summary` prints a human-readable version.
+  - With render analysis (the default), text font fields compare `blake3:<digest>` content identities in
+    primary/fallback order. A path-only font relocation is not a semantic font change. `a_hash`/`b_hash`
+    remain document hashes; equal documents can refer to different font contents in different directories.
+    Missing or invalid fonts retain the structural comparison and a `render_error`, without asserting content
+    equivalence. `--no-render` (MCP `render:false`) reads no font contents and still reports path changes.
+    Diff compares the assets currently available to each document; it does not reconstruct older font bytes
+    after a shared asset file has been overwritten.
 - **Branches** are named snapshots tracked in the journal:
   - `ferrocut branch <tl> <name>` names the current state;
   - `ferrocut checkout <tl> <name>` swaps the file to that branch's tip (refusing to drop unjournaled changes
@@ -195,6 +232,8 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 | `diff` | The structured diff above, with render impact |
 | `plan` | Chunk plan (index, frame range, content key) without decoding or GPU |
 | `render` | Incremental render (`jobs` (default 4, lowered to fit free VRAM), `force`, `cache_dir`, `cpu`, `timeout_s`, `deliver: "mp4"` or `{format, output, qp, audio, jobs}`); returns `report_path`, hashes, chunk-reuse stats, `oom_backoffs` and, with `deliver`, a `deliver` section |
+| `preview_frames` | Stills and a labeled contact sheet straight from the graph (`at` times, `frames`, or `spread` N evenly spaced), no video encode; the sheet (or single frame) comes back inline as an image, `each` writes full-resolution PNGs |
+| `timeline_schema` | Timeline JSON Schema, edit-op schema (`op` narrows to one op), parameter registry (`query` filters), authoring guide |
 | `report_read` | Summary (or `full`) of a render report |
 | `quality_check` | Perceptual quality check of a render via `ferrocut-perceive` (below): `status`, `problems`, `warnings`; `render` also takes `check: true` |
 | `log`, `undo`, `branch` | Journal log, undo, and branch `create`/`checkout`/`merge` |
@@ -207,7 +246,11 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
   - keyframes, interpolations (presets, `bezier`, `speed`), transforms, fades and the `ripple_insert` clip object
     are spelled out;
   - a test checks that every op kind has a branch, that every example parses with the engine, and that every
-    property the schema allows is one the engine accepts.
+    property the schema allows is one the engine accepts;
+  - the *published* form (tool list, `docs://` resources) is compacted: repeated subschemas are hoisted into
+    `$defs` with local `$ref`s (`compact.rs`; exact round trip, refs only in schema position), and `edit_apply`
+    describes a video effect as `{type, id?, enabled?, ...}` with `effects_catalog` for per-type controls, so the
+    whole tool list is ~125 KB instead of 15 MB. The engine validates every op strictly either way.
 - **Results** are structured JSON (`structuredContent`, also sent as text). Tool failures, such as an op that
   doesn't apply, a missing file or a render error, come back as `isError` results with
   `{"error": "op 0 (trim nope): ..."}`; an unknown tool is a JSON-RPC invalid-params error.
@@ -260,10 +303,47 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 ```sh
 cargo build --release -p ferrocut-mcp
 ./target/release/ferrocut-mcp --list-tools     # prints every tool with its JSON Schema
+./target/release/ferrocut-mcp --doc timeline-guide   # the authoring guide (--list-docs: every docs:// resource)
 ```
 
 **Register with Codex.** Add this to `~/.codex/config.toml`, or to a trusted project's `.codex/config.toml`.
 Codex's default 60 s tool timeout is too short for real renders, hence `tool_timeout_sec`:
+
+For a local workstation installation after building the four release binaries,
+run `python3 scripts/install-local.py --check` to review the destinations, then
+`python3 scripts/install-local.py` to install. The installer packages the shared
+LGPL FFmpeg libraries with the binaries, creates commands in `~/.local/bin`,
+and adds the MCP entry while preserving other Codex settings. Existing commands
+and configuration are backed up under `~/.local/share/ferrocut/backups/`.
+It stops for review if a different Ferrocut MCP entry already exists.
+If the checkout has a whisper.cpp build and models (`scripts/build-whisper.sh`,
+`scripts/fetch-whisper-model.sh`), the installed runtime gets symlinks to exactly
+`third_party/whisper.cpp/build/bin/whisper-cli` and the discovery model names
+(`ggml-{medium,small}{.en,}.bin`) that exist, so `ferrocut index` finds them from
+any directory. They are absolute links into the checkout, not copies: moving or
+deleting it leaves them dangling, and discovery then reports the variables to set.
+Without whisper, nothing is linked and the install is otherwise unchanged.
+`--whisper-cli`/`--model` and `FERROCUT_WHISPER_CLI`/`FERROCUT_WHISPER_MODEL` still
+take precedence. Python tests: `python3 -m unittest discover -s scripts/tests`.
+
+The [60-second creative brief](eval/creative/agent-editor-60s/BRIEF.md) can be run
+with `python3 eval/run-creative.py --work /absolute/path/to/new/workdir`.
+This launches the user's installed Codex with its existing ChatGPT login and
+model settings, and records tool calls, failures, binary hashes and timing.
+Use `--model MODEL` only for an explicitly selected session override. The run
+inherits installed plugins and confines Ferrocut assets to the work directory;
+it supplies no finished timeline or reference solution. Outputs and raw session
+logs stay local. A successful CLI exit does not certify creative quality.
+
+The [provider-backed brief](eval/creative/agent-editor-60s-toolchain/BRIEF.md)
+tests native Codex image generation, ElevenLabs narration and Ferrocut editing.
+Select it with `--brief eval/creative/agent-editor-60s-toolchain/BRIEF.md` after
+the user authorizes those provider calls. It keeps prompts, generated assets,
+voice/model settings, request receipts and the native edit history. Provider
+availability must be checked in the actual session; an installed skill is not
+proof that generation worked. Both briefs require rendered previews, image
+inspection and a meaningful revision before final delivery. Frame inspection
+does not establish continuous playback or audio listening capability.
 
 ```toml
 [mcp_servers.ferrocut]
@@ -302,8 +382,12 @@ binary over stdio.
     `true_peak_over`, `missing_audio`, `audio_join_mismatch`. Codes added later are kept as-is.
   - Other fields (`severity`, `unit`, `tolerance`, `timecode`, `frames`, `message`, ...) are additive. They're
     passed through verbatim in each problem. The raw report is always kept.
-  - Checker defaults: -14 LUFS ±1 LU, true peak ≤ -1 dBTP, and audio required (a render with no audio fails
-    `missing_audio`). Other thresholds go through as flags or a `--config` JSON, passed verbatim.
+  - Loudness target and true-peak ceiling: a flag, else a `--config` key, else what the render was normalized and
+    limited to (its report's audio analysis; a recorded `null` means no target and gives the default), else the
+    timeline's `audio.loudness` (only when the render report lacks those keys), else -14 LUFS / -1 dBTP (tolerance
+    ±1 LU). A recorded value that is neither a number nor null is an error. The outcome's
+    `loudness_target` names each value's source. Audio is required (a render with no audio fails `missing_audio`).
+    Other thresholds go through as flags or a `--config` JSON, passed verbatim.
 - **Binary lookup:** explicit path, then `FERROCUT_PERCEIVE`, then next to `ferrocut`, then `PATH`.
 - **Errors:** these all give `status: "error"`:
   - a different `schema_version`, a missing or mistyped field, or a pass flag that contradicts the problems or
@@ -362,8 +446,11 @@ edit ops keep keys in place on the timeline); bus parameters use timeline time. 
 "transform": { "anchor": ["960", "540"], "position": ["480", "270"], "scale": "0.5", "rotation": "-12" }
 ```
 
-Position/anchor are pixels (default: frame center), scale a factor (uniform or `[x, y]`), rotation
-degrees clockwise. The transform node inverse-maps each output pixel in f64-planned math and filters in
+Media and nested comps default to `fit: contain`; clip `fit` overrides `output.fit`.
+Other modes are `cover` (uniform fill/crop), `none` (native pixels), and `stretch`
+(per-axis fill, with a distortion warning). Position is in output pixels (default:
+frame center); anchor is in native source pixels (default: source center); scale
+multiplies the fitted picture (uniform or `[x, y]`), rotation degrees clockwise. The transform node inverse-maps each output pixel in f64-planned math and filters in
 linear premultiplied space with a separable Catmull-Rom kernel (interpolating, so integer moves are exact
 copies), widened by the minification factor (up to 8x; beyond that it aliases). It is pixel-aspect aware
 and outputs only the transformed bounding box as its data window. Held poses reuse cached frames.
@@ -419,3 +506,12 @@ and outputs only the transformed bounding box as its data window. Held poses reu
   `ferrocut_types::FileManifest::digest()` into their `NodeHash`: `(relative path, blake3 of bytes)`
   per file, sorted, independent of discovery order and of where the project lives. Network fetches
   can't be hashed: such nodes must block them during renders.
+
+
+Media-placement migration: old mismatched media was stretched before its layer
+transform. Default contain now preserves aspect. `fit: stretch` restores framing
+but not old resampling bytes. Old explicit anchors/masks must convert from output
+to source coordinates; see the MCP timeline guide, “Placing media without distortion”.
+Equal-size media preserves the existing render path and cache keys. Base fit
+factors and stretch warnings appear in plan/render reports; `punch_in`, preview
+badges and transformed-source tracking are follow-up work.

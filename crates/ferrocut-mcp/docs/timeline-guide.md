@@ -4,6 +4,7 @@ A timeline is a JSON file. Change it with `edit_apply` ops, not by editing the J
 checked one by one (handles, media length, overlaps, ranges), applied atomically, journaled (`log`,
 `undo`, `branch`) and reported with the span of output they change. `dry_run: true` previews.
 Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeline/schema.json`.
+Start with `docs://agent/onboarding.md` for a complete native graphics workflow and revision example.
 
 ## Values
 
@@ -13,6 +14,7 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
   "interp": "ease_in_out"}]}`. `interp` (segment to the next key): `linear` (default), `hold`,
   `ease`, `ease_in`, `ease_out`, `ease_in_out`, `easy_ease`, `{"bezier": [x1, y1, x2, y2]}`,
   `{"speed": {...}}`. Before the first key the first value holds; after the last, the last.
+  Any animatable number may instead be an **expression** (see "Expressions").
 - **Key times**: clip parameters (opacity, transform, clip audio) are **clip-local** (0 = the clip's
   `start`); bus and master parameters use **timeline time**. `set_keyframes` with
   `timeline_time: true` converts timeline times to the parameter's base for you.
@@ -63,8 +65,8 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
 
 - A clip whose `source` is a timeline file (`*.json`) shows that timeline (an AE precomp /
   Premiere nested sequence). `source_in` and the duration pick the part of the inner timeline;
-  speed, time remap, opacity, transform and blend mode work as for media. The inner frame size
-  must match; its fps may differ (nearest sampling snaps to the inner frame grid).
+  speed, time remap, opacity, transform and blend mode work as for media. The inner canvas
+  is fitted into the parent with the clip fit; its fps may differ (nearest sampling snaps to the inner frame grid).
 - Its linked audio is the inner mix (clip and bus gains, ducking, master gain; loudness
   normalization only on the outermost timeline).
 - Frame keys compose, so after editing the inner file only the outer chunks that show the
@@ -84,13 +86,31 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
     `linear` (even light).
 - Colors are in [0, 1], display-referred Rec.709 like decoded video (a solid of 0.5 matches a 50 %
   video level), straight alpha. Positions are output pixels. Every number can be keyframed;
-  generator key times are the clip's **source time** (clip-local + `source_in`; a new generator
-  clip has `source_in` 0), so `split` and `trim` keep the animation in place. Components:
+  generator key times are the clip's **source time**, mapped through its speed or time remap
+  (at speed 1, clip-local + `source_in`; a new generator clip has `source_in` 0), so `split`
+  and `trim` keep the animation in place. Components:
   `generator.color.r` ... `.a`, `generator.start.x`, ...
 - Add one with `add_clip` `{"track": "V1", "generator": {...}, "duration": "5"}`; opacity,
   transform, blend modes, mattes, dissolves and speed work as for media.
-- Vector shapes (rectangles, ellipses, paths with fill/stroke) and shape masks are not
-  generators: they come from the Lottie/ThorVG path (`ferrocut-lottie`).
+- Native text: `{"type":"text","text":{"content":"A title","font":"fonts/NotoSans-Regular.ttf",
+  "font_size":"64","position":["80","120"],"fill":[1,1,1,1]}}`.
+  Fonts and `fallback_fonts` are explicit assets relative to the timeline. Their bytes enter
+  the cache keys and must be inside the configured MCP project root. Text supports shaping,
+  wrapping, paragraph alignment, tracking, line height, an outside stroke and range-selector
+  animators for position, scale, rotation, fill and opacity. It currently uses one text style
+  per clip; rich style runs and text on a path are not implemented.
+- Native vectors: `{"type":"shape","shape":{"geometry":{"type":"rectangle","x":"80","y":"80",
+  "width":"320","height":"180","radius":"16"},"fill":{"type":"solid","color":[1,1,1,1]}}}`.
+  Geometry can be `rectangle`, `ellipse` or a `path` with move/line/quad/cubic/close commands.
+  Fills and strokes support solid, linear and radial gradients, plus caps, joins and dashes.
+  Use `timeline_schema` for their exact nested fields. Shape groups/operators and masks
+  attached to arbitrary clips are not implemented; native shapes can supply track mattes.
+- Edit text through `generator.text.content`, `generator.text.font_size`,
+  `generator.text.position`, `generator.text.animators` and other discovered params.
+  Edit shapes through `generator.shape.geometry`, `generator.shape.fill`,
+  `generator.shape.stroke` and discovered numeric fields. Replace complete animator,
+  path-command or gradient-stop arrays when needed. `set_param` on `generator` replaces
+  the full generator; changing its type requires a complete valid payload.
 
 ## 3D layers and camera
 
@@ -159,6 +179,13 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
   - `crop`: `left`, `top`, `right`, `bottom` px from the frame edges, `feather` px (inward)
   - `letterbox`: `aspect` (2.39), `color` ([0, 0, 0, 1]), `opacity` (1); pillarbox when the
     aspect is narrower than the frame
+  - `exposure`: `stops` (0); `contrast`: `amount` (1), `pivot` (0.18);
+    `saturation`: `amount` (1); these operate in linear ACEScg
+  - `lift_gamma_gain`: RGB vectors `lift` ([0,0,0]), `gamma` ([1,1,1]), `gain` ([1,1,1]);
+    operates in encoded Rec.709 before conversion back to linear ACEScg
+  - `chroma_key`: `key_color` ([0,1,0]), `tolerance` (0.1), `softness` (0.1), `spill` (0);
+    a basic chroma-distance keyer, with no matte-cleanup or edge-refinement controls
+  - `luma_key`: `threshold` (0.1), `softness` (0.1), `invert` (false)
   - other types registered by plug-in crates (color grading, OFX) appear in timeline_schema
     `params` -> `video_effects` with their params and work the same way.
 - Ops: `add_video_effect` (`effect`, optional `index`), `set_video_effect_param` (`effect` =
@@ -166,6 +193,45 @@ Full schema: `timeline_schema` (part `timeline`), or the resource `docs://timeli
   default), `remove_video_effect`, `move_video_effect` (`to`); each takes `clip` or `track`.
 - Effects work in linear light on premultiplied pixels; blurs, glows and shadows may extend
   past the layer's edges (until a later `crop`), so put `crop` last to trim them.
+
+## Expressions
+
+Any animatable number (opacity, one component of `transform.position`, a video effect's `sigma`,
+`audio.gain_db`, `camera.zoom`, ...) can be an After Effects-style expression:
+`{"expression": "wiggle(2, 30)", "value": "960"}`. Set it with `set_param` / `set_video_effect_param`
+(value = the expression object). `value` (optional; default the parameter's default) is the
+pre-expression value, a constant or keyframes, available as `value` in the script.
+
+- Syntax: [rhai](https://rhai.rs). Integer division truncates: write `1.0 / 2`. The last expression
+  is the result and must be a number. Sandboxed: no imports, files, clock, `eval`; operation and
+  recursion limits.
+- Variables: `time` (seconds in the parameter's time base: clip-local for clip parameters, source
+  time for generator parameters, timeline time for tracks/timeline), `value`, `fps`, `frame`,
+  `comp_time` (timeline seconds), `duration`, `in_point`.
+- Functions: `wiggle(freq, amp [, octaves, amp_mult, t])` (returns `value` + smooth deterministic
+  noise, seeded per parameter: the same expression on x and y wiggles independently),
+  `seed_random(n [, timeless])`, `random()`, `random(max)`, `random(min, max)`, `noise(x)`,
+  `linear(t, t_min, t_max, v1, v2)` / `linear(t, v1, v2)` and `ease`, `ease_in`, `ease_out` alike,
+  `clamp(x, lo, hi)`, `lerp(a, b, s)`, `value_at_time(t)`, `loop_out(type [, keys])` /
+  `loop_in(...)` over `value`'s keyframes (`"cycle"` default, `"pingpong"`, `"offset"`,
+  `"continue"`).
+- References: `param("transform.rotation")` (same clip/track), `layer("clip_id").param("opacity")`,
+  `track("V2").param("audio.gain_db")`, `comp().param("camera.zoom")`; vector components as `.x`/`.y`
+  (or `.0`), effects by id or index (`"effects.blur.sigma"`). Evaluated at the same timeline time;
+  cycles are errors naming the chain.
+- Evaluation is deterministic and done when the timeline is validated (every op, load, render): each
+  expression becomes one value per frame (linear in between) that is part of the cache keys, so
+  only frames whose values change re-render. Errors name the owner, parameter, time, line and
+  column, e.g. `clip "a": opacity: the expression gives 1.25 at clip time 1/2 s (frame 12), above
+  the maximum 1`.
+- Source-clock expressions follow constant speed, reverse and monotonic keyframed remaps.
+  A repeated source time must produce the same value. Expression-driven speed/remap cannot
+  yet be combined with source expressions or source-parameter reads, even from another clip;
+  bake the timing curve to ordinary keyframes first. Nonmonotonic remaps with source expressions
+  fail with guidance rather than producing an ambiguous baked animation.
+- Example: `{"op": "set_param", "clip": "title", "param": "transform.position.y", "value":
+  {"expression": "value + 20 * sin(time * 6.283)", "value": "540"}}`; a looping bounce:
+  `set_param` `{"expression": "loop_out(\"pingpong\")", "value": {"keyframes": [...]}}`.
 
 ## Adjustment layers
 
@@ -288,15 +354,68 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
 
 ## Nodes
 
-Video clips, generator layers (solid, gradients), opacity, 2D and 3D transforms with a camera,
+Video clips, generator layers (solid, gradients, native text and vectors), opacity, 2D and 3D transforms with a camera,
 motion blur, dissolves and the audio graph above are what timelines contain today. HTML, Lottie and color nodes (SeePlus's `ferrocut-html`, `ferrocut-lottie`,
 `ferrocut-color`) will appear here with their published parameter schemas once they are wired
 into the timeline format; until then they are not valid timeline content.
 
 ## Rendering and checking
 
+`preview_frames` renders chosen output frames to PNG stills and a labeled contact sheet
+straight from the graph (no video encode): the same 8-bit Rec.709 pixels a master would
+hold. Pick frames by timeline time (`at`), index (`frames`) or `spread` (N evenly spaced,
+default 12). The sheet (or a single frame) comes back inline as an image; `each: true` also
+writes full-resolution PNGs, the right way to check small text. Look before and after every
+edit batch; it is far cheaper than a draft render and shows exactly what will be encoded.
+
 `render` writes a lossless FFV1/PCM MKV and reuses unchanged chunks. `quality_check` (or
 `render` with `check: true`) runs the perceptual checker: cuts, black/frozen/flash frames,
 loudness, true peak, audio presence. `expect_audio` defaults to `auto`: a timeline with no audio
 isn't expected to have any. Checker flags go in `args`; a wrong flag returns the checker's
 `--help` in the error. The checker's report schema: `docs://perceive/check.schema.json`.
+
+
+## Placing media without distortion
+
+Media and nested compositions decode at their native dimensions. A clip's `fit`
+overrides `output.fit`; when both are absent the default is `contain`.
+
+| Fit | Placement before the user transform |
+| --- | --- |
+| `contain` | Uniform scale to show the entire picture, centered, with transparent bars |
+| `cover` | Uniform scale to fill the output, centered, cropping overflow |
+| `none` | Native pixels at 1:1, centered |
+| `stretch` | Independent horizontal/vertical scale to fill; warns on aspect distortion |
+
+`add_clip` accepts `fit`. Set it with `set_param` on a clip, or set `output.fit`
+on the timeline. `null` removes either override. Fit is not animatable and
+cannot be set on generators or adjustment layers.
+
+`transform.anchor` is in native source pixels (use `media_probe` dimensions),
+`transform.position` is in output pixels, and `transform.scale` multiplies the
+fit. Default anchor is source center; default position is output center. For a
+1280x534 source in a 1920x1080 sequence, contain uses exactly 3/2 on both axes,
+showing a 1920x801 picture at y=139.5. Cover uses 180/89 on both axes. A vertical
+cutdown can set `output.fit` to `cover` and then reframe individual clips with
+position/anchor/scale. Clip masks and pixel-unit clip effects run in source
+pixels before fit; track and adjustment effects run in output pixels.
+
+`plan` and render reports include base `placements` (native/output dimensions,
+effective fit and exact fit factors) and stretch `warnings`. These entries are
+before user transforms, not per-frame bounding boxes. Proxy decoding conforms
+to the original native dimensions so placement is identical in draft and final.
+
+Migration: earlier builds stretched media to output size before transforming.
+Mismatched sources now default to contain. `fit: stretch` restores framing,
+though resampling pixels differ. Convert old stretched-layer anchor/mask x
+coordinates by source_width/output_width and y coordinates by
+source_height/output_height. Remove compensating per-axis scales as appropriate.
+Equal-size source/output pictures preserve the old path and cache keys.
+
+This first placement slice does not add `punch_in`, contact-sheet badges,
+per-edit placement reports, or transformed-source tracking. Tracking continues
+to require an untransformed source and now maps displacement through its fit.
+For an unset media anchor, component edits need probing; with probing disabled,
+set both anchor components. Expressions referencing an unset media anchor must
+set it explicitly; anchor expressions need an explicit pre-expression `value`.
+No media probing occurs inside expression validation or MCP path pre-checks.

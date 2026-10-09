@@ -278,7 +278,8 @@ fn run_ops(ops: &str) -> anyhow::Result<Timeline> {
 }
 
 fn keys(tl: &Timeline) -> Vec<ferrocut_core::FrameKey> {
-    let c = compile_with(tl, |p, w, h| {
+    let c = compile_with(tl, |p| {
+        let (w, h) = (tl.output.width, tl.output.height);
         Ok(SourceNode {
             path: p.clone(),
             file_hash: *blake3::hash(p.to_string_lossy().as_bytes()).as_bytes(),

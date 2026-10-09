@@ -1,0 +1,40 @@
+{
+  "output": "/tmp/ferrocut-storytold-imported-revised.json",
+  "dry_run": false,
+  "written": true,
+  "changes": [
+    {
+      "op": 0,
+      "kind": "set_param",
+      "summary": "video-0-5 opacity: \"1\" -> \"7/10\"",
+      "span": [
+        "3/4",
+        "3/2"
+      ]
+    }
+  ],
+  "before": "8dad67ed736607fa6dbd2d2654d19c9b587d534647c031b148336a92ecec47d1",
+  "after": "520ec6162c744ab85787c2b624bf9651a049584b62af30328c158c72fc2f66fe",
+  "journal_seq": 1,
+  "sources_absolutized": false,
+  "render": {
+    "total_chunks": 2,
+    "total_frames": 36,
+    "chunk_frames": 24,
+    "dirty_chunks": [
+      0,
+      1
+    ],
+    "dirty_frames": 36,
+    "reused_chunks": 0,
+    "ranges": [
+      {
+        "start_frame": 0,
+        "end_frame": 36,
+        "start": "0",
+        "end": "3/2"
+      }
+    ],
+    "audio": "audio is re-mixed on every render (not chunk-cached)"
+  }
+}

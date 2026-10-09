@@ -1,0 +1,21 @@
+{
+  "acceptance/PP-067-native-title-edit-render-20261008T143210385608Z.log": "9bc1bf821f583d83934e56fdb31975fc79113bfc112021bc4d50898b91ad527e",
+  "ferrocut-native-revision-look.json": "0ce3bd458de324f4b25b4842fcea4e62566e6eb975b990c1930d1416107d7e00",
+  "ferrocut-native-showcase-probe.json": "fc21b3721226958e163fa6557c59b210793762442d9ad19dd95570e64493e44e",
+  "ferrocut-native-showcase-revised-cached.report.json": "ab3a4d06b5ee9a14d61858ecc3ba48c1f9bd4c72261c2f6652b10fa1383fcb22",
+  "ferrocut-native-showcase-revised-probe.json": "b4801d4b77c74a742e727acf87b5048daa8088eee0577fae5e7636b83651ea8f",
+  "ferrocut-native-showcase-revised.report.json": "9de1dec033400266fd9093f441163d0d0bf6136f5cd95544081c14fbf87f2457",
+  "ferrocut-native-showcase-revision.json": "44cb6747d96cad6e44a86ef624f9db5bc175cd45e404e7e38f69d4f200a71c23",
+  "ferrocut-native-showcase-undo.json": "88ee8788af6b301c0737dd2074e3f485c5ec7404f59797a4d29195c71574e78d",
+  "ferrocut-native-showcase-undone.report.json": "59ebeb412b491654664110e7c30aed7bdaed9409b0ca8ef527042e2d3f6f904c",
+  "ferrocut-native-showcase.report.json": "ecc58c6e70b309426069b73a18bb002a651c57de4c802677cec98dcac100d8c4",
+  "ferrocut-showcase-review_0.000s.png": "fe14e662662a995358d10b0721e708f3b2e08ade7fed07ff0e87ad31de755cf2",
+  "ferrocut-showcase-review_0.500s.png": "06bc54fcf4be22aba19826b058ab9473d80c0fce9d176668f6db2a6d59283113",
+  "ferrocut-showcase-review_1.500s.png": "230a7e7cb4e6d5908e48c68ebdb7750a94dc1ed7d2616f970c5cceeabb11c7b0",
+  "ferrocut-showcase-review_3.000s.png": "54d924bcd0ac587a174e6e1798ed8918b105035d137b3684f1f4a58cad53f26b",
+  "native-clippy.log": "3fd3495b6a459ab4e2a2d1496f989d9a8398b3a5f29c27c0377e4a388096198f",
+  "native-final-focus.log": "6fd9d99bd6d9c77bde048ec2b76686d0b5aa7a09b1ae2a06f9a39497e153eae5",
+  "native-final-mcp.log": "05e60e055295bd888626d4d97aaa6d30c7720e308a5ed15eb267b90ff127e883",
+  "native-regressions.log": "6b457769df3d7409a2623671f8784af40564abeddb3762edd3e5f58ab6f8ead2",
+  "native-revision-compare.png": "bac61a87d4e4f3593b98f7e0666dbd272f698190509ec44b18d947c89f1e5e9b"
+}

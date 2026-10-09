@@ -1,0 +1,2 @@
+{"name":"fit-9x16","output":{"width":1080,"height":1920,"fps":"24","duration":"1","gop":24},
+ "tracks":[{"name":"V1","clips":[{"id":"shot","source":"../../../../media/clips/t1.mkv","start":"0","source_in":"2","duration":"1"}]}]}

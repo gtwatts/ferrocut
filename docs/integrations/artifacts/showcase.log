@@ -1,0 +1,13 @@
+adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Cpu, Vulkan, vendor 0x10005, driver llvmpipe Mesa 26.1.6-1pop0~1787580452~24.04~a5619ea (LLVM 20.1.2))
+ffmpeg:  9.0.2-ferrocut-lgpl (LGPL version 2.1 or later)
+chunk  frames       status    key               chunk-file blake3                                                 ms
+    0     0..12    RENDERED  c6f96401bb8f013c  78de972d6184ab5f8ce6c2baa28f3c9f2fe19645dada7fd9ba0d3bb86210598b   7009
+    1    12..24    RENDERED  96d9b66cca54ec2d  eea23c1cd1723cb7da449e6fab6459e27865221b66248a18b054f2d6d6a34d6a   6772
+    2    24..36    RENDERED  2e796438974c1653  dadf15b71b26844cf5223f0b6ef7d8ad30d918d44a50f5cfa6daa04f009a5ac2   6725
+    3    36..48    RENDERED  de1c42c434ae610b  c2c06d5dce193011696c6a4d20c0c5a75cbabb8a62e6466296226671a971475f   6744
+reused chunks:      []
+re-rendered chunks: [0, 1, 2, 3]
+frames: 48 total, 48 rendered, 0 reused | render 27254 ms (1.8 fps, 1 jobs) | concat 4 ms | total 27277 ms
+gpu: 96 submissions, textures 110 allocated / 670 reused from pool | retries 0, chunk restarts 0, device recreations 0
+video stream blake3 c0d88165f28ff9472374916c0d953102ce575a593aa69a0e64e06b1275e334c5
+output: /tmp/ferrocut-storytold-showcase.mkv  blake3 b2a54572b8751977939645d2ce711ff482498da88de7c083032e411c7e347b8e

@@ -18,18 +18,21 @@ fn media() -> MediaLengths<'static> {
             Some(MediaFacts {
                 duration: Some(t("6")),
                 has_video: true,
+                size: Some((64, 32)),
                 has_audio: true,
             })
         } else if n.starts_with("pic") {
             Some(MediaFacts {
                 duration: Some(t("6")),
                 has_video: true,
+                size: Some((64, 32)),
                 has_audio: false,
             })
         } else if n.starts_with("music") {
             Some(MediaFacts {
                 duration: Some(t("30")),
                 has_video: false,
+                size: None,
                 has_audio: true,
             })
         } else {

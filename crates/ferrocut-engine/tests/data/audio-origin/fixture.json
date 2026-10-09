@@ -1,0 +1,826 @@
+{
+  "schema": "ferrocut.audio-origin-fixture/1",
+  "status": "measurements_only",
+  "provenance": {
+    "recipe_pins": {
+      "experiment.py": "0a8e68482d1f6316cba085a4a6bbc9cbb21cfc0b6c77e1a447380594bdb3a188",
+      "probe.c": "bce7d756e29a7ac1622e27d7129b7b3bab2352913cca021da4fd55eb11dd580a",
+      "tool-pins.json": "a5f9d27aac1d976192a281c8cb08514ba0302fc480090195cb7501067fe284b7"
+    },
+    "experiment_manifest_sha256": "77e8bb4aabee897f07084a870655369e61a443dc7a4ebc12124bb2e19b8f44ed",
+    "observations_sha256": "65c7945db74b3a8c3f22b390660716010240468bc606600d60d945112fa50520",
+    "commands_sha256": "de0a9ed861203af66fb1407878a1cc1a094d964ddf9458751821ea3f31e29c28",
+    "baseline_engine_sha256": "38603e7af5a92882a7ba9f8126adb4ccfdc418bdbf6bc9a1042ec0dd3f94c247",
+    "source": "Original seeded integer noise bursts; no third-party/client media.",
+    "source_sample_rate": 44100,
+    "source_channels": 2,
+    "source_samples": 88200,
+    "source_license": "Apache-2.0",
+    "encoding": "Existing standalone LGPL LAME only for MP3; LGPL FFmpeg for FLAC.",
+    "decoding": "Pinned LGPL FFmpeg only, including each MP3's own reference."
+  },
+  "probes": {
+    "wav": {
+      "unset": {
+        "stream": {
+          "decoder": "pcm_s16le",
+          "time_base": [
+            1,
+            44100
+          ],
+          "pkt_timebase": [
+            0,
+            1
+          ],
+          "start_time": null,
+          "sample_rate": 44100,
+          "initial_padding": 0,
+          "trailing_padding": 0
+        },
+        "first_frame": {
+          "pts": 0,
+          "nb_samples": 4096,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "last_frame": {
+          "pts": 86016,
+          "nb_samples": 2184,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "summary": {
+          "frames": 22,
+          "samples": 88200
+        },
+        "raw_sha256": "f207e032c0c4d42efa0d9d2053b688453c9f1e17f0b7ad0826aa2273aea7600a"
+      },
+      "stream": {
+        "stream": {
+          "decoder": "pcm_s16le",
+          "time_base": [
+            1,
+            44100
+          ],
+          "pkt_timebase": [
+            1,
+            44100
+          ],
+          "start_time": null,
+          "sample_rate": 44100,
+          "initial_padding": 0,
+          "trailing_padding": 0
+        },
+        "first_frame": {
+          "pts": 0,
+          "nb_samples": 4096,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "last_frame": {
+          "pts": 86016,
+          "nb_samples": 2184,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "summary": {
+          "frames": 22,
+          "samples": 88200
+        },
+        "raw_sha256": "f207e032c0c4d42efa0d9d2053b688453c9f1e17f0b7ad0826aa2273aea7600a"
+      },
+      "decoded_bytes_equal": true,
+      "skip_samples": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "discard_padding": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "flac": {
+      "unset": {
+        "stream": {
+          "decoder": "flac",
+          "time_base": [
+            1,
+            44100
+          ],
+          "pkt_timebase": [
+            0,
+            1
+          ],
+          "start_time": 0,
+          "sample_rate": 44100,
+          "initial_padding": 0,
+          "trailing_padding": 0
+        },
+        "first_frame": {
+          "pts": 0,
+          "nb_samples": 4096,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "last_frame": {
+          "pts": 86016,
+          "nb_samples": 2184,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "summary": {
+          "frames": 22,
+          "samples": 88200
+        },
+        "raw_sha256": "f207e032c0c4d42efa0d9d2053b688453c9f1e17f0b7ad0826aa2273aea7600a"
+      },
+      "stream": {
+        "stream": {
+          "decoder": "flac",
+          "time_base": [
+            1,
+            44100
+          ],
+          "pkt_timebase": [
+            1,
+            44100
+          ],
+          "start_time": 0,
+          "sample_rate": 44100,
+          "initial_padding": 0,
+          "trailing_padding": 0
+        },
+        "first_frame": {
+          "pts": 0,
+          "nb_samples": 4096,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "last_frame": {
+          "pts": 86016,
+          "nb_samples": 2184,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "summary": {
+          "frames": 22,
+          "samples": 88200
+        },
+        "raw_sha256": "f207e032c0c4d42efa0d9d2053b688453c9f1e17f0b7ad0826aa2273aea7600a"
+      },
+      "decoded_bytes_equal": true,
+      "skip_samples": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "discard_padding": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "tagged": {
+      "unset": {
+        "stream": {
+          "decoder": "mp3float",
+          "time_base": [
+            1,
+            14112000
+          ],
+          "pkt_timebase": [
+            0,
+            1
+          ],
+          "start_time": 353600,
+          "sample_rate": 44100,
+          "initial_padding": 0,
+          "trailing_padding": 0
+        },
+        "first_frame": {
+          "pts": 0,
+          "nb_samples": 47,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "last_frame": {
+          "pts": 28385280,
+          "nb_samples": 601,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "summary": {
+          "frames": 78,
+          "samples": 88200
+        },
+        "raw_sha256": "b601022f26d3b9a02b4873f5b8e508cd4f868b669c2683e3874cd7a11db096e8"
+      },
+      "stream": {
+        "stream": {
+          "decoder": "mp3float",
+          "time_base": [
+            1,
+            14112000
+          ],
+          "pkt_timebase": [
+            1,
+            14112000
+          ],
+          "start_time": 353600,
+          "sample_rate": 44100,
+          "initial_padding": 0,
+          "trailing_padding": 0
+        },
+        "first_frame": {
+          "pts": 353600,
+          "nb_samples": 47,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "last_frame": {
+          "pts": 28385280,
+          "nb_samples": 601,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "summary": {
+          "frames": 78,
+          "samples": 88200
+        },
+        "raw_sha256": "b601022f26d3b9a02b4873f5b8e508cd4f868b669c2683e3874cd7a11db096e8"
+      },
+      "decoded_bytes_equal": true,
+      "skip_samples": [
+        1105,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "discard_padding": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        551
+      ]
+    },
+    "untagged": {
+      "unset": {
+        "stream": {
+          "decoder": "mp3float",
+          "time_base": [
+            1,
+            14112000
+          ],
+          "pkt_timebase": [
+            0,
+            1
+          ],
+          "start_time": 0,
+          "sample_rate": 44100,
+          "initial_padding": 0,
+          "trailing_padding": 0
+        },
+        "first_frame": {
+          "pts": 0,
+          "nb_samples": 1152,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "last_frame": {
+          "pts": 28385280,
+          "nb_samples": 1152,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "summary": {
+          "frames": 78,
+          "samples": 89856
+        },
+        "raw_sha256": "996c77297d088221b76f9a409096fc86f9b109997c578cfb3d9abc140b351e28"
+      },
+      "stream": {
+        "stream": {
+          "decoder": "mp3float",
+          "time_base": [
+            1,
+            14112000
+          ],
+          "pkt_timebase": [
+            1,
+            14112000
+          ],
+          "start_time": 0,
+          "sample_rate": 44100,
+          "initial_padding": 0,
+          "trailing_padding": 0
+        },
+        "first_frame": {
+          "pts": 0,
+          "nb_samples": 1152,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "last_frame": {
+          "pts": 28385280,
+          "nb_samples": 1152,
+          "sample_rate": 44100,
+          "channels": 2,
+          "time_base": [
+            0,
+            1
+          ]
+        },
+        "summary": {
+          "frames": 78,
+          "samples": 89856
+        },
+        "raw_sha256": "996c77297d088221b76f9a409096fc86f9b109997c578cfb3d9abc140b351e28"
+      },
+      "decoded_bytes_equal": true,
+      "skip_samples": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "discard_padding": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "files": {
+    "synthetic.wav": {
+      "bytes": 352844,
+      "sha256": "11d6e236ebbb148f17c7992ff02a34f31bd3661485542df7284671c89856344b"
+    },
+    "synthetic.flac": {
+      "bytes": 62954,
+      "sha256": "6a76145ce84cb7618233b19574916b0bbc51447065ff4f681f15090c81529365"
+    },
+    "tagged.mp3": {
+      "bytes": 33017,
+      "sha256": "825a26e0933fefae3463ddcf7894385a1a8a389e15bc1cffab8f6d3db44ff4c3"
+    },
+    "untagged.mp3": {
+      "bytes": 32600,
+      "sha256": "2537c3f788aebe5aa47b6aa4f6ec3a2f7ee51ee313588900c50c6ba853046b2d"
+    },
+    "wav-reference-48000.f32le": {
+      "bytes": 768000,
+      "sha256": "cd414c525ee2984da9595c659a2e3bcaca032a81f3c19698dd9a84a95e82654c"
+    },
+    "flac-reference-48000.f32le": {
+      "bytes": 768000,
+      "sha256": "cd414c525ee2984da9595c659a2e3bcaca032a81f3c19698dd9a84a95e82654c"
+    },
+    "tagged-reference-48000.f32le": {
+      "bytes": 768000,
+      "sha256": "50d5cfbc08b1f543961a53e66e8e07693bee672244b4d702c9ed3d95cd09da11"
+    },
+    "untagged-reference-48000.f32le": {
+      "bytes": 782424,
+      "sha256": "2b9187c8cc9edaf5656e911a73b7a78668af89ea07a450298dd28099179af4c1"
+    },
+    "tagged-reference-44100.f32le": {
+      "bytes": 705600,
+      "sha256": "9fcad8438a122e7f45bdc4eb98062aeac18da15bc7855bb880110e4d96166a92"
+    }
+  }
+}

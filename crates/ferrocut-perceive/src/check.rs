@@ -9,14 +9,17 @@
 //! `problems` only holds failures, so `pass == problems.is_empty()`;
 //! observations below the thresholds go to `warnings` (same shape).
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context as _, bail};
 use ferrocut_core::{FrameRate, Rational, RationalTime};
 use serde::{Deserialize, Serialize};
 
+use crate::audio::AudioReport;
 use crate::input::Timeline;
-use crate::report::{Report, timecode};
+use crate::report::{ChunkReport, Report, timecode};
+use crate::targets::{self, Resolved, ThresholdSource};
 
 pub const CHECK_SCHEMA_VERSION: &str = "ferrocut.perceive.check/1";
 
@@ -35,11 +38,16 @@ pub mod reason {
     pub const MISSING_AUDIO: &str = "missing_audio";
     /// Decoded master audio differs from the engine's mix (additive).
     pub const AUDIO_JOIN_MISMATCH: &str = "audio_join_mismatch";
+    /// The render's recorded loudness target or ceiling differs from the
+    /// timeline's current `audio.loudness` (a warning, additive).
+    pub const LOUDNESS_TARGET_MISMATCH: &str = "loudness_target_mismatch";
 }
 
-/// Grading thresholds. Defaults are the eval grader's; a config file
-/// (`--config`, JSON with any subset of these keys) overrides them and
-/// command-line flags override the file.
+/// Grading thresholds. Defaults are the eval grader's. The loudness target
+/// and true-peak ceiling default to what the render recorded (else the
+/// timeline's `audio.loudness`); a config file (`--config`, JSON with any
+/// subset of these keys) overrides the keys it names and command-line flags
+/// override the file. See [`crate::targets`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CheckThresholds {
@@ -135,6 +143,9 @@ pub struct Problem {
     /// `[start, end)` frames.
     pub frames: [i64; 2],
     pub message: String,
+    /// Where the thresholds of a loudness or true-peak problem came from.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub threshold_sources: Option<BTreeMap<String, ThresholdSource>>,
 }
 
 /// Measured figures, for context (additive).
@@ -161,6 +172,13 @@ pub struct CheckReport {
     // ---- additive fields ----
     pub warnings: Vec<Problem>,
     pub thresholds: CheckThresholds,
+    /// Where each threshold came from (`flag`, `config`, `render`,
+    /// `timeline`, `default`).
+    #[serde(default)]
+    pub threshold_sources: BTreeMap<String, ThresholdSource>,
+    /// The audio thresholds used, each with its source.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub loudness_target: Option<targets::LoudnessTarget>,
     pub measured: Measured,
     /// The perception report's schema version this was graded from.
     pub perceive_schema_version: String,
@@ -256,14 +274,56 @@ fn json_item(v: &serde_json::Value) -> anyhow::Result<String> {
     }
 }
 
-/// Grade `report` (analysed from a render of `tl`). `brief_cuts`, when
-/// given, replaces the timeline's hard cuts as the expected cuts.
+#[allow(clippy::too_many_arguments)]
+fn mk(
+    reason: &str,
+    sev: ProblemSeverity,
+    s: i64,
+    e: i64,
+    fps: FrameRate,
+    measured: Option<f64>,
+    threshold: Option<f64>,
+    unit: &str,
+    message: String,
+) -> Problem {
+    Problem {
+        reason: reason.into(),
+        range: [
+            RationalTime::from_frames(s, fps),
+            RationalTime::from_frames(e, fps),
+        ],
+        measured,
+        threshold,
+        severity: sev,
+        unit: Some(unit.into()),
+        tolerance: None,
+        timecode: [timecode(s, fps), timecode(e, fps)],
+        frames: [s, e],
+        message,
+        threshold_sources: None,
+    }
+}
+
+/// Grade `report` (analysed from a render of `tl`) against `th`, every
+/// threshold counted as `default`. `brief_cuts`, when given, replaces the
+/// timeline's hard cuts as the expected cuts.
 pub fn grade(
     report: &Report,
     tl: &Timeline,
     brief_cuts: Option<&[i64]>,
     th: &CheckThresholds,
 ) -> CheckReport {
+    grade_resolved(report, tl, brief_cuts, &Resolved::defaults(th.clone()))
+}
+
+/// [`grade`] with resolved thresholds and their sources ([`crate::targets`]).
+pub fn grade_resolved(
+    report: &Report,
+    tl: &Timeline,
+    brief_cuts: Option<&[i64]>,
+    resolved: &Resolved,
+) -> CheckReport {
+    let th = &resolved.thresholds;
     let fps = report.timeline.fps;
     let total = report.timeline.total_frames;
     let time = |f: i64| RationalTime::from_frames(f, fps);
@@ -271,34 +331,6 @@ pub fn grade(
     let r2 = |v: f64| crate::scopes::round(v, 3);
     let mut problems = Vec::new();
     let mut warnings = Vec::new();
-    #[allow(clippy::too_many_arguments)]
-    fn mk(
-        reason: &str,
-        sev: ProblemSeverity,
-        s: i64,
-        e: i64,
-        fps: FrameRate,
-        measured: Option<f64>,
-        threshold: Option<f64>,
-        unit: &str,
-        message: String,
-    ) -> Problem {
-        Problem {
-            reason: reason.into(),
-            range: [
-                RationalTime::from_frames(s, fps),
-                RationalTime::from_frames(e, fps),
-            ],
-            measured,
-            threshold,
-            severity: sev,
-            unit: Some(unit.into()),
-            tolerance: None,
-            timecode: [timecode(s, fps), timecode(e, fps)],
-            frames: [s, e],
-            message,
-        }
-    }
     use ProblemSeverity::*;
     let sh = &report.shots;
 
@@ -455,99 +487,9 @@ pub fn grade(
     }
 
     // Audio.
-    match &report.audio {
-        None => {
-            if th.require_audio {
-                problems.push(mk(
-                    reason::MISSING_AUDIO,
-                    Error,
-                    0,
-                    total,
-                    fps,
-                    None,
-                    None,
-                    "LUFS",
-                    "the render has no audio track".into(),
-                ));
-            }
-        }
-        Some(a) => {
-            let l = &a.loudness;
-            let i = l.integrated_lufs;
-            let off =
-                i.is_none_or(|v| (v - th.loudness_target_lufs).abs() > th.loudness_tolerance_lu);
-            let mut p = mk(
-                reason::LOUDNESS_OFF_TARGET,
-                if off { Error } else { Warning },
-                0,
-                total,
-                fps,
-                i,
-                Some(th.loudness_target_lufs),
-                "LUFS",
-                match i {
-                    Some(v) => format!(
-                        "integrated loudness {v} LUFS, target {} ±{} LU",
-                        th.loudness_target_lufs, th.loudness_tolerance_lu
-                    ),
-                    None => "no signal above the loudness gates (silent)".into(),
-                },
-            );
-            p.tolerance = Some(th.loudness_tolerance_lu);
-            if off {
-                problems.push(p);
-            }
-            if let Some(tp) = l.true_peak_dbtp
-                && tp > th.true_peak_max_dbtp
-            {
-                // Range: the chunks whose own true peak is over.
-                let over: Vec<_> = report
-                    .chunks
-                    .iter()
-                    .filter(|c| {
-                        c.audio
-                            .as_ref()
-                            .and_then(|x| x.true_peak_dbtp)
-                            .is_some_and(|v| v > th.true_peak_max_dbtp)
-                    })
-                    .collect();
-                let (s, e) = match (over.first(), over.last()) {
-                    (Some(f), Some(l)) => (f.start_frame, l.start_frame + l.frames),
-                    _ => (0, total),
-                };
-                problems.push(mk(
-                    reason::TRUE_PEAK_OVER,
-                    Error,
-                    s,
-                    e,
-                    fps,
-                    Some(tp),
-                    Some(th.true_peak_max_dbtp),
-                    "dBTP",
-                    format!(
-                        "true peak {tp} dBTP exceeds {} dBTP ({} chunk(s) over)",
-                        th.true_peak_max_dbtp,
-                        over.len()
-                    ),
-                ));
-            }
-            for &ci in &a.join_mismatch_chunks {
-                if let Some(c) = report.chunks.iter().find(|c| c.index == ci) {
-                    problems.push(mk(
-                        reason::AUDIO_JOIN_MISMATCH,
-                        Error,
-                        c.start_frame,
-                        c.start_frame + c.frames,
-                        fps,
-                        None,
-                        None,
-                        "frames",
-                        format!("chunk {ci}: master audio differs from the engine's mix"),
-                    ));
-                }
-            }
-        }
-    }
+    let (p, w) = grade_audio(report.audio.as_ref(), &report.chunks, total, fps, resolved);
+    problems.extend(p);
+    warnings.extend(w);
     let key = |p: &Problem| (p.frames[0], p.frames[1], p.reason.clone());
     problems.sort_by_key(key);
     warnings.sort_by_key(key);
@@ -557,6 +499,8 @@ pub fn grade(
         problems,
         warnings,
         thresholds: th.clone(),
+        threshold_sources: resolved.sources.clone(),
+        loudness_target: Some(resolved.loudness_target()),
         measured: Measured {
             frames: total,
             fps,
@@ -577,6 +521,172 @@ pub fn grade(
     }
 }
 
+/// Grade the master's audio against `resolved`: missing audio (no stream),
+/// loudness (an existing stream measured silent still fails
+/// `loudness_off_target`), true peak, join mismatches, and the non-failing
+/// `loudness_target_mismatch` when the render and the timeline disagree.
+/// Returns (problems, warnings).
+pub fn grade_audio(
+    audio: Option<&AudioReport>,
+    chunks: &[ChunkReport],
+    total: i64,
+    fps: FrameRate,
+    resolved: &Resolved,
+) -> (Vec<Problem>, Vec<Problem>) {
+    use ProblemSeverity::*;
+    let th = &resolved.thresholds;
+    let sources = |keys: &[&str]| {
+        Some(
+            keys.iter()
+                .map(|k| (k.to_string(), resolved.source(k)))
+                .collect::<BTreeMap<_, _>>(),
+        )
+    };
+    let (mut problems, mut warnings) = (Vec::new(), Vec::new());
+    match audio {
+        None => {
+            if th.require_audio {
+                problems.push(mk(
+                    reason::MISSING_AUDIO,
+                    Error,
+                    0,
+                    total,
+                    fps,
+                    None,
+                    None,
+                    "LUFS",
+                    "the render has no audio track".into(),
+                ));
+            }
+            return (problems, warnings);
+        }
+        Some(a) => {
+            let l = &a.loudness;
+            let i = l.integrated_lufs;
+            let off =
+                i.is_none_or(|v| (v - th.loudness_target_lufs).abs() > th.loudness_tolerance_lu);
+            let mut p = mk(
+                reason::LOUDNESS_OFF_TARGET,
+                if off { Error } else { Warning },
+                0,
+                total,
+                fps,
+                i,
+                Some(th.loudness_target_lufs),
+                "LUFS",
+                match i {
+                    Some(v) => format!(
+                        "integrated loudness {v} LUFS, target {} ±{} LU ({}/{})",
+                        th.loudness_target_lufs,
+                        th.loudness_tolerance_lu,
+                        source_name(resolved.source(targets::TARGET)),
+                        source_name(resolved.source(targets::TOLERANCE)),
+                    ),
+                    None => "no signal above the loudness gates (silent)".into(),
+                },
+            );
+            p.tolerance = Some(th.loudness_tolerance_lu);
+            p.threshold_sources = sources(&[targets::TARGET, targets::TOLERANCE]);
+            if off {
+                problems.push(p);
+            }
+            if let Some(tp) = l.true_peak_dbtp
+                && tp > th.true_peak_max_dbtp
+            {
+                // Range: the chunks whose own true peak is over.
+                let over: Vec<_> = chunks
+                    .iter()
+                    .filter(|c| {
+                        c.audio
+                            .as_ref()
+                            .and_then(|x| x.true_peak_dbtp)
+                            .is_some_and(|v| v > th.true_peak_max_dbtp)
+                    })
+                    .collect();
+                let (s, e) = match (over.first(), over.last()) {
+                    (Some(f), Some(l)) => (f.start_frame, l.start_frame + l.frames),
+                    _ => (0, total),
+                };
+                let mut p = mk(
+                    reason::TRUE_PEAK_OVER,
+                    Error,
+                    s,
+                    e,
+                    fps,
+                    Some(tp),
+                    Some(th.true_peak_max_dbtp),
+                    "dBTP",
+                    format!(
+                        "true peak {tp} dBTP exceeds {} dBTP ({}; {} chunk(s) over)",
+                        th.true_peak_max_dbtp,
+                        source_name(resolved.source(targets::CEILING)),
+                        over.len()
+                    ),
+                );
+                p.threshold_sources = sources(&[targets::CEILING]);
+                problems.push(p);
+            }
+            for &ci in &a.join_mismatch_chunks {
+                if let Some(c) = chunks.iter().find(|c| c.index == ci) {
+                    problems.push(mk(
+                        reason::AUDIO_JOIN_MISMATCH,
+                        Error,
+                        c.start_frame,
+                        c.start_frame + c.frames,
+                        fps,
+                        None,
+                        None,
+                        "frames",
+                        format!("chunk {ci}: master audio differs from the engine's mix"),
+                    ));
+                }
+            }
+        }
+    }
+    let show = |v: Option<f64>| v.map_or("none".to_string(), |v| v.to_string());
+    for &(key, render, tl) in &resolved.mismatches {
+        let (unit, what) = if key == targets::TARGET {
+            ("LUFS", "loudness target")
+        } else {
+            ("dBTP", "true-peak ceiling")
+        };
+        let mut p = mk(
+            reason::LOUDNESS_TARGET_MISMATCH,
+            Warning,
+            0,
+            total,
+            fps,
+            render,
+            tl,
+            unit,
+            format!(
+                "the render was made with {what} {} {unit} but the timeline now says {}: re-render to grade the current intent (graded against {} {unit}, {})",
+                show(render),
+                show(tl),
+                if key == targets::TARGET {
+                    th.loudness_target_lufs
+                } else {
+                    th.true_peak_max_dbtp
+                },
+                source_name(resolved.source(key)),
+            ),
+        );
+        p.threshold_sources = sources(&[key]);
+        warnings.push(p);
+    }
+    (problems, warnings)
+}
+
+fn source_name(s: ThresholdSource) -> &'static str {
+    match s {
+        ThresholdSource::Flag => "flag",
+        ThresholdSource::Config => "config",
+        ThresholdSource::Render => "render",
+        ThresholdSource::Timeline => "timeline",
+        ThresholdSource::Default => "default",
+    }
+}
+
 impl CheckReport {
     pub fn to_json(&self) -> String {
         let mut s = serde_json::to_string_pretty(self).expect("serializable");
@@ -591,6 +701,9 @@ impl CheckReport {
             self.problems.len(),
             self.warnings.len()
         );
+        if let Some(t) = &self.loudness_target {
+            s += &format!("  {}\n", t.line());
+        }
         for (tag, list) in [("FAIL", &self.problems), ("warn", &self.warnings)] {
             for p in list {
                 s += &format!(
