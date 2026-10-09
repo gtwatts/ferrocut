@@ -84,10 +84,62 @@ impl RenderReport {
 /// Where [`resolve_chunk_dir`] found the chunk masters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChunkDirResolution {
+    /// The first search directory that exists (a recorded absolute directory is
+    /// kept even when missing); `None` when ambiguous or nothing exists.
     pub dir: Option<PathBuf>,
     pub resolved_by: ChunkDirSource,
+    /// Directories searched for each chunk file, in order. A chunk is read from
+    /// the first one holding `<key>.mkv`, so a cache that evicted some keys
+    /// still falls through to another holding them (the per-file lookup of
+    /// earlier checkers). Empty when ambiguous without `--cache-dir`.
+    pub search: Vec<(ChunkDirSource, PathBuf)>,
     /// Every candidate considered, including ones that do not exist.
     pub tried: Vec<PathBuf>,
+}
+
+impl ChunkDirResolution {
+    /// The file chunk `key` is read from: the first search directory holding
+    /// `<key>.mkv`, or `None` when no directory does.
+    pub fn locate(&self, key: &str) -> anyhow::Result<Option<PathBuf>> {
+        let name = chunk_file_name(key)?;
+        Ok(self
+            .search
+            .iter()
+            .map(|(_, d)| d.join(&name))
+            .find(|p| p.exists()))
+    }
+
+    /// Whether chunk files can be looked up at all: false for an ambiguous or
+    /// unresolved directory. Checked before any cache is read.
+    pub fn is_usable(&self) -> bool {
+        self.dir.is_some()
+    }
+
+    /// The error for a report whose chunks cannot be located, with the action
+    /// that fixes it.
+    pub fn error(&self, report: &Path) -> String {
+        let tried = self
+            .tried
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let advice = match self.resolved_by {
+            ChunkDirSource::Ambiguous => {
+                "the relative chunk_dir names a different existing directory from the report's \
+                 location and from this working directory; pass --cache-dir <the render's cache \
+                 dir> (its chunks/ is searched instead), or check from the render's working directory"
+            }
+            _ => {
+                "pass --cache-dir <the render's cache dir>, or re-render (new reports record absolute paths)"
+            }
+        };
+        format!(
+            "chunk directory {} for {} (tried dirs: [{tried}]); {advice}",
+            self.resolved_by,
+            report.display()
+        )
+    }
 }
 
 /// How a render report's `chunk_dir` was turned into a directory.
@@ -124,243 +176,307 @@ impl std::fmt::Display for ChunkDirSource {
     }
 }
 
-/// Fold `.` and `..` without touching the filesystem.
-fn lexical_normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                // Copy the last component first so `pop` is not borrowed.
-                let last = out.components().next_back().map(|c| match c {
-                    Component::Normal(_) => 0,
-                    Component::ParentDir => 1,
-                    _ => 2,
-                });
-                match last {
-                    Some(0) => {
-                        out.pop();
-                    }
-                    Some(1) | None => out.push(".."),
-                    _ => {}
-                }
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
-fn normal_components(path: &Path) -> Vec<OsString> {
-    lexical_normalize(path)
-        .components()
-        .filter_map(|c| match c {
+/// The plain directory names of a relative `output`'s parent, or `None` when it
+/// has a `..` or root: the report-location inference is then skipped rather
+/// than folding `..` by text, which disagrees with the filesystem when the
+/// component before it is a symlink.
+fn plain_names(path: &Path) -> Option<Vec<OsString>> {
+    path.components()
+        .filter(|c| *c != Component::CurDir)
+        .map(|c| match c {
             Component::Normal(s) => Some(s.to_os_string()),
             _ => None,
         })
         .collect()
 }
 
-fn ends_with_normals(dir: &Path, suffix: &[OsString]) -> bool {
-    if suffix.is_empty() {
-        return true;
+/// `dir` without its last components when they are exactly the plain names
+/// `suffix`; `None` otherwise.
+fn strip_suffix_names(dir: &Path, suffix: &[OsString]) -> Option<PathBuf> {
+    let comps: Vec<Component<'_>> = dir.components().collect();
+    let keep = comps.len().checked_sub(suffix.len())?;
+    let matches = comps[keep..]
+        .iter()
+        .zip(suffix)
+        .all(|(c, s)| matches!(c, Component::Normal(n) if *n == s.as_os_str()));
+    if !matches {
+        return None;
     }
-    let normals: Vec<&std::ffi::OsStr> = dir
-        .components()
-        .filter_map(|c| match c {
-            Component::Normal(s) => Some(s),
-            _ => None,
-        })
-        .collect();
-    normals.len() >= suffix.len()
-        && normals[normals.len() - suffix.len()..]
-            .iter()
-            .zip(suffix)
-            .all(|(a, b)| *a == b.as_os_str())
-}
-
-fn strip_trailing_normals(dir: &Path, suffix: &[OsString]) -> PathBuf {
-    if suffix.is_empty() {
-        return dir.to_path_buf();
-    }
-    let mut comps: Vec<Component<'_>> = dir.components().collect();
-    let mut rest = suffix.len();
-    while rest > 0 {
-        match comps.pop() {
-            Some(Component::Normal(s)) if s == suffix[rest - 1].as_os_str() => rest -= 1,
-            _ => return dir.to_path_buf(),
-        }
-    }
-    let mut out = PathBuf::new();
-    for c in comps {
-        out.push(c.as_os_str());
-    }
-    if out.as_os_str().is_empty() {
+    let out: PathBuf = comps[..keep].iter().map(|c| c.as_os_str()).collect();
+    Some(if out.as_os_str().is_empty() {
         PathBuf::from(".")
     } else {
         out
-    }
+    })
 }
 
+/// Same directory on disk (aliases through symlinks or `..` count once).
 fn same_dir(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(ca), Ok(cb)) => ca == cb,
-        _ => lexical_normalize(a) == lexical_normalize(b),
+        _ => a == b,
     }
 }
 
-/// When rule 2 did not yield an existing directory: the explicit `--cache-dir`
-/// candidates, then the engine's default cache next to the report. Chunk files
-/// are named by content key, so a directory found here cannot hold a different
-/// chunk under the same name. `chunk` is the report's `chunk_dir` (its file name
-/// is the adapter tag), when present.
-fn apply_cache_fallbacks(
-    chunk: Option<&Path>,
-    cache_dir: Option<&Path>,
-    report_dir: &Path,
-    mut res: ChunkDirResolution,
-) -> ChunkDirResolution {
-    if res.resolved_by == ChunkDirSource::Ambiguous {
-        return res;
-    }
-    if res.dir.as_ref().is_some_and(|d| d.is_dir()) {
-        return res;
-    }
-    let default_cache = report_dir.join(".ferrocut-cache");
-    let fallbacks = cache_dir
-        .map(|c| (c.to_path_buf(), ChunkDirSource::CacheDirOverride))
-        .into_iter()
-        .chain([(default_cache, ChunkDirSource::ReportDefaultCache)]);
-    for (cache, source) in fallbacks {
-        let mut cands = Vec::new();
-        if let Some(tag) = chunk.and_then(Path::file_name) {
-            cands.push(lexical_normalize(&cache.join("chunks").join(tag)));
-        }
-        cands.push(lexical_normalize(&cache.join("chunks")));
-        for cand in cands {
-            let exists = cand.is_dir();
-            res.tried.push(cand.clone());
-            if exists {
-                res.dir = Some(cand);
-                res.resolved_by = source;
-                return res;
-            }
-        }
-    }
-    res
-}
-
-/// Effective chunk directory a checker should open.
+/// Effective chunk directories a checker searches.
 ///
-/// Rule 2: relative `chunk_dir` values are resolved from the render's working
-/// directory, recovered from the report path when the report still has the
-/// engine's default name (`<output stem>.report.json`) and sits under
-/// `output`'s parent. That name match is an inference: a report copied into
-/// another directory that happens to be named `<stem>.report.json` still
-/// produces a report-location candidate, which loses to an existing process-cwd
-/// candidate and is `Ambiguous` when both exist and differ. The checker's own
-/// cwd is a separate candidate. Joining the report directory onto a `chunk_dir`
-/// that already contains the output directory would double that prefix, so that
-/// join is never done.
+/// Paths are joined, never folded by text: `x/..` means what the filesystem
+/// says, also when `x` is a symlink.
 ///
-/// `cache_dir` is the explicit `--cache-dir` only. When rule 2's directory is
-/// missing (including a recorded absolute path whose tree was relocated), or
-/// the report has no `chunk_dir`, the first existing of
-/// `cache_dir/chunks/<chunk_dir file name>` and `cache_dir/chunks` wins as
-/// [`ChunkDirSource::CacheDirOverride`], then the same two under
-/// `<report dir>/.ferrocut-cache` as [`ChunkDirSource::ReportDefaultCache`]
-/// (the engine's default cache location, kept from the previous lookup).
-/// Absent stays Absent only when none of those exist.
+/// Rule 2: an absolute `chunk_dir` is used as recorded. A relative one is
+/// resolved from the render's working directory, recovered from the report
+/// path when the report still has the engine's default name
+/// (`<output stem>.report.json`) and its directory ends with `output`'s parent
+/// names. That name match is an inference: a report copied into another
+/// directory under the same name still produces a report-location candidate.
+/// The checker's own cwd is a separate candidate. When both exist and are
+/// different directories the result is `Ambiguous`; only `--cache-dir` (its
+/// candidates below) can then locate chunks.
+///
+/// After the rule-2 directory, in order: `cache/chunks/<tag>` and
+/// `cache/chunks` for the explicit `--cache-dir`
+/// ([`ChunkDirSource::CacheDirOverride`]); then the engine cache the rule-2
+/// directory sits in (`<dir>/../..` when its parent is `chunks`), the default
+/// the checker has always derived; then `<report dir>/.ferrocut-cache`
+/// ([`ChunkDirSource::ReportDefaultCache`]: a tree moved with its report, or
+/// a report without `chunk_dir`). Each chunk file is looked up through that
+/// list ([`ChunkDirResolution::locate`]).
 pub fn resolve_chunk_dir(
     rr: &RenderReport,
     report_path: &Path,
     cwd: &Path,
     cache_dir: Option<&Path>,
 ) -> ChunkDirResolution {
-    let report_dir = lexical_normalize(&cwd.join(report_path))
+    let report_dir = cwd
+        .join(report_path)
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    let Some(chunk) = rr.chunk_dir.as_ref() else {
-        return apply_cache_fallbacks(
-            None,
-            cache_dir,
-            &report_dir,
-            ChunkDirResolution {
-                dir: None,
-                resolved_by: ChunkDirSource::Absent,
-                tried: Vec::new(),
-            },
-        );
-    };
-    if chunk.is_absolute() {
-        return apply_cache_fallbacks(
-            Some(chunk),
-            cache_dir,
-            &report_dir,
-            ChunkDirResolution {
-                dir: Some(chunk.clone()),
-                resolved_by: ChunkDirSource::Recorded,
-                tried: vec![chunk.clone()],
-            },
-        );
-    }
-
+    let chunk = rr.chunk_dir.as_deref();
     let mut tried = Vec::new();
-    let mut hits: Vec<(ChunkDirSource, PathBuf)> = Vec::new();
-    if let Some(output) = rr.output.as_ref().filter(|p| p.is_relative()) {
-        let expected = output.with_extension("report.json");
-        if report_path.file_name() == expected.file_name() {
-            let suffix = normal_components(output.parent().unwrap_or(Path::new("")));
-            if ends_with_normals(&report_dir, &suffix) {
-                let render_cwd = strip_trailing_normals(&report_dir, &suffix);
-                let candidate = lexical_normalize(&render_cwd.join(chunk));
-                tried.push(candidate.clone());
-                if candidate.is_dir() {
-                    hits.push((ChunkDirSource::ReportLocation, candidate));
+    // The rule-2 directory and how it was found, or the reason there is none.
+    let primary: Result<(ChunkDirSource, PathBuf), ChunkDirSource> = match chunk {
+        None => Err(ChunkDirSource::Absent),
+        Some(c) if c.is_absolute() => {
+            tried.push(c.to_path_buf());
+            Ok((ChunkDirSource::Recorded, c.to_path_buf()))
+        }
+        Some(c) => {
+            let mut hits: Vec<(ChunkDirSource, PathBuf)> = Vec::new();
+            if let Some(output) = rr.output.as_ref().filter(|p| p.is_relative()) {
+                let expected = output.with_extension("report.json");
+                let render_cwd = plain_names(output.parent().unwrap_or(Path::new("")))
+                    .and_then(|names| strip_suffix_names(&report_dir, &names));
+                if let (true, Some(render_cwd)) =
+                    (report_path.file_name() == expected.file_name(), render_cwd)
+                {
+                    let candidate = render_cwd.join(c);
+                    tried.push(candidate.clone());
+                    if candidate.is_dir() {
+                        hits.push((ChunkDirSource::ReportLocation, candidate));
+                    }
+                }
+            }
+            let process = cwd.join(c);
+            tried.push(process.clone());
+            if process.is_dir() {
+                hits.push((ChunkDirSource::ProcessCwd, process));
+            }
+            match hits.as_slice() {
+                [] => Err(ChunkDirSource::Unresolved),
+                [one] => Ok(one.clone()),
+                [a, b] if same_dir(&a.1, &b.1) => Ok(a.clone()),
+                _ => Err(ChunkDirSource::Ambiguous),
+            }
+        }
+    };
+    let ambiguous = primary == Err(ChunkDirSource::Ambiguous);
+    let tag = chunk.and_then(Path::file_name);
+    let cache_cands = |cache: &Path| {
+        let mut v = Vec::new();
+        if let Some(tag) = tag {
+            v.push(cache.join("chunks").join(tag));
+        }
+        v.push(cache.join("chunks"));
+        v
+    };
+
+    let mut search: Vec<(ChunkDirSource, PathBuf)> = Vec::new();
+    let mut push = |source: ChunkDirSource, dir: PathBuf, tried: &mut Vec<PathBuf>| {
+        if !search.iter().any(|(_, d)| *d == dir) {
+            if !tried.contains(&dir) {
+                tried.push(dir.clone());
+            }
+            search.push((source, dir));
+        }
+    };
+    if let Ok((source, dir)) = &primary {
+        push(*source, dir.clone(), &mut tried);
+    }
+    if let Some(cache) = cache_dir {
+        for d in cache_cands(cache) {
+            push(ChunkDirSource::CacheDirOverride, d, &mut tried);
+        }
+    }
+    // An ambiguous relative directory gets no implicit fallback: only an
+    // explicit --cache-dir says which render's chunks to use.
+    if !ambiguous {
+        if let Ok((source, dir)) = &primary {
+            if let Some(engine_cache) = dir
+                .parent()
+                .filter(|p| p.file_name().is_some_and(|n| n == "chunks"))
+                .and_then(Path::parent)
+            {
+                for d in cache_cands(engine_cache) {
+                    push(*source, d, &mut tried);
                 }
             }
         }
-    }
-    let process = lexical_normalize(&cwd.join(chunk));
-    tried.push(process.clone());
-    if process.is_dir() {
-        hits.push((ChunkDirSource::ProcessCwd, process));
+        for d in cache_cands(&report_dir.join(".ferrocut-cache")) {
+            push(ChunkDirSource::ReportDefaultCache, d, &mut tried);
+        }
     }
 
-    let res = match hits.as_slice() {
-        [] => ChunkDirResolution {
-            dir: None,
-            resolved_by: ChunkDirSource::Unresolved,
-            tried,
-        },
-        [one] => ChunkDirResolution {
-            dir: Some(one.1.clone()),
-            resolved_by: one.0,
-            tried,
-        },
-        [a, b] => {
-            if same_dir(&a.1, &b.1) {
-                ChunkDirResolution {
-                    dir: Some(a.1.clone()),
-                    resolved_by: a.0,
-                    tried,
-                }
-            } else {
-                ChunkDirResolution {
-                    dir: None,
-                    resolved_by: ChunkDirSource::Ambiguous,
-                    tried,
-                }
-            }
-        }
-        _ => ChunkDirResolution {
-            dir: None,
-            resolved_by: ChunkDirSource::Ambiguous,
-            tried,
-        },
+    let found = search.iter().find(|(_, d)| d.is_dir()).cloned();
+    let (dir, resolved_by) = match (found, primary) {
+        (Some((source, d)), _) => (Some(d), source),
+        // A recorded absolute directory stays the answer when nothing exists;
+        // opening a chunk then names it.
+        (None, Ok((ChunkDirSource::Recorded, d))) => (Some(d), ChunkDirSource::Recorded),
+        (None, Ok(_)) => (None, ChunkDirSource::Unresolved),
+        (None, Err(reason)) => (None, reason),
     };
-    apply_cache_fallbacks(Some(chunk), cache_dir, &report_dir, res)
+    ChunkDirResolution {
+        dir,
+        resolved_by,
+        search,
+        tried,
+    }
+}
+
+/// A chunk master's file name from its report key. The engine writes keys as
+/// hex; anything else (a path separator, `..`) is refused rather than joined.
+pub fn chunk_file_name(key: &str) -> anyhow::Result<String> {
+    anyhow::ensure!(
+        !key.is_empty() && key.len() <= 128 && key.bytes().all(|b| b.is_ascii_hexdigit()),
+        "render report chunk key {key:?} is not a hex chunk key"
+    );
+    Ok(format!("{key}.mkv"))
+}
+
+/// Default engine cache for a check: the cache the resolved chunk dir sits in
+/// (its grandparent when its parent is `chunks`), else
+/// `<report dir>/.ferrocut-cache`.
+pub fn default_cache_dir(resolution: &ChunkDirResolution, report_dir: &Path) -> PathBuf {
+    resolution
+        .dir
+        .as_deref()
+        .and_then(|d| d.parent())
+        .filter(|p| p.file_name().is_some_and(|n| n == "chunks"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| report_dir.join(".ferrocut-cache"))
+}
+
+/// The master whose audio a check measures. Pointed at a master (no explicit
+/// report), that file; otherwise the report's `output`: absolute, else
+/// relative to `cwd` when it exists there, else its file name in the report's
+/// directory (as [`crate::analyze::AudioInput::from_render`] does with the
+/// process cwd).
+pub fn master_audio_path(
+    rr: &RenderReport,
+    render: Option<&Path>,
+    report_dir: &Path,
+    cwd: &Path,
+) -> Option<PathBuf> {
+    rr.audio.as_ref()?;
+    if let Some(r) = render {
+        return Some(r.to_path_buf());
+    }
+    let out = rr.output.as_ref()?;
+    Some(if out.is_absolute() {
+        out.clone()
+    } else if cwd.join(out).exists() {
+        cwd.join(out)
+    } else {
+        report_dir.join(out.file_name()?)
+    })
+}
+
+/// Every path a `ferrocut-perceive check` reads or writes for one render,
+/// decided once so the checker and a caller that validates paths (MCP) agree.
+#[derive(Clone, Debug)]
+pub struct CheckPaths {
+    /// The render report read.
+    pub report: PathBuf,
+    pub resolution: ChunkDirResolution,
+    /// Each chunk master that exists, from [`ChunkDirResolution::locate`], in
+    /// report order. A chunk found nowhere is absent here; the check reads its
+    /// cached analysis or fails naming the directories searched.
+    pub chunk_files: Vec<PathBuf>,
+    /// The master whose audio is measured, when the report has audio.
+    pub audio: Option<PathBuf>,
+    /// The engine cache: analysis is cached in `perceive/v1`, audio in `audio/`.
+    pub cache_dir: PathBuf,
+    /// Directories the checker creates or writes when not told otherwise.
+    pub writes: Vec<PathBuf>,
+}
+
+/// Decide [`CheckPaths`] for `render` (a master, or a render report when it
+/// ends in `.json`). `report` and `cache_dir` are the explicit
+/// `--render-report` / `--cache-dir`; `cwd` is the checker's working
+/// directory. A report that lists chunks but whose chunk directory is
+/// ambiguous or unresolved is an error here, before any cache is read, and so
+/// is a chunk key that is not a plain hex name.
+pub fn check_paths(
+    render: &Path,
+    report: Option<&Path>,
+    cache_dir: Option<&Path>,
+    cwd: &Path,
+) -> anyhow::Result<(RenderReport, CheckPaths)> {
+    let is_report = render.extension().is_some_and(|e| e == "json");
+    let report_path = match report {
+        Some(p) => p.to_path_buf(),
+        None if is_report => render.to_path_buf(),
+        None => render.with_extension("report.json"),
+    };
+    let mut rr = RenderReport::load(&report_path)?;
+    let resolution = resolve_chunk_dir(&rr, &report_path, cwd, cache_dir);
+    if !resolution.is_usable() && !rr.chunks.is_empty() {
+        anyhow::bail!("{}", resolution.error(&report_path));
+    }
+    let mut chunk_files = Vec::new();
+    for c in &rr.chunks {
+        if let Some(f) = resolution.locate(&c.key)? {
+            chunk_files.push(f);
+        }
+    }
+    let report_dir = report_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let pointed = (report.is_none() && !is_report).then_some(render);
+    let audio = master_audio_path(&rr, pointed, &report_dir, cwd);
+    let cache = cache_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| default_cache_dir(&resolution, &report_dir));
+    let writes = vec![
+        cache.join("perceive").join("v1"),
+        cache.join("perceive").join("check-out"),
+        cache.join("audio"),
+    ];
+    rr.chunk_resolution = Some(resolution.clone());
+    Ok((
+        rr,
+        CheckPaths {
+            report: report_path,
+            resolution,
+            chunk_files,
+            audio,
+            cache_dir: cache,
+            writes,
+        },
+    ))
 }
 
 /// The subset of the engine's timeline JSON we use.

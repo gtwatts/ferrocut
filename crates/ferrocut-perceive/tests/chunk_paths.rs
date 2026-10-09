@@ -4,7 +4,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ferrocut_perceive::input::{ChunkDirSource, RenderReport, resolve_chunk_dir};
+use ferrocut_perceive::input::{
+    ChunkDirSource, RenderReport, Timeline, check_paths, chunk_file_name, resolve_chunk_dir,
+};
+use ferrocut_perceive::{Options, Request, analyze};
 
 fn report(chunk_dir: &str, output: &str) -> RenderReport {
     let chunk = chunk_dir.replace('\\', "\\\\").replace('"', "\\\"");
@@ -56,12 +59,14 @@ fn absolute_chunk_dir_is_recorded() {
     let res = resolve_chunk_dir(&rr, &a.join("master.report.json"), &b, None);
     assert_eq!(res.resolved_by, ChunkDirSource::Recorded);
     assert_eq!(res.dir.as_deref(), Some(abs.as_path()));
-    // Nothing exists: the engine's default cache next to the report was also
-    // tried (chunks/<tag>, then chunks) before keeping the recorded path.
+    // Nothing exists: the flat dir of the engine cache it sits in, then the
+    // engine's default cache next to the report (chunks/<tag>, then chunks),
+    // were also tried before keeping the recorded path.
     assert_eq!(
         res.tried,
         vec![
             abs,
+            a.join("missing/chunks"),
             a.join(".ferrocut-cache/chunks/t"),
             a.join(".ferrocut-cache/chunks")
         ]
@@ -121,7 +126,8 @@ fn non_default_report_name_uses_process_cwd() {
     let res = resolve_chunk_dir(&rr, &elsewhere.join("copied-report.json"), &cwd, None);
     assert_eq!(res.resolved_by, ChunkDirSource::ProcessCwd);
     assert_eq!(res.dir.as_deref(), Some(chunk.as_path()));
-    assert_eq!(res.tried, vec![chunk]);
+    assert_eq!(res.tried[0], chunk);
+    assert_eq!(res.search[0], (ChunkDirSource::ProcessCwd, chunk));
 }
 
 /// F. Report-location and process-cwd candidates both exist and differ.
@@ -246,4 +252,217 @@ fn report_without_chunk_dir_keeps_the_flat_default_cache() {
     let res = resolve_chunk_dir(&rr, &a.join("master.report.json"), &b, None);
     assert_eq!(res.resolved_by, ChunkDirSource::ReportDefaultCache);
     assert_eq!(res.dir.as_deref(), Some(flat.as_path()));
+}
+
+/// A report listing chunks with these keys.
+fn report_with_chunks(chunk_dir: &str, output: &str, keys: &[&str]) -> RenderReport {
+    let chunks: Vec<String> = keys
+        .iter()
+        .enumerate()
+        .map(|(i, k)| format!(r#"{{"index":{i},"start_frame":{i},"frames":1,"key":"{k}"}}"#))
+        .collect();
+    let chunk = chunk_dir.replace('\\', "\\\\").replace('"', "\\\"");
+    let output = output.replace('\\', "\\\\").replace('"', "\\\"");
+    RenderReport::from_json(&format!(
+        r#"{{"total_frames":{n},"chunk_frames":1,"chunks":[{c}],"chunk_dir":"{chunk}","output":"{output}"}}"#,
+        n = keys.len(),
+        c = chunks.join(",")
+    ))
+    .unwrap()
+}
+
+const KEY_A: &str = "aaaaaaaaaaaaaaaa";
+const KEY_B: &str = "bbbbbbbbbbbbbbbb";
+
+/// P4. Lookup is per chunk file, in order. The recorded directory still exists
+/// but has evicted one key; the explicit --cache-dir (tagged, then flat) holds
+/// it. Each chunk comes from the first directory holding its file, as the
+/// pre-resolution checker did. Harmless key-named files; nothing is decoded.
+#[test]
+fn partial_recorded_cache_falls_through_per_chunk_file() {
+    let (_keep_a, a) = canon_temp();
+    let (_keep_b, b) = canon_temp();
+    let recorded = a.join("render/.ferrocut-cache/chunks/tag");
+    fs::create_dir_all(&recorded).unwrap();
+    fs::write(recorded.join(format!("{KEY_A}.mkv")), b"a").unwrap();
+    let cache = b.join("explicit");
+    let tagged = cache.join("chunks/tag");
+    fs::create_dir_all(&tagged).unwrap();
+    fs::write(tagged.join(format!("{KEY_B}.mkv")), b"b").unwrap();
+    let rr = report_with_chunks(recorded.to_str().unwrap(), "master.mkv", &[KEY_A, KEY_B]);
+    let res = resolve_chunk_dir(&rr, &a.join("render/master.report.json"), &b, Some(&cache));
+    assert_eq!(res.resolved_by, ChunkDirSource::Recorded);
+    assert_eq!(
+        res.locate(KEY_A).unwrap(),
+        Some(recorded.join(format!("{KEY_A}.mkv")))
+    );
+    assert_eq!(
+        res.locate(KEY_B).unwrap(),
+        Some(tagged.join(format!("{KEY_B}.mkv")))
+    );
+    // The flat explicit cache is the next file-level fallback.
+    fs::remove_file(tagged.join(format!("{KEY_B}.mkv"))).unwrap();
+    fs::write(cache.join(format!("chunks/{KEY_B}.mkv")), b"b").unwrap();
+    assert_eq!(
+        res.locate(KEY_B).unwrap(),
+        Some(cache.join(format!("chunks/{KEY_B}.mkv")))
+    );
+    // check_paths reports exactly the files that will be opened.
+    fs::write(
+        a.join("render/master.report.json"),
+        format!(
+            r#"{{"total_frames":2,"chunk_frames":1,"chunks":[{{"index":0,"start_frame":0,"frames":1,"key":"{KEY_A}"}},{{"index":1,"start_frame":1,"frames":1,"key":"{KEY_B}"}}],"chunk_dir":"{}","output":"master.mkv"}}"#,
+            recorded.display()
+        ),
+    )
+    .unwrap();
+    let (_, paths) = check_paths(&a.join("render/master.mkv"), None, Some(&cache), &b).unwrap();
+    assert_eq!(
+        paths.chunk_files,
+        vec![
+            recorded.join(format!("{KEY_A}.mkv")),
+            cache.join(format!("chunks/{KEY_B}.mkv"))
+        ]
+    );
+    assert_eq!(paths.cache_dir, cache);
+}
+
+/// P4. The advice for an ambiguous legacy path works: with --cache-dir only
+/// the explicit cache is searched (no guess between the two candidates).
+#[test]
+fn ambiguous_relative_dir_is_recovered_by_cache_dir() {
+    let (_keep_a, a) = canon_temp();
+    let (_keep_b, b) = canon_temp();
+    fs::create_dir_all(a.join("sub/.ferrocut-cache/chunks/t")).unwrap();
+    fs::create_dir_all(b.join("sub/.ferrocut-cache/chunks/t")).unwrap();
+    let rr = report_with_chunks("sub/.ferrocut-cache/chunks/t", "sub/master.mkv", &[KEY_A]);
+    let report = a.join("sub/master.report.json");
+    let res = resolve_chunk_dir(&rr, &report, &b, None);
+    assert_eq!(res.resolved_by, ChunkDirSource::Ambiguous);
+    assert!(res.search.is_empty());
+    assert!(res.error(&report).contains("--cache-dir"));
+
+    let chosen = a.join("sub/.ferrocut-cache");
+    fs::write(chosen.join(format!("chunks/t/{KEY_A}.mkv")), b"a").unwrap();
+    let res = resolve_chunk_dir(&rr, &report, &b, Some(&chosen));
+    assert_eq!(res.resolved_by, ChunkDirSource::CacheDirOverride);
+    assert!(
+        res.search
+            .iter()
+            .all(|(s, _)| *s == ChunkDirSource::CacheDirOverride)
+    );
+    assert_eq!(
+        res.locate(KEY_A).unwrap(),
+        Some(chosen.join(format!("chunks/t/{KEY_A}.mkv")))
+    );
+}
+
+/// P5. `alias/../cache/chunks/tag` where `alias` is a symlink to
+/// `targets/nested`: the filesystem resolves it under `targets/`, not by
+/// erasing `alias/..` as text. The recorded relative path is found as is.
+#[cfg(unix)]
+#[test]
+fn symlink_then_parent_follows_the_filesystem() {
+    let (_keep_cwd, cwd) = canon_temp();
+    let (_keep_r, elsewhere) = canon_temp();
+    fs::create_dir_all(cwd.join("targets/nested")).unwrap();
+    let real = cwd.join("targets/cache/chunks/tag");
+    fs::create_dir_all(&real).unwrap();
+    std::os::unix::fs::symlink(cwd.join("targets/nested"), cwd.join("alias")).unwrap();
+    // The text-folded spelling does not exist.
+    assert!(!cwd.join("cache/chunks/tag").exists());
+    let rr = report("alias/../cache/chunks/tag", "master.mkv");
+    let res = resolve_chunk_dir(&rr, &elsewhere.join("copied.json"), &cwd, None);
+    assert_eq!(res.resolved_by, ChunkDirSource::ProcessCwd);
+    let dir = res.dir.expect("found through the symlink");
+    assert_eq!(fs::canonicalize(&dir).unwrap(), real);
+}
+
+/// P2. Chunk keys are file names, never paths.
+#[test]
+fn chunk_keys_must_be_plain_hex() {
+    assert_eq!(chunk_file_name(KEY_A).unwrap(), format!("{KEY_A}.mkv"));
+    for bad in [
+        "",
+        "../outside",
+        "/abs/x",
+        "ab/cd",
+        "abc.mkv",
+        &"a".repeat(129),
+    ] {
+        assert!(chunk_file_name(bad).is_err(), "{bad:?}");
+    }
+    let (_keep, a) = canon_temp();
+    fs::create_dir_all(a.join(".ferrocut-cache/chunks/t")).unwrap();
+    fs::write(
+        a.join("master.report.json"),
+        r#"{"total_frames":1,"chunk_frames":1,"chunks":[{"index":0,"start_frame":0,"frames":1,"key":"../../outside"}],"chunk_dir":".ferrocut-cache/chunks/t","output":"master.mkv"}"#,
+    )
+    .unwrap();
+    let err = check_paths(&a.join("master.mkv"), None, None, &a).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("not a hex chunk key"),
+        "{err:#}"
+    );
+}
+
+/// P2. The audio master: the file pointed at, unless the report is given
+/// explicitly (or is the render argument), when the report's `output` is used.
+#[test]
+fn audio_master_follows_the_checker_rule() {
+    let (_keep, a) = canon_temp();
+    let (_keep_o, other) = canon_temp();
+    let json = format!(
+        r#"{{"total_frames":0,"chunk_frames":1,"chunks":[],"chunk_dir":"{}","output":"{}","audio":{{"sample_rate":48000,"channels":2,"samples":0,"blake3":"00"}}}}"#,
+        a.join(".ferrocut-cache/chunks/t").display(),
+        other.join("elsewhere.mkv").display()
+    );
+    fs::write(a.join("master.report.json"), &json).unwrap();
+    let (rr, paths) = check_paths(&a.join("master.mkv"), None, None, &a).unwrap();
+    assert!(rr.audio.is_some(), "fixture must declare audio");
+    assert_eq!(paths.audio, Some(a.join("master.mkv")));
+    let (_, paths) = check_paths(&a.join("master.report.json"), None, None, &a).unwrap();
+    assert_eq!(paths.audio, Some(other.join("elsewhere.mkv")));
+    assert_eq!(paths.report, a.join("master.report.json"));
+}
+
+/// P3. A report with chunks and an unusable directory fails before any cache
+/// is read or created, so a warm analysis cache cannot hide it: the same error
+/// from check_paths and from analyze, and the cache dir is never created.
+#[test]
+fn unusable_resolution_fails_before_the_analysis_cache() {
+    let (_keep_a, a) = canon_temp();
+    let (_keep_b, b) = canon_temp();
+    let rr_json = format!(
+        r#"{{"total_frames":1,"chunk_frames":1,"chunks":[{{"index":0,"start_frame":0,"frames":1,"key":"{KEY_A}"}}],"chunk_dir":"gone/chunks/t","output":"master.mkv"}}"#
+    );
+    fs::write(a.join("master.report.json"), &rr_json).unwrap();
+    let err = check_paths(&a.join("master.mkv"), None, None, &b).unwrap_err();
+    assert!(format!("{err:#}").contains("unresolved"), "{err:#}");
+
+    let mut rr = RenderReport::from_json(&rr_json).unwrap();
+    rr.chunk_resolution = Some(resolve_chunk_dir(
+        &rr,
+        &a.join("master.report.json"),
+        &b,
+        None,
+    ));
+    let tl = Timeline::from_json(
+        r#"{"output":{"width":64,"height":32,"fps":"24","gop":12},"tracks":[]}"#,
+    )
+    .unwrap();
+    let cache = a.join("cache");
+    let err = analyze(Request {
+        timeline: &tl,
+        render: &rr,
+        cache_dir: &cache,
+        out_dir: &a.join("out"),
+        audio: None,
+        options: Options::default(),
+        gpu: None,
+    })
+    .err()
+    .expect("unusable resolution");
+    assert!(format!("{err:#}").contains("unresolved"), "{err:#}");
+    assert!(!cache.exists(), "cache touched before the resolution check");
 }

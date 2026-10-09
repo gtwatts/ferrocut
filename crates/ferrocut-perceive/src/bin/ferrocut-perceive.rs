@@ -6,7 +6,9 @@ use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use ferrocut_core::{AdapterPreference, GpuContext};
 use ferrocut_perceive::check::{CheckError, RenderChunks, grade_resolved, parse_brief_cuts};
-use ferrocut_perceive::input::{ChunkDirResolution, RenderReport, Timeline, resolve_chunk_dir};
+use ferrocut_perceive::input::{
+    ChunkDirResolution, RenderReport, Timeline, check_paths, default_cache_dir, resolve_chunk_dir,
+};
 use ferrocut_perceive::targets::{Authored, Resolved};
 use ferrocut_perceive::{AudioInput, CheckReport, Options, Report, Request, analyze, diff};
 
@@ -165,19 +167,6 @@ fn thresholds(a: &CheckArgs, rr: &RenderReport, tl: &Timeline) -> anyhow::Result
     Resolved::resolve(&Authored::new(rr, tl)?, a.config.as_deref(), &flags)
 }
 
-/// Default cache dir: grandparent of the resolved chunk dir when that dir's
-/// parent is named `chunks`, otherwise `<report dir>/.ferrocut-cache`.
-fn cache_dir_from_resolution(resolution: &ChunkDirResolution, report_dir: &Path) -> PathBuf {
-    resolution
-        .dir
-        .as_deref()
-        .and_then(|d| d.parent())
-        .filter(|p| p.file_name().is_some_and(|n| n == "chunks"))
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| report_dir.join(".ferrocut-cache"))
-}
-
 fn attach_resolution(
     rr: &mut RenderReport,
     report_path: &Path,
@@ -190,25 +179,18 @@ fn attach_resolution(
 }
 
 fn run_check(a: &CheckArgs) -> anyhow::Result<CheckReport> {
-    let rr_path = match &a.render_report {
-        Some(p) => p.clone(),
-        None if a.render.extension().is_some_and(|e| e == "json") => a.render.clone(),
-        None => a.render.with_extension("report.json"),
-    };
-    let mut rr = RenderReport::load(&rr_path)?;
-    let resolution = attach_resolution(&mut rr, &rr_path, a.cache_dir.as_deref())?;
+    // The same decision MCP validates before running this checker.
+    let cwd = std::env::current_dir().context("current directory")?;
+    let (rr, paths) = check_paths(
+        &a.render,
+        a.render_report.as_deref(),
+        a.cache_dir.as_deref(),
+        &cwd,
+    )?;
+    let resolution = paths.resolution.clone();
     let tl = Timeline::load(&a.timeline)?;
     let resolved = thresholds(a, &rr, &tl)?;
-    let report_dir = rr_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let cache_dir = a
-        .cache_dir
-        .clone()
-        .unwrap_or_else(|| cache_dir_from_resolution(&resolution, &report_dir));
-    let mut rr_audio = rr.clone();
-    if a.render_report.is_none() && a.render.extension().is_some_and(|e| e != "json") {
-        // The master we were pointed at, not wherever the report says it was written.
-        rr_audio.output = Some(a.render.clone());
-    }
+    let cache_dir = paths.cache_dir.clone();
     let brief = match &a.brief_cuts {
         Some(p) => Some(parse_brief_cuts(
             &std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?,
@@ -230,7 +212,7 @@ fn run_check(a: &CheckArgs) -> anyhow::Result<CheckReport> {
         render: &rr,
         cache_dir: &cache_dir,
         out_dir: &out_dir,
-        audio: AudioInput::from_render(&rr_audio, &report_dir),
+        audio: paths.audio.clone().map(AudioInput::Master),
         options: Options {
             contact_sheets: a.out.is_some(),
             ..Options::default()
@@ -292,7 +274,7 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or(std::path::Path::new("."))
                 .to_path_buf();
             let cache_dir =
-                cache_dir.unwrap_or_else(|| cache_dir_from_resolution(&resolution, &report_dir));
+                cache_dir.unwrap_or_else(|| default_cache_dir(&resolution, &report_dir));
             let gpu = if cpu {
                 None
             } else {

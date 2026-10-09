@@ -378,55 +378,54 @@ fn audio_analysis(
     })
 }
 
-/// Where a chunk master lives. When the checker attached a resolution, only
-/// that effective directory is used. Otherwise the report's raw `chunk_dir`
-/// (per-adapter since engine 7de57ff), then the same adapter dir under
-/// `cache_dir`, then the older flat `cache_dir/chunks/`.
-fn find_chunk(rr: &RenderReport, cache_dir: &Path, key: &str) -> PathBuf {
-    let name = format!("{key}.mkv");
-    if let Some(res) = &rr.chunk_resolution {
-        // Only the effective directory. No raw-path or cache-dir fallback.
-        return match &res.dir {
-            Some(d) => d.join(&name),
-            None => PathBuf::from(&name),
-        };
-    }
+/// Where a chunk master lives. When the checker attached a resolution, the
+/// first of its search directories holding the file
+/// ([`crate::input::ChunkDirResolution::locate`]). Otherwise the report's raw
+/// `chunk_dir` (per-adapter since engine 7de57ff), then the same adapter dir
+/// under `cache_dir`, then the older flat `cache_dir/chunks/`. A missing file
+/// is returned at its first candidate so the open error names it.
+fn find_chunk(rr: &RenderReport, cache_dir: &Path, key: &str) -> anyhow::Result<PathBuf> {
+    let name = crate::input::chunk_file_name(key)?;
     let mut cands = Vec::new();
-    if let Some(d) = &rr.chunk_dir {
-        cands.push(d.join(&name));
-        if let Some(tag) = d.file_name() {
-            cands.push(cache_dir.join("chunks").join(tag).join(&name));
+    if let Some(res) = &rr.chunk_resolution {
+        if let Some(found) = res.locate(key)? {
+            return Ok(found);
         }
+        cands.extend(res.search.iter().map(|(_, d)| d.join(&name)));
+    } else {
+        if let Some(d) = &rr.chunk_dir {
+            cands.push(d.join(&name));
+            if let Some(tag) = d.file_name() {
+                cands.push(cache_dir.join("chunks").join(tag).join(&name));
+            }
+        }
+        cands.push(cache_dir.join("chunks").join(&name));
     }
-    cands.push(cache_dir.join("chunks").join(&name));
-    cands
+    Ok(cands
         .iter()
         .find(|p| p.exists())
-        .unwrap_or(&cands[0])
-        .clone()
+        .or(cands.first())
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from(&name)))
 }
 
 fn chunk_open_context(index: usize, path: &Path, rr: &RenderReport) -> String {
-    let no_dir = rr
-        .chunk_resolution
-        .as_ref()
-        .is_some_and(|r| r.dir.is_none());
-    if path.exists() && !no_dir {
+    if path.exists() {
         return format!("analyzing chunk {index}");
     }
     match &rr.chunk_resolution {
         Some(r) => {
-            let tried = r
-                .tried
+            let searched = r
+                .search
                 .iter()
-                .map(|p| p.display().to_string())
+                .map(|(_, d)| d.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
             format!(
-                "analyzing chunk {index}: chunk path {}, resolved_by {}, tried dirs [{tried}]; render with absolute paths or pass --cache-dir",
-                path.display(),
+                "analyzing chunk {index}: chunk file {} not found in any searched dir [{searched}] \
+                 (resolved_by {}); pass --cache-dir <the render's cache dir>, or re-render",
+                path.file_name().unwrap_or_default().to_string_lossy(),
                 r.resolved_by,
-                tried
             )
         }
         None => format!("analyzing chunk {index}"),
@@ -440,6 +439,13 @@ pub fn analyze(req: Request) -> anyhow::Result<(Report, Stats)> {
     let fps = tl.output.fps;
     let fps_f = fps.num() as f64 / fps.den() as f64;
     let every = o.sample_every.unwrap_or_else(|| fps.round()).max(1);
+    // An unusable chunk directory fails before the analysis cache is read, so
+    // a warm cache cannot hide it.
+    if let Some(res) = rr.chunk_resolution.as_ref().filter(|r| !r.is_usable()) {
+        if !rr.chunks.is_empty() {
+            bail!("{}", res.error(Path::new("render report")));
+        }
+    }
     let cache = Cache {
         dir: req.cache_dir.join("perceive").join("v1"),
     };
@@ -470,14 +476,7 @@ pub fn analyze(req: Request) -> anyhow::Result<(Report, Stats)> {
             }
             None => {
                 stats.chunks_analyzed += 1;
-                let path = find_chunk(rr, req.cache_dir, &c.key);
-                if rr
-                    .chunk_resolution
-                    .as_ref()
-                    .is_some_and(|r| r.dir.is_none())
-                {
-                    bail!("{}", chunk_open_context(c.index, &path, rr));
-                }
+                let path = find_chunk(rr, req.cache_dir, &c.key)?;
                 analyze_chunk(&path, &akey, c, every, o, &cache, &mut sc, &mut stats)
                     .with_context(|| chunk_open_context(c.index, &path, rr))?
             }
