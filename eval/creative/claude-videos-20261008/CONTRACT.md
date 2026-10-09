@@ -46,8 +46,10 @@ place Ferrocut got in your way. Both are deliverables.
 
 ## Assets you may use
 
-- Footage: `eval/media/clips/{t1..t6,d1}.mkv` (Tears of Steel, 2012) and
-  `{s1..s6}.mkv` (Sintel, 2010), both Blender Foundation, CC-BY 3.0. Probe each
+- Footage: `eval/media/clips/{t1..t6}.mkv` (Tears of Steel, 2012) and
+  `{s1..s6,d1}.mkv` (Sintel, 2010), both Blender Foundation, CC-BY 3.0.
+  Corrected 2026-10-09: this brief originally mislabelled `d1`; `eval/fetch-media.sh`
+  cuts it from Sintel at 116.5 s. Probe each
   clip before cutting (`ferrocut probe`). Attribution is mandatory: an end card
   ("Footage: Tears of Steel / Sintel, (CC) Blender Foundation") and an entry in
   `SOURCES.md`. `ferrocut index <clip> --search "<words>"` finds spoken lines
@@ -102,7 +104,7 @@ place Ferrocut got in your way. Both are deliverables.
    Three revision rounds are the minimum; write the reason for each revision
    in `REVISIONS.md` with the before/after still paths.
 5. Render drafts of the parts you cannot judge from stills (motion, transitions,
-   audio) and check them: `ferrocut render project.json -o drafts/d1.mkv --cpu -j 6 --check`,
+   audio) and check them: `ferrocut render project.json -o drafts/d1.mkv --cpu -j 2 --check`,
    `ffmpeg -i drafts/d1.mkv -af ebur128=peak=true -f null -` for loudness.
 6. Final: `ferrocut render project.json -o delivery/master.mkv -j 2 --check`,
    then `ferrocut check delivery/master.mkv --timeline project.json --require`

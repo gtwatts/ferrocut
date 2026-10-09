@@ -72,7 +72,8 @@ default frame duration. Readers inferred 29.97 fps, and an initial viewing expor
 became 60.06 seconds. The agent repaired container metadata to declare 30 fps;
 video and audio stream hashes matched the untouched native output. Both outputs,
 the failed repair attempt, repair script, and verification records were retained.
-The engine itself has not yet been fixed for this issue.
+The engine had not yet been fixed at the time of this run. The same-day
+follow-up below records the source fix, present in revision `5de8434`.
 
 The corrected viewing copy passed the supervisor's independent checks:
 60.000000 seconds, 1,800 frames, 1080 × 1920, 30 fps, H.264 YUV420P, stereo 48 kHz
@@ -95,7 +96,8 @@ Large live schemas exceeded response limits and required compressed discovery
 through the installed stdio MCP server. The provider-backed run also encountered
 an unavailable FFmpeg `drawtext` filter during review-sheet extraction. Container
 frame-rate declaration, schema size, review-tool availability, and turnaround
-time remain concrete engineering issues exposed by the tests.
+time were concrete engineering issues exposed by the tests; the same-day
+follow-up below records the fixes to the first three.
 
 Raw Codex conversations, private Obsidian memory, credentials, provider account
 status, and model caches are excluded from public source and delivery packages.
