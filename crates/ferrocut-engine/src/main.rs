@@ -341,7 +341,13 @@ enum TrackingCmd {
 #[derive(Subcommand)]
 enum CaptionCmd {
     /// Import cues through normal atomic edits and undo journal. Fonts are
-    /// resolved relative to the style JSON file. Overlaps need separate tracks.
+    /// resolved relative to the style JSON file and stored relative to the
+    /// timeline when their real (symlink-resolved) file is inside its
+    /// directory; others are stored absolute and reported as not portable
+    /// (`nonportable_fonts`). With `--output` in another directory every
+    /// relative path is written absolute, so all fonts are reported. A
+    /// missing font is an error.
+    /// Overlaps need separate tracks.
     Import {
         timeline: PathBuf,
         subtitles: PathBuf,
@@ -570,11 +576,18 @@ fn main() -> anyhow::Result<()> {
                         &std::fs::read_to_string(&style)
                             .with_context(|| format!("reading style {}", style.display()))?,
                     )?;
-                    let base = std::fs::canonicalize(project::dir_of(&style))?;
-                    for font in spec.font_paths_mut() {
-                        if font.is_relative() {
-                            *font = base.join(&*font);
-                        }
+                    // Fonts resolve against the style file; the timeline
+                    // keeps those inside its directory relative.
+                    let outside = captions::place_style_fonts(
+                        &mut spec,
+                        &project::dir_of(&style),
+                        &project::dir_of(&timeline),
+                    )?;
+                    for f in &outside {
+                        eprintln!(
+                            "note: font {} is outside the timeline's directory, so it is stored as an absolute path and the project is not portable; copy it into the project",
+                            f.display()
+                        );
                     }
                     let timing = if exact_timing {
                         captions::CaptionTiming::exact()
@@ -611,6 +624,27 @@ fn main() -> anyhow::Result<()> {
                         )?;
                         let mut v = serde_json::to_value(&outcome)?;
                         v["caption_timing"] = serde_json::to_value(&report)?;
+                        // Portability of the file actually written: an output
+                        // in another directory gets every relative path
+                        // absolutized (sources_absolutized), fonts included.
+                        let nonportable = if outcome.sources_absolutized {
+                            let base = std::fs::canonicalize(project::dir_of(&timeline))?;
+                            let mut all: Vec<std::path::PathBuf> = Vec::new();
+                            for f in spec.font_paths() {
+                                let f = base.join(f);
+                                if !all.contains(&f) {
+                                    all.push(f);
+                                }
+                            }
+                            eprintln!(
+                                "note: the output is in another directory than the timeline, so every relative path (these {} font(s) included) is written absolute and the output project is not portable; write it next to its assets instead",
+                                all.len()
+                            );
+                            all
+                        } else {
+                            outside
+                        };
+                        v["nonportable_fonts"] = serde_json::to_value(&nonportable)?;
                         println!("{}", serde_json::to_string_pretty(&v)?);
                     }
                 }

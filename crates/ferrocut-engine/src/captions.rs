@@ -582,6 +582,46 @@ pub fn retime(
     ))
 }
 
+/// Place a caption style's fonts (primary and fallbacks) for a timeline. A
+/// relative font is relative to the style file's directory. Containment is
+/// decided on the font's canonical path (every symlink and `.`/`..` resolved
+/// by the filesystem), never on a lexical prefix: a font whose real file is
+/// inside the timeline's directory is stored relative to it, so the project
+/// stays portable; any other is stored as its canonical absolute path and
+/// returned, so the caller can report it as not portable. A font that does
+/// not exist is an error naming where it was looked for.
+pub fn place_style_fonts(
+    style: &mut crate::text::TextSpec,
+    style_dir: &Path,
+    timeline_dir: &Path,
+) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    let canon = |d: &Path| {
+        std::fs::canonicalize(d).with_context(|| format!("resolving directory {}", d.display()))
+    };
+    let (style_dir, timeline_dir) = (canon(style_dir)?, canon(timeline_dir)?);
+    let mut outside = Vec::new();
+    for font in style.font_paths_mut() {
+        // An absolute font replaces the base.
+        let joined = style_dir.join(&*font);
+        let real = std::fs::canonicalize(&joined).with_context(|| {
+            format!(
+                "font {} not found (resolved against the style file's directory {})",
+                font.display(),
+                style_dir.display()
+            )
+        })?;
+        ensure!(real.is_file(), "font {} is not a file", real.display());
+        *font = match real.strip_prefix(&timeline_dir) {
+            Ok(rel) => rel.to_path_buf(),
+            Err(_) => {
+                outside.push(real.clone());
+                real
+            }
+        };
+    }
+    Ok(outside)
+}
+
 /// Produce normal journalable edits; a supplied TextSpec defines the style.
 /// Each cue remains an editable native text clip, addressable by its stable id.
 pub fn import_ops(
