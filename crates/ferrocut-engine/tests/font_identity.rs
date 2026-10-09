@@ -183,6 +183,8 @@ fn identical_documents_with_different_font_bytes_are_not_identical_diffs() {
     assert_eq!(f.path, "generator.text.font");
     assert!(f.from.as_str().unwrap().starts_with("blake3:"));
     assert!(f.to.as_str().unwrap().starts_with("blake3:"));
+    assert_eq!(f.from.as_str().unwrap().len(), "blake3:".len() + 64);
+    assert_eq!(f.to.as_str().unwrap().len(), "blake3:".len() + 64);
     assert_ne!(f.from, f.to);
     assert_eq!(d.render.unwrap().dirty_chunks, [1, 2]);
 }
