@@ -326,3 +326,56 @@ impl State {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Synthetic decoded frames exercise the existing no-PTS fallback without
+    // asking a demuxer to invent timestamps. Real missing stream-start metadata
+    // is covered by the committed WAV integration control.
+    #[test]
+    fn missing_first_pts_keeps_zero_fallback_and_source_origin() {
+        init();
+        let samples = [0.25_f32, -0.5, 0.75, -0.25];
+        let align_frame = |pts, origin| {
+            let mut frame = frame::Audio::new(F32P, samples.len(), ChannelLayout::MONO);
+            frame.set_rate(48_000);
+            frame.set_pts(pts);
+            frame.plane_mut::<f32>(0).copy_from_slice(&samples);
+            let mut state = State {
+                swr: None,
+                out_layout: ChannelLayout::MONO,
+                rate: 48_000,
+                planes: vec![Vec::new()],
+                first: None,
+                out: frame::Audio::empty(),
+                align: Align {
+                    tb: Rational::new(1, 48_000),
+                    origin: RationalTime::new(origin, 48_000),
+                    rate: 48_000,
+                    lead: None,
+                },
+            };
+            let mut actual = Vec::new();
+            let mut sink = |block: &[Vec<f32>]| {
+                actual.extend_from_slice(&block[0]);
+                Ok(())
+            };
+            state.push(&mut frame).unwrap();
+            state.emit(&mut sink).unwrap();
+            state.flush().unwrap();
+            state.emit(&mut sink).unwrap();
+            actual.into_iter().map(f32::to_bits).collect::<Vec<_>>()
+        };
+        let bits = |values: &[f32]| values.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+        assert_eq!(align_frame(None, 0), bits(&samples));
+        assert_eq!(align_frame(None, 2), bits(&samples[2..]));
+        assert_eq!(
+            align_frame(None, -2),
+            bits(&[0.0, 0.0, 0.25, -0.5, 0.75, -0.25])
+        );
+        assert_eq!(align_frame(None, 2), align_frame(Some(0), 2));
+        assert_eq!(align_frame(Some(2), 2), bits(&samples));
+    }
+}
