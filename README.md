@@ -418,8 +418,11 @@ edit ops keep keys in place on the timeline); bus parameters use timeline time. 
 "transform": { "anchor": ["960", "540"], "position": ["480", "270"], "scale": "0.5", "rotation": "-12" }
 ```
 
-Position/anchor are pixels (default: frame center), scale a factor (uniform or `[x, y]`), rotation
-degrees clockwise. The transform node inverse-maps each output pixel in f64-planned math and filters in
+Media and nested comps default to `fit: contain`; clip `fit` overrides `output.fit`.
+Other modes are `cover` (uniform fill/crop), `none` (native pixels), and `stretch`
+(per-axis fill, with a distortion warning). Position is in output pixels (default:
+frame center); anchor is in native source pixels (default: source center); scale
+multiplies the fitted picture (uniform or `[x, y]`), rotation degrees clockwise. The transform node inverse-maps each output pixel in f64-planned math and filters in
 linear premultiplied space with a separable Catmull-Rom kernel (interpolating, so integer moves are exact
 copies), widened by the minification factor (up to 8x; beyond that it aliases). It is pixel-aspect aware
 and outputs only the transformed bounding box as its data window. Held poses reuse cached frames.
@@ -475,3 +478,12 @@ and outputs only the transformed bounding box as its data window. Held poses reu
   `ferrocut_types::FileManifest::digest()` into their `NodeHash`: `(relative path, blake3 of bytes)`
   per file, sorted, independent of discovery order and of where the project lives. Network fetches
   can't be hashed: such nodes must block them during renders.
+
+
+Media-placement migration: old mismatched media was stretched before its layer
+transform. Default contain now preserves aspect. `fit: stretch` restores framing
+but not old resampling bytes. Old explicit anchors/masks must convert from output
+to source coordinates; see the MCP timeline guide, “Placing media without distortion”.
+Equal-size media preserves the existing render path and cache keys. Base fit
+factors and stretch warnings appear in plan/render reports; `punch_in`, preview
+badges and transformed-source tracking are follow-up work.

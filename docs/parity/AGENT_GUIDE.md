@@ -228,3 +228,19 @@ Relative fonts survive relocation when the whole directory layout is preserved. 
 Keep verification evidence with each completed feature: exact operation or fixture, expected behavior, test/render outcome, and known limits. Passing unit tests establishes the behavior covered by those tests. Mark a parity item complete only when its acceptance criterion has been demonstrated at the intended scope.
 
 Implementation references: [MCP authoring guide](../../crates/ferrocut-mcp/docs/timeline-guide.md), [tool implementation](../../crates/ferrocut-mcp/src/lib.rs), [parameter registry](../../crates/ferrocut-engine/src/params.rs), [native text implementation](../../crates/ferrocut-engine/src/text.rs), [typography tests](../../crates/ferrocut-engine/tests/text.rs), and [full timeline text regressions](../../crates/ferrocut-engine/tests/native_text_timeline.rs). The latter exercises normal edit/compile/render paths, source-time split/trim/retime, timeline-key conversion, font content keys, relocation, atomic failures and undo.
+
+
+## Media placement
+
+Media and comp clips use `fit: contain` by default, showing the whole native
+picture without stretching. Clip `fit` overrides `output.fit`; `cover` fills and
+crops, `none` keeps native pixels, and `stretch` deliberately changes aspect.
+Use `set_param` for either field (`null` restores inheritance/default). Probe
+source dimensions before setting `transform.anchor` in source pixels. Position
+is in output pixels and scale multiplies the fit. Masks and clip effects use
+source pixels; generator geometry and track effects use output pixels.
+
+Check `plan.placements`/render reports for exact base fit factors and stretch
+warnings. They do not describe transformed bounds. The first placement slice
+has no `punch_in` op or preview badges. See the timeline guide's placement section
+for old-project migration and the explicit-anchor expression limitation.

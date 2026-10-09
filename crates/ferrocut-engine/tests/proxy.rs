@@ -96,6 +96,41 @@ const TL: &str = r#"{
     { "id": "m", "source": "gone.wav", "start": "0", "source_in": "0", "duration": "1" } ] } ]
 }"#;
 
+#[test]
+fn odd_dimension_proxy_placement_uses_the_original_canvas() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("odd.mkv");
+    synth(&source, 641, 361, 2, 1);
+    let generated = proxy::generate(&source, false).unwrap();
+    assert_eq!((generated.width, generated.height), (322, 181));
+    let tl = Timeline::from_json(
+        &serde_json::json!({
+            "output":{"width":1920,"height":1080,"fps":24},
+            "tracks":[{"clips":[{"id":"odd","source":source,"start":0,"duration":"1/12"}]}]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let final_graph = compile(&tl).unwrap();
+    let (draft_graph, used) = compile_proxies(&tl).unwrap();
+    assert_eq!(used, [generated.proxy]);
+    let final_placement = &final_graph.placements[0];
+    assert_eq!(final_placement.native, (641, 361));
+    assert_eq!(final_placement.fit_scale, [Rational::new(1080, 361); 2]);
+    assert_eq!(
+        serde_json::to_value(&draft_graph.placements).unwrap(),
+        serde_json::to_value(&final_graph.placements).unwrap()
+    );
+    assert_ne!(
+        draft_graph
+            .graph
+            .frame_key(draft_graph.output, RationalTime::ZERO),
+        final_graph
+            .graph
+            .frame_key(final_graph.output, RationalTime::ZERO)
+    );
+}
+
 const COMP: &str = r#"{
   "output": { "width": 512, "height": 256, "fps": "24", "gop": 12 },
   "tracks": [ { "name": "V1", "clips": [
@@ -106,7 +141,7 @@ const COMP: &str = r#"{
 fn sources_status_and_draft_vs_final_renders() {
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
-    synth(&d.join("big.mkv"), 512, 256, 30, 3);
+    synth(&d.join("big.mkv"), 256, 128, 30, 3);
     synth(&d.join("other.mkv"), 512, 256, 18, 4);
     std::fs::write(d.join("comp.json"), COMP).unwrap();
     std::fs::write(d.join("tl.json"), TL).unwrap();
@@ -162,7 +197,12 @@ fn sources_status_and_draft_vs_final_renders() {
     });
 
     for s in &srcs {
-        assert_eq!(proxy::generate(s, false).unwrap().codec, "dnxhr_lb");
+        let codec = if s.ends_with("big.mkv") {
+            "ffv1"
+        } else {
+            "dnxhr_lb"
+        };
+        assert_eq!(proxy::generate(s, false).unwrap().codec, codec);
     }
     let st = proxy::media_status(&tl, true);
     assert!(

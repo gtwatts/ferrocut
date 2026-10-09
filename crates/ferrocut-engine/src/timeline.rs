@@ -268,6 +268,9 @@ pub struct OutputSpec {
     pub width: u32,
     pub height: u32,
     pub fps: FrameRate,
+    /// Default media/comp fit; absent means contain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<crate::placement::Fit>,
     /// Output GOP length in frames; every GOP is closed and starts with a keyframe.
     #[serde(default = "default_gop")]
     pub gop: u32,
@@ -329,6 +332,9 @@ pub struct Clip {
     /// Animated 2D layer transform (position/scale/rotation/anchor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<TransformSpec>,
+    /// Fit native source pixels before the transform; absent inherits output.fit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<crate::placement::Fit>,
     /// After Effects' 3D layer switch: the clip is a card in 3D space seen
     /// through the timeline camera, with z / X / Y rotation / orientation
     /// transform fields, depth-sorted against neighbouring 3D layers.
@@ -415,6 +421,10 @@ impl AudioClip {
 }
 
 impl Clip {
+    pub fn effective_fit(&self, output: &OutputSpec) -> crate::placement::Fit {
+        self.fit.or(output.fit).unwrap_or_default()
+    }
+
     pub fn end(&self) -> RationalTime {
         self.start + self.duration
     }
@@ -610,6 +620,11 @@ impl Timeline {
                 ensure!(
                     c.source_in >= RationalTime::ZERO,
                     "clip {}: source_in must be >= 0",
+                    c.id
+                );
+                ensure!(
+                    c.fit.is_none() || (!c.is_generator() && !c.adjustment),
+                    "clip {}: fit applies to media and nested-composition clips (generators and adjustment layers render at the frame size)",
                     c.id
                 );
                 match &c.generator {

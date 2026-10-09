@@ -20,9 +20,9 @@ Only OTIO JSON and FCP7 XML (`xmeml`) are connected. Upstream's EDL, FCPXML, AAF
 | Native overlapping dissolve ↔ adjacent clips plus transition | Tested | Tested |
 | Linked source sound | Retained once on independent native audio tracks | Same |
 | Overlapping sound, clip gain/pan automation, constant bus gain/pan, master gain | Tested; overlaps become additive lanes | Track/master mix loss reported; codec precision/rounding checked |
-| Resolved native JSON nests with matching canvas | Tested; generated native sibling documents on import | Same |
+| Resolved native JSON nests | Generated native sibling documents on import; placement respects the nested canvas | Same |
 
-The geometry bridge compensates for Ferrocut's source decode resizing to the output canvas and FilmCraft's source-pixel transforms. It maps anchor and per-axis scale using actual probed source dimensions. Square pixels are the validated boundary. Native keys are clip-local; upstream effect keys are source-time, so the adapter explicitly adds/removes source-in, including dissolve overlap restoration.
+The geometry bridge exports native-source anchors and folds Ferrocut's effective fit into FilmCraft scale. Imports use `fit: none`, or `contain` for `scaleToFrameSize`; that FCP7 flag still reports a loss because equivalence needs verification against a real Premiere export. Square pixels are the validated boundary. Native keys are clip-local; upstream effect keys are source-time, so the adapter explicitly adds/removes source-in, including dissolve overlap restoration.
 
 Dissolves require adjacent 1x media edits and available incoming handles. Native export uses `EndAtCut` to avoid introducing half-frame offsets. Import expands the outgoing and incoming ranges into native overlap. One-sided fades, unusual layouts, overlapping transition intervals, unavailable handles, and other transition types fail or produce explicit loss entries rather than silently becoming cuts.
 
@@ -56,7 +56,7 @@ Imported FilmCraft media extents can be expanded by the upstream reader to fit p
 
 `ImportOptions` supplies the input document base directory and zero-based top-level sequence index. Other top-level sequences are reported as loss. `ExportResult` returns bytes/report; `ImportResult` returns the native timeline, report and `NestedTimeline { filename, timeline }` siblings.
 
-The nested export resolver is called only for `.json` source paths and must return validated, path-resolved native compositions. An unresolved composition reports a gap/loss. Imported native composition filenames are generated single-component names `interchange-nest-{id}.json`; references to them are relative sibling names. Write those siblings next to the output native timeline, including references between nested siblings. Imported ordinary media resolves against the input document directory, independently of the output directory. Nest cycles and depth/count limits error; a foreign nested canvas differing from its parent reports loss and omits that clip.
+The nested export resolver is called only for `.json` source paths and must return validated, path-resolved native compositions. An unresolved composition reports a gap/loss. Imported native composition filenames are generated single-component names `interchange-nest-{id}.json`; references to them are relative sibling names. Write those siblings next to the output native timeline, including references between nested siblings. Imported ordinary media resolves against the input document directory, independently of the output directory. Nest cycles and depth/count limits error. A differing nested canvas is retained, with its native dimensions used for placement.
 
 ## Report and failure contract
 

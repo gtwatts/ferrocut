@@ -43,31 +43,31 @@
               "geometry": {
                 "type": "ellipse",
                 "center": [
-                  320,
-                  180
+                  160,
+                  90
                 ],
                 "radius": [
-                  310,
-                  147
+                  155,
+                  "147/2"
                 ]
               },
-              "feather": 12,
+              "feather": 6,
               "opacity": 1
             },
             {
               "geometry": {
                 "type": "ellipse",
                 "center": [
-                  510,
-                  250
+                  255,
+                  125
                 ],
                 "radius": [
-                  38,
-                  38
+                  19,
+                  19
                 ]
               },
               "mode": "subtract",
-              "feather": 4,
+              "feather": 2,
               "expansion": {
                 "keyframes": [
                   {
@@ -76,7 +76,7 @@
                   },
                   {
                     "t": 2,
-                    "v": 12
+                    "v": 6
                   }
                 ]
               }

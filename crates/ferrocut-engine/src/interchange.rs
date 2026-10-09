@@ -1192,10 +1192,6 @@ where
                 );
                 return Ok(None);
             };
-            ensure!(
-                inner.output.width == tl.output.width && inner.output.height == tl.output.height,
-                "nested composition canvas must match its parent for equivalent native rendering"
-            );
             self.stack.insert(path.clone());
             let id = self.sequence(&inner, depth + 1)?;
             self.stack.remove(&path);
@@ -1562,6 +1558,7 @@ where
                 self.transform(
                     &mut placed,
                     &clip.transform.clone().unwrap_or_default(),
+                    clip.effective_fit(&tl.output),
                     tl,
                     &clip.id,
                 )?;
@@ -1790,6 +1787,7 @@ where
         &mut self,
         clip: &mut fp::TrackItem,
         t: &TransformSpec,
+        fit: crate::placement::Fit,
         tl: &Timeline,
         location: &str,
     ) -> anyhow::Result<()> {
@@ -1797,6 +1795,13 @@ where
             .project
             .source_size(clip.item)
             .unwrap_or((tl.output.width, tl.output.height));
+        let factors = crate::placement::Placement {
+            native: (sw, sh),
+            output: (tl.output.width, tl.output.height),
+            fit,
+        }
+        .fit_scale()
+        .map(Rational::to_f64);
         let (w, h) = (f64::from(tl.output.width), f64::from(tl.output.height));
         let (sw, sh) = (f64::from(sw), f64::from(sh));
         if t.position_z.is_some()
@@ -1826,13 +1831,7 @@ where
         if let Some(a) = &t.anchor {
             fx.params.insert(
                 "anchor".into(),
-                export_point(
-                    a,
-                    clip.source_in,
-                    [sw / w, sh / h],
-                    &mut self.report,
-                    location,
-                )?,
+                export_point(a, clip.source_in, [1.0, 1.0], &mut self.report, location)?,
             );
         }
         let default = Animatable::Constant(Rational::ONE);
@@ -1841,14 +1840,14 @@ where
             Some(Scale::Xy([x, y])) => (x, y),
             None => (&default, &default),
         };
-        let uniform = sx == sy && (w / sw - h / sh).abs() < 1e-12;
+        let uniform = sx == sy && factors[0] == factors[1];
         if !uniform {
             fx.params.insert(
                 "scale_width".into(),
                 export_scalar(
                     sx,
                     clip.source_in,
-                    100.0 * w / sw,
+                    100.0 * factors[0],
                     &mut self.report,
                     location,
                 )?,
@@ -1859,7 +1858,7 @@ where
             export_scalar(
                 sy,
                 clip.source_in,
-                100.0 * h / sh,
+                100.0 * factors[1],
                 &mut self.report,
                 location,
             )?,
@@ -1952,10 +1951,7 @@ impl Importer<'_> {
                 Ok(Some((PathBuf::from(path), dimensions)))
             }
             fp::ItemKind::Sequence(seq) => {
-                if (seq.settings.width, seq.settings.height) != parent_size {
-                    self.report.loss("nested_canvas",location,"nested canvas differs from parent; clip omitted because native nested decode uses parent dimensions");
-                    return Ok(None);
-                }
+                let dimensions = (seq.settings.width, seq.settings.height);
                 ensure!(
                     !self.stack.contains(&item),
                     "nested sequence cycle at {}",
@@ -1965,7 +1961,7 @@ impl Importer<'_> {
                     let nested = self.sequence(item, depth + 1)?;
                     self.nested.insert(item, nested);
                 }
-                Ok(Some((nested_name(item), parent_size)))
+                Ok(Some((nested_name(item), dimensions)))
             }
             _ => {
                 self.report.loss(
@@ -2152,14 +2148,8 @@ impl Importer<'_> {
         let (w, h) = (f64::from(size.0), f64::from(size.1));
         let (sw, sh) = (f64::from(source_size.0), f64::from(source_size.1));
         if clip.scale_to_frame {
-            self.report.loss("scale_to_frame",location,"foreign scale-to-frame mode is not equivalent to native decode resizing; explicit motion retained");
+            self.report.loss("scale_to_frame",location,"scale-to-frame maps to contain; FCP7 semantics still need a real Premiere export check");
         }
-        // Native decoding stretches to output dimensions. Compensate the source-
-        // pixel coordinate system even when the foreign motion effect is absent.
-        out.scale = Some(Scale::Xy([
-            Animatable::Constant(numeric(sw / w, &mut self.report, location)?),
-            Animatable::Constant(numeric(sh / h, &mut self.report, location)?),
-        ]));
         if let Some(fx) = clip.effect("motion").filter(|fx| fx.enabled) {
             if let Some(p) = fx.param("position") {
                 out.position = Some(import_point(
@@ -2175,7 +2165,7 @@ impl Importer<'_> {
                 out.anchor = Some(import_point(
                     p,
                     clip.source_in,
-                    [w / sw, h / sh],
+                    [1.0, 1.0],
                     [sw / 2.0, sh / 2.0],
                     &mut self.report,
                     location,
@@ -2202,20 +2192,8 @@ impl Importer<'_> {
                     fx.param("scale_width").unwrap_or(sy)
                 };
                 out.scale = Some(Scale::Xy([
-                    import_scalar(
-                        sx,
-                        clip.source_in,
-                        0.01 * sw / w,
-                        &mut self.report,
-                        location,
-                    )?,
-                    import_scalar(
-                        sy,
-                        clip.source_in,
-                        0.01 * sh / h,
-                        &mut self.report,
-                        location,
-                    )?,
+                    import_scalar(sx, clip.source_in, 0.01, &mut self.report, location)?,
+                    import_scalar(sy, clip.source_in, 0.01, &mut self.report, location)?,
                 ]));
             }
             if let Some(p) = fx.param("rotation") {
@@ -2373,6 +2351,11 @@ impl Importer<'_> {
                     let mut native: Clip = serde_json::from_value(
                         serde_json::json!({"id":format!("video-{ti}-{}",c.id.0),"source":source,"start":from_tick(c.start)?,"source_in":from_tick(c.source_in)?,"duration":from_tick(c.duration)?}),
                     )?;
+                    native.fit = Some(if c.scale_to_frame {
+                        crate::placement::Fit::Contain
+                    } else {
+                        crate::placement::Fit::Native
+                    });
                     native.audio.mute = true;
                     native.markers = import_markers(&c.markers, &mut self.report, &location)?;
                     // Parameters are converted after overlap expansion below, since

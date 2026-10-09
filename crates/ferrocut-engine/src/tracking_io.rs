@@ -211,16 +211,12 @@ pub fn keyframe_ops(
         options.offset.iter().all(|v| v.to_f64().abs() <= 1e6),
         "tracking offset exceeds one million output pixels"
     );
-    let scale = [
-        Rational::try_new(
-            i128::from(tl.output.width),
-            i128::from(analysis.settings.width),
-        )?,
-        Rational::try_new(
-            i128::from(tl.output.height),
-            i128::from(analysis.settings.height),
-        )?,
-    ];
+    let placement = crate::placement::Placement {
+        native: (analysis.settings.width, analysis.settings.height),
+        output: (tl.output.width, tl.output.height),
+        fit: source.effective_fit(&tl.output),
+    };
+    let scale = placement.fit_scale();
     let mut keys: [Vec<Value>; 2] = [Vec::new(), Vec::new()];
     for (index, sample) in track.samples.iter().enumerate() {
         let source_local = sample
@@ -274,7 +270,9 @@ pub fn keyframe_ops(
     Ok(
         json!({"ops":operations,"mode":options.mode,"sample_count":keys[0].len(),
             "time_base":"target clip-local","sampled_frames_hash":analysis.sampled_frames_hash,
-            "semantics":"Position follows displacement from the supplied seed. Original decoded-source pixels scale to the timeline canvas. Apply through edit_apply for validation, undo, and cache invalidation.",
+            "semantics":"Position follows source-pixel displacement from the supplied seed, mapped through the untransformed source clip fit. Apply through edit_apply for validation, undo, and cache invalidation.",
+            "placement": {"fit":placement.fit,"native":placement.native,"output":placement.output,"fit_scale":scale},
+            "warnings":placement.warning(&source.id).into_iter().collect::<Vec<_>>(),
             "border_policy":if options.mode==KeyframeMode::Stabilize {"transparent exposed borders; no crop or synthetic fill"} else {"unchanged"}
         }),
     )

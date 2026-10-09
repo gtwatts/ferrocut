@@ -1,6 +1,6 @@
 //! GPU-free animated layer-mask coverage in layer-pixel coordinates.
-//! The working layer uses the timeline canvas resolution, before clip effects
-//! and its layer transform; animation uses source time.
+//! Media/comp layers use native source pixels; generators use output pixels.
+//! Masks run before clip effects, fit and the layer transform; animation uses source time.
 //!
 //! Calls the pinned EffectCraft path constructors/converter and FilmCraft's
 //! `MaskPath::flatten` and `MaskMode::{start,combine}`. The bounded scan-row

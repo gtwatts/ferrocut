@@ -155,6 +155,8 @@ pub enum EditOp {
     },
     AddClip {
         track: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fit: Option<crate::placement::Fit>,
         /// Media file or comp (omit for a generator clip).
         #[serde(default, skip_serializing_if = "path_is_empty")]
         source: PathBuf,
@@ -993,6 +995,7 @@ pub struct MediaFacts {
     pub duration: Option<RationalTime>,
     pub has_video: bool,
     pub has_audio: bool,
+    pub size: Option<(u32, u32)>,
 }
 
 /// Media length lookup with a cache; `probe` returns `None` if unknown.
@@ -1372,6 +1375,7 @@ fn apply_one(
         EditOp::Unnest { clip } => unnest(tl, clip, media)?,
         EditOp::AddClip {
             track,
+            fit,
             source,
             generator,
             id,
@@ -1390,6 +1394,7 @@ fn apply_one(
             *source_in,
             *duration,
             *adjustment,
+            *fit,
         )?,
         EditOp::AddTransition {
             clip,
@@ -1549,6 +1554,7 @@ fn apply_one(
             value,
         } => set_param(
             tl,
+            media,
             "set_param",
             clip.as_deref(),
             track.as_deref(),
@@ -1575,6 +1581,7 @@ fn apply_one(
             };
             set_param(
                 tl,
+                media,
                 "set_keyframes",
                 clip.as_deref(),
                 track.as_deref(),
@@ -1930,18 +1937,26 @@ fn edit_video_effects(
         clip.is_some() != track.is_some(),
         "{kind}: give a clip or a video track"
     );
-    let (mut change, refs) = set_param(tl, kind, clip, track, "effects", |_, cur| {
-        let mut fx: Vec<crate::fx::VideoEffectSpec> = match cur {
-            Some(v @ serde_json::Value::Array(_)) => serde_json::from_value(v.clone())?,
-            _ => Vec::new(),
-        };
-        f(&mut fx)?;
-        Ok(if fx.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::to_value(fx)?
-        })
-    })?;
+    let (mut change, refs) = set_param(
+        tl,
+        &mut MediaLengths::unbounded(),
+        kind,
+        clip,
+        track,
+        "effects",
+        |_, cur| {
+            let mut fx: Vec<crate::fx::VideoEffectSpec> = match cur {
+                Some(v @ serde_json::Value::Array(_)) => serde_json::from_value(v.clone())?,
+                _ => Vec::new(),
+            };
+            f(&mut fx)?;
+            Ok(if fx.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::to_value(fx)?
+            })
+        },
+    )?;
     change.kind = kind;
     Ok((change, refs))
 }
@@ -1963,18 +1978,26 @@ fn edit_effects(
     } else {
         "bus.effects"
     };
-    let (mut change, refs) = set_param(tl, kind, clip, track, name, |_, cur| {
-        let mut fx = match cur {
-            Some(serde_json::Value::Array(a)) => a.clone(),
-            _ => Vec::new(),
-        };
-        f(&mut fx)?;
-        Ok(if fx.is_empty() {
-            serde_json::Value::Null
-        } else {
-            serde_json::Value::Array(fx)
-        })
-    })?;
+    let (mut change, refs) = set_param(
+        tl,
+        &mut MediaLengths::unbounded(),
+        kind,
+        clip,
+        track,
+        name,
+        |_, cur| {
+            let mut fx = match cur {
+                Some(serde_json::Value::Array(a)) => a.clone(),
+                _ => Vec::new(),
+            };
+            f(&mut fx)?;
+            Ok(if fx.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::Value::Array(fx)
+            })
+        },
+    )?;
     change.kind = kind;
     Ok((change, refs))
 }
@@ -2042,6 +2065,7 @@ fn add_clip(
     source_in: Option<RationalTime>,
     duration: Option<RationalTime>,
     adjustment: bool,
+    fit: Option<crate::placement::Fit>,
 ) -> anyhow::Result<(Change, Vec<TrackRef>)> {
     let tr = track_by_name(tl, track).map_err(|e| {
         let names: Vec<&str> = tl.track_names().collect();
@@ -2175,6 +2199,10 @@ fn add_clip(
             }
         }
     };
+    ensure!(
+        fit.is_none() || matches!(tr, TrackRef::Video(_)),
+        "add_clip: fit applies to video clips only"
+    );
     match tr {
         TrackRef::Video(i) => tl.tracks[i].clips.push(Clip {
             id: id.clone(),
@@ -2185,6 +2213,7 @@ fn add_clip(
             duration,
             opacity: Animatable::constant(Rational::ONE),
             transform: None,
+            fit,
             three_d: false,
             motion_blur: false,
             transition_in: None,
@@ -2331,6 +2360,7 @@ fn add_transition(
 /// Shared by set_param / set_keyframes: `make(spec, current)` builds the new value.
 fn set_param(
     tl: &mut Timeline,
+    media: &mut MediaLengths<'_>,
     kind: &'static str,
     clip: Option<&str>,
     track: Option<&str>,
@@ -2389,6 +2419,30 @@ fn set_param(
     let cur = params::get_path(&obj, &path, comp);
     let before = cur.clone().unwrap_or(serde_json::Value::Null);
     let value = make(spec, cur.as_ref())?;
+    let frame = if spec.name == "transform.anchor"
+        && comp.is_some()
+        && params::get_path(&obj, &path, None).is_none()
+    {
+        let Some((TrackRef::Video(ti), Some(ci))) = tr else {
+            unreachable!("anchor is a video parameter")
+        };
+        let c = &tl.tracks[ti].clips[ci];
+        if c.is_generator() || media.placeholder {
+            // Path-only MCP preflight must not open media. The real edit
+            // repeats this step after all source paths have been checked.
+            frame
+        } else {
+            let size = if crate::comp::is_comp(&c.source) {
+                let inner = media.comp(&media.full(&c.source))?;
+                Some((inner.output.width, inner.output.height))
+            } else {
+                media.facts(&c.source)?.and_then(|f| f.size)
+            };
+            size.context(format!("{name}: the source size is needed to fill the other component; set both components, or enable probing / relink the media"))?
+        }
+    } else {
+        frame
+    };
     params::set_path(&mut obj, spec, comp, value.clone(), frame, &path)?;
     params::check_range_path(&obj, spec, &path)?;
     let bad = |e: serde_json::Error| anyhow!("{name}: invalid value {value}: {e}");
@@ -2870,6 +2924,15 @@ fn unnest(
     let inner = media
         .comp(&full)
         .with_context(|| format!("unnest: reading {}", full.display()))?;
+    ensure!(
+        c.fit.is_none()
+            && (inner.output.width, inner.output.height) == (tl.output.width, tl.output.height),
+        "unnest would change the picture; reset explicit fit and match the composition size first"
+    );
+    ensure!(
+        inner.output.fit.unwrap_or_default() == tl.output.fit.unwrap_or_default(),
+        "unnest would change the picture: inner and parent output.fit differ"
+    );
     ensure!(
         inner.audio_tracks.iter().all(|t| t.clips.is_empty()),
         "unnest: {} has audio tracks; unnesting those isn't supported yet",

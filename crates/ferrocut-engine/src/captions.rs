@@ -364,6 +364,7 @@ pub fn import_ops(
             source_in: None,
             duration: Some(c.end - c.start),
             adjustment: false,
+            fit: None,
         });
     }
     Ok(ops)

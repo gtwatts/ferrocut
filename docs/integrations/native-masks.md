@@ -58,7 +58,8 @@ The clip's `masks` property is an ordered array. For example:
 }
 ```
 
-Geometry uses working-layer pixels at the timeline canvas resolution, with +x
+Geometry uses native source pixels for media/comp clips and output pixels for
+generators, before fit and the layer transform, with +x
 right and +y down. It moves with the layer transform. All numeric leaves use
 exact rational **source-time** keyframes, including geometry controls, opacity,
 feather and expansion. Source in-points, speed, reverse playback and remaps

@@ -21,6 +21,6 @@
     "op": "set_param",
     "clip": "source",
     "param": "masks.0.feather",
-    "value": 6
+    "value": 3
   }
 ]

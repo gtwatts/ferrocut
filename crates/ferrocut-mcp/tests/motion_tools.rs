@@ -148,6 +148,38 @@ fn tracking_measurements_become_real_editable_keys_and_undo_restores_timeline() 
 }
 
 #[test]
+fn tracking_displacement_uses_fit_factors_for_mismatched_sources() {
+    let f = Fixture::new();
+    f.analyze();
+    let mut value: Value =
+        serde_json::from_slice(&std::fs::read(f.root.join("tl.json")).unwrap()).unwrap();
+    value["output"]["width"] = json!(192);
+    value["output"]["height"] = json!(192);
+    for (fit, factors, position) in [
+        ("contain", json!(["2", "2"]), [124.0, 110.0]),
+        ("none", json!(["1", "1"]), [110.0, 103.0]),
+        ("stretch", json!(["2", "3"]), [124.0, 117.0]),
+    ] {
+        value["tracks"][0]["clips"][0]["fit"] = json!(fit);
+        std::fs::write(f.root.join("tl.json"), value.to_string()).unwrap();
+        let planned = f.keys("attach").unwrap();
+        assert_eq!(planned["placement"]["fit_scale"], factors);
+        assert_eq!(
+            planned["warnings"].as_array().unwrap().is_empty(),
+            fit != "stretch"
+        );
+        for (axis, expected) in position.into_iter().enumerate() {
+            let keys = planned["ops"][axis]["keyframes"].as_array().unwrap();
+            let last: Rational = serde_json::from_value(keys.last().unwrap()["v"].clone()).unwrap();
+            assert!(
+                (last.to_f64() - expected).abs() < 0.01,
+                "{fit} axis {axis}: {last}"
+            );
+        }
+    }
+}
+
+#[test]
 fn analysis_io_is_guarded_strict_and_does_not_overwrite() {
     let f = Fixture::new();
     let outside = f._temp.path().join("outside.mkv");

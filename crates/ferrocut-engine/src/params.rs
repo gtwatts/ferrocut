@@ -56,6 +56,7 @@ const CA: [ParamSpec; 10] = clip_audio_params!();
 
 /// Parameters of a clip on a video track.
 pub const VIDEO_CLIP: &[ParamSpec] = &[
+    ParamSpec::choice("fit", &["contain", "cover", "none", "stretch"], "\"contain\"", "media/comp placement before the transform: contain (whole picture), cover (fills/crops), none (native pixels), stretch (changes aspect); absent inherits output.fit; null restores inheritance"),
     s(
         "opacity",
         ClipLocal,
@@ -76,8 +77,8 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
         "transform.anchor",
         ClipLocal,
         "px",
-        "[w/2, h/2]",
-        "pivot in source pixels [x, y] (default: frame center)",
+        "[sw/2, sh/2]",
+        "pivot in native source pixels [x, y] (default: source center); a component edit needs probed dimensions",
     )
     .with_kind(Vec2),
     s(
@@ -85,7 +86,7 @@ pub const VIDEO_CLIP: &[ParamSpec] = &[
         ClipLocal,
         "",
         "1",
-        "scale factor: uniform, or [x, y] per axis (1 = 100 %)",
+        "scale relative to the fitted picture: uniform or [x, y]; 1 = fit, or native pixels with fit none",
     )
     .with_kind(ScalarOrVec2),
     s(
@@ -382,6 +383,7 @@ pub const TRACK: &[ParamSpec] = &[
 
 /// Timeline-level parameters.
 pub const TIMELINE: &[ParamSpec] = &[
+    ParamSpec::choice("output.fit", &["contain", "cover", "none", "stretch"], "\"contain\"", "default placement of media/comp clips without fit; null restores contain"),
     s(
         "audio.master_gain_db",
         Tl,
@@ -955,6 +957,7 @@ fn check_value_shape(spec: &ParamSpec, comp: Option<usize>, v: &Value) -> anyhow
             || (v.is_object() && (v.get("keyframes").is_some() || v.get("expression").is_some()))
     };
     let ok = match (spec.kind, comp) {
+        (_, None) if v.is_null() => true,
         // Optional animatables (default null, e.g. time_remap): null removes.
         (Scalar | Vec2, _) if v.is_null() && spec.default == "null" => true,
         (Choice, _) => v.is_string(),

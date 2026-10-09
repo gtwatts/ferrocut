@@ -184,6 +184,7 @@ pub fn clip() -> Value {
             "duration": rational("clip length in seconds (> 0)"),
             "opacity": animatable("0..1, default 1"),
             "transform": transform(),
+            "fit": fit(),
             "three_d": three_d(),
             "motion_blur": clip_motion_blur(),
             "transition_in": {
@@ -619,6 +620,7 @@ pub fn edit_op() -> Value {
             json!({
                 "track": { "type": "string", "minLength": 1, "description": "track name" },
                 "source": path("media path or nested timeline (.json), relative to the timeline file's directory (or absolute, inside the project root)"),
+                "fit": fit(),
                 "generator": generator(),
                 "id": { "type": "string", "minLength": 1, "description": "clip id (unique)" },
                 "start": rational("timeline time of the clip's first frame"),
@@ -920,16 +922,20 @@ pub fn quality_check() -> Value {
 // ---------------------------------------------------------------------------
 // The timeline file format (docs://timeline/schema.json, timeline_schema).
 
+fn fit() -> Value {
+    json!({"enum": ["contain", "cover", "none", "stretch"], "description": "Media/comp placement before the transform. contain: uniform whole picture (default); cover: uniform fill/crop; none: native pixels centered; stretch: per-axis fill, changes aspect. Clip omission inherits output.fit. Generators and adjustments cannot set fit."})
+}
+
 fn transform() -> Value {
     let pair =
         |d: &str| json!({ "type": "array", "minItems": 2, "maxItems": 2, "items": animatable(d) });
     json!({
-        "description": "Layer transform (After Effects convention); key times clip-local. Defaults are the identity: position and anchor at the frame center, scale 1, rotation 0. position_z, anchor_z, rotation_x, rotation_y and orientation need the clip's three_d switch.",
+        "description": "Layer transform (After Effects convention); key times clip-local. Defaults center the fitted picture: anchor at native source center, position at output center, scale 1 relative to fit, rotation 0. position_z, anchor_z, rotation_x, rotation_y and orientation need the clip's three_d switch.",
         "type": "object",
         "properties": {
             "position": pair("output pixels [x, y] where the anchor lands"),
-            "anchor": pair("source pixels [x, y] of the pivot"),
-            "scale": { "anyOf": [ animatable("uniform scale factor (1 = 100 %)"), pair("per-axis scale [x, y]") ] },
+            "anchor": pair("native source pixels [x, y] of the pivot; use media_probe width/height"),
+            "scale": { "anyOf": [ animatable("scale relative to fit (1 = the fitted picture)"), pair("per-axis scale [x, y]") ] },
             "rotation": animatable("degrees, clockwise (the Z rotation of a 3D layer)"),
             "position_z": animatable("3D layers: depth of the position, pixels, positive = away from the viewer (default 0)"),
             "anchor_z": animatable("3D layers: depth of the anchor point, pixels (default 0)"),
@@ -1047,6 +1053,7 @@ fn video_clip() -> Value {
             "duration": rational("length in seconds, > 0; source_in + duration must not exceed the media"),
             "opacity": animatable("0..1, default 1; keyframes clip-local"),
             "transform": transform(),
+            "fit": fit(),
             "three_d": three_d(),
             "motion_blur": clip_motion_blur(),
             "transition_in": {
@@ -1113,6 +1120,7 @@ pub fn timeline() -> Value {
                     "width": { "type": "integer", "minimum": 1 },
                     "height": { "type": "integer", "minimum": 1 },
                     "fps": rational("frames per second, e.g. 24 or \"30000/1001\""),
+                    "fit": fit(),
                     "gop": { "type": "integer", "minimum": 1, "default": 24, "description": "frames per closed GOP" },
                     "gops_per_chunk": { "type": "integer", "minimum": 1, "default": 1, "description": "render chunk size in GOPs" },
                     "duration": { "anyOf": [ { "type": "null" }, rational("explicit output length (default: end of the last clip)") ] }

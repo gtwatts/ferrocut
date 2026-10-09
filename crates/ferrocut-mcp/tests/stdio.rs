@@ -193,6 +193,10 @@ async fn stdio_server_end_to_end() {
         assert!(!err, "{r1}");
         assert_eq!(r1["chunks"]["total"], 12);
         assert_eq!(r1["chunks"]["rendered"], 12);
+        assert_eq!(r1["placements"].as_array().unwrap().len(), 3);
+        assert_eq!(r1["placements"][0]["fit"], "contain");
+        assert_eq!(r1["placements"][0]["native"], json!([64, 32]));
+        assert_eq!(r1["warnings"], json!([]));
         let report = r1["report_path"].as_str().unwrap().to_string();
         assert!(Path::new(&report).exists());
         let (err, r2) = call(&client, "render", render(false)).await;

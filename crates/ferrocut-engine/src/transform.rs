@@ -2,10 +2,12 @@
 //!
 //! A source pixel `s` lands at `d = position + A·(s − anchor)` where, in square
 //! (pixel-aspect corrected) units, `A = P⁻¹·R(rotation)·S(scale)·P` and
-//! `P = diag(pixel_aspect, 1)`. Coordinates are display-window pixels with
+//! `P = diag(pixel_aspect, 1)`. Placement folds the rational fit factors into
+//! scale before this planner. Anchor is in native source pixels and position
+//! is in output pixels. Coordinates are pixel edges with
 //! pixel `i` spanning `[i, i+1)`. Rotation is in degrees, clockwise on screen
 //! (y down); scale is a factor (1 = 100 %). Defaults: anchor and position at
-//! the frame center, scale 1, rotation 0, which is the identity.
+//! their respective source/output centers, scale 1 relative to fit, rotation 0.
 //!
 //! The GPU kernel (`shaders/transform.wgsl`) inverse-maps every destination
 //! pixel center and filters the source with a separable Catmull-Rom
@@ -51,10 +53,10 @@ pub struct TransformSpec {
     /// Where the anchor lands, display pixels. Default: frame center.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<[Animatable; 2]>,
-    /// Pivot in source pixels. Default: frame center.
+    /// Pivot in native source pixels. Default: source center.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor: Option<[Animatable; 2]>,
-    /// Scale factor. Default 1.
+    /// Scale relative to the fitted picture. Default 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<Scale>,
     /// Degrees, clockwise. Default 0. On a 3D layer this is the Z rotation.
@@ -181,6 +183,8 @@ impl Affine {
 /// Everything the kernel needs, derived from a forward map.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KernelSetup {
+    /// Destination display dimensions, independent of source dimensions.
+    pub display: (u32, u32),
     /// Destination pixel -> source pixel.
     pub inverse: Affine,
     /// Kernel scale along the (reduced) source x / y (>= 1 when minifying).
@@ -254,6 +258,7 @@ pub fn plan(fwd: &Affine, src_window: PixelRect, width: u32, height: u32) -> Opt
         PixelRect::new(0, 0, 1, 1)
     };
     Some(KernelSetup {
+        display: (width, height),
         inverse: inv,
         filter_scale,
         radius,

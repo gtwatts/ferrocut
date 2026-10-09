@@ -510,6 +510,7 @@ pub fn diff(a: &Timeline, b: &Timeline) -> TimelineDiff {
                 let reordered = !track_changed && x.index != y.index && fields.is_empty();
                 for (root, tag) in [
                     ("source", "source_changed"),
+                    ("fit", "fit_changed"),
                     ("opacity", "opacity_changed"),
                     ("transform", "transform_changed"),
                     ("generator", "generator_changed"),
