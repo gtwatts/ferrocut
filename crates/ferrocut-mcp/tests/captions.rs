@@ -91,10 +91,11 @@ fn imports_gap_free_cues_with_a_report_through_the_journal() {
     let cues = captions::from_track(&tl, "Captions").unwrap();
     assert!(blank_frames(&cues, tl.output.fps).is_empty());
     assert_eq!(cues[0].end, RationalTime::new(73, 30));
-    // Fonts stay as given: relative to the timeline.
-    let clip = serde_json::to_value(&tl.tracks[1].clips[0]).unwrap();
+    // The saved file keeps fonts as given: relative to the timeline.
+    let saved: Value =
+        serde_json::from_slice(&std::fs::read(f.root.join("tl.json")).unwrap()).unwrap();
     assert_eq!(
-        clip["generator"]["text"]["font"],
+        saved["tracks"][1]["clips"][0]["generator"]["text"]["font"],
         json!("fonts/caption.ttf")
     );
 

@@ -414,10 +414,13 @@ fn displayed(start: RationalTime, end: RationalTime, fps: ferrocut_core::FrameRa
 }
 
 /// Fit cue times to the frame grid at `fps` as `timing` asks. `program_end`
-/// bounds extensions of the last cue (the program is not lengthened). The
-/// input cues are not modified; the result never overlaps and never drops a
-/// cue. A cue that shows no frame at all gets one when `snap` is on (warned)
-/// and is an error when there is no room for it.
+/// is the timeline's current end: with the cues imported exactly, the
+/// program ends at the later of it and the last cue's end, and nothing here
+/// adds a frame past that (a snapped end may pass it within its last frame).
+/// The input cues are not modified; the result never overlaps and never
+/// drops a cue. A cue that shows no frame at all gets one when `snap` is on
+/// (warned) and is an error when the next cue or the program end leaves no
+/// room for it.
 pub fn retime(
     cues: &[CaptionCue],
     fps: ferrocut_core::FrameRate,
@@ -435,6 +438,9 @@ pub fn retime(
         );
     }
     let frame = RationalTime::from_frames(1, fps);
+    // Program end and frame count with the cues as given.
+    let end_exact = cues.last().map_or(program_end, |c| program_end.max(c.end));
+    let frames_end = end_exact.frame_ceil(fps);
     let snap = |t: RationalTime| {
         if timing.snap {
             RationalTime::from_frames(t.frame_ceil(fps), fps)
@@ -475,6 +481,14 @@ pub fn retime(
             cues[i].end,
             fps
         );
+        ensure!(
+            next.is_some() || first < frames_end,
+            "cue {} [{}, {}) shows no frame at {} fps and the program ends before frame {first} ({frames_end} frames); retime it, lengthen the program, or import with exact timing",
+            out[i].id,
+            cues[i].start,
+            cues[i].end,
+            fps
+        );
         out[i].end = end;
         reasons[i].push("one_frame");
         warnings.push(format!(
@@ -496,9 +510,10 @@ pub fn retime(
             if out[i].end - out[i].start >= min {
                 continue;
             }
+            // The last cue may run to the end of the program's last frame.
             let limit = out
                 .get(i + 1)
-                .map_or(program_end.max(out[i].end), |n| n.start);
+                .map_or(snap(end_exact).max(out[i].end), |n| n.start);
             let end = snap(out[i].start + min).min(limit);
             if end > out[i].end {
                 out[i].end = end;
