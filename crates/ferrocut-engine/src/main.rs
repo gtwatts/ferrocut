@@ -1232,7 +1232,12 @@ fn main() -> anyhow::Result<()> {
                 );
                 if let (Some(m), Some(t)) = (&a.output, a.analysis.target_lufs) {
                     println!(
-                        "loudness: {:.2} LUFS (target {t}), true peak {:.2} dBTP | gain {:+.2} dB, limiter max {:.2} dB, {} passes",
+                        "loudness{}: {:.2} LUFS (target {t}), true peak {:.2} dBTP | gain {:+.2} dB, limiter max {:.2} dB, {} passes",
+                        if a.measurement_scope.is_some() {
+                            " (full program, not this excerpt)"
+                        } else {
+                            ""
+                        },
                         m.integrated_lufs,
                         m.true_peak_dbtp,
                         a.analysis.norm_gain_db,

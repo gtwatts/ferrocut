@@ -47,6 +47,13 @@ fn bad_ranges_are_refused_before_rendering() {
         json!({ "range": { "frames": [0, 2], "time": ["0", "1"] } }),
     );
     assert!(e.contains("exactly one"), "{e}");
+    let e = refused(&cx, json!({ "range": { "time": ["-1/100", "1"] } }));
+    assert!(e.contains("negative"), "{e}");
+    let e = refused(
+        &cx,
+        json!({ "range": { "time": ["0", "9223372036854775807"] } }),
+    );
+    assert!(e.contains("out of range"), "{e}");
     let e = refused(&cx, json!({ "range": { "time": ["1/100", "2/100"] } }));
     assert!(e.contains("no frame start"), "{e}");
     let e = refused(&cx, json!({ "range": { "frames": [0, 2] }, "check": true }));

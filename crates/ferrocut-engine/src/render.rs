@@ -211,9 +211,21 @@ impl FrameRange {
         t1: RationalTime,
         fps: ferrocut_core::FrameRate,
     ) -> anyhow::Result<FrameRange> {
+        // Validated as rationals before any integer conversion: a negative
+        // start would otherwise ceil to frame 0, and an unchecked multiply
+        // could overflow on a huge time.
+        anyhow::ensure!(
+            t0.seconds() >= ferrocut_core::Rational::ZERO,
+            "time range start {t0} is negative"
+        );
         anyhow::ensure!(t1 > t0, "time range {t0}..{t1} is empty or reversed");
-        let start = (t0.seconds() * fps).ceil();
-        let end = (t1.seconds() * fps).ceil();
+        let frame = |t: RationalTime| -> anyhow::Result<i64> {
+            t.seconds()
+                .checked_mul(fps)
+                .map(|r| r.ceil())
+                .map_err(|e| anyhow::anyhow!("time {t} at {fps} fps is out of range ({e})"))
+        };
+        let (start, end) = (frame(t0)?, frame(t1)?);
         anyhow::ensure!(
             end > start,
             "time range {t0}..{t1} contains no frame start at {fps} fps"
@@ -1158,6 +1170,10 @@ pub fn render(
                 samples: (frame_sample(tl, span.end).min(a.program.total)
                     - s_start.min(a.program.total))
                 .max(0),
+                // A range file is a cut of the full program's mastered mix:
+                // `output` and `analysis` were measured on the whole program,
+                // not on this excerpt (which is not re-measured).
+                measurement_scope: range.map(|_| "full_program"),
                 output: Some(a.output),
                 cache: a.cache,
                 sources: a.info,

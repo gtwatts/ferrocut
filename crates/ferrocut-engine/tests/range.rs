@@ -45,6 +45,12 @@ fn frame_and_time_ranges_are_half_open_and_exact() {
     }
     // An interval holding no frame start is refused, not rounded to one.
     assert!(FrameRange::parse("1/100..2/100", true, ntsc).is_err());
+    // A negative start is refused before conversion (it would ceil to 0).
+    let e = FrameRange::parse("-1/100..1", true, ntsc).unwrap_err();
+    assert!(format!("{e:#}").contains("negative"), "{e:#}");
+    // A huge time is a normal error, not an arithmetic overflow panic.
+    let e = FrameRange::parse("0..9223372036854775807", true, ntsc).unwrap_err();
+    assert!(format!("{e:#}").contains("out of range"), "{e:#}");
     assert!(FrameRange::frames(0, 10).unwrap().check(9).is_err());
     assert!(FrameRange::frames(0, 9).unwrap().check(9).is_ok());
 }
@@ -155,15 +161,18 @@ fn read_pcm(path: &Path) -> Vec<f32> {
 #[test]
 fn range_master_equals_the_same_frames_and_samples_of_the_full_master() {
     let Some(gpu) = gpu_or_skip() else { return };
+    eprintln!("adapter: {}", gpu.get().describe());
     let dir = tempfile::tempdir().unwrap();
     let d = dir.path();
     av_source(d, 3 * 24);
-    // 23.976 fps (non-integer samples per frame), 12-frame chunks.
+    // 29.97 fps: 48000 / (30000/1001) = 8008/5 = 1601.6 samples per frame, so
+    // frame starts fall between samples and the offset feed must keep the
+    // engine's per-frame sample rounding. 12-frame chunks.
     let tl_path = d.join("tl.json");
     std::fs::write(
         &tl_path,
         format!(
-            r#"{{ "output": {{ "width": {W}, "height": {H}, "fps": "24000/1001", "gop": 6, "gops_per_chunk": 2 }},
+            r#"{{ "output": {{ "width": {W}, "height": {H}, "fps": "30000/1001", "gop": 6, "gops_per_chunk": 2 }},
                  "tracks": [ {{ "name": "V1", "clips": [
                    {{ "id": "a", "source": "src.mkv", "start": 0, "duration": "2" }} ]}}] }}"#
         ),
@@ -243,6 +252,25 @@ fn range_master_equals_the_same_frames_and_samples_of_the_full_master() {
 
     // PCM: exactly program samples [fs(17), fs(41)), no re-mastering.
     let (s0, s1) = (frame_sample(&tl, 17), frame_sample(&tl, 41));
+    // Genuinely fractional: 17 and 41 frames are not whole sample counts.
+    assert_ne!((17 * 8008) % 5, 0);
+    assert_ne!((41 * 8008) % 5, 0);
+    assert_eq!(
+        (s0, s1),
+        (27_227, 65_666),
+        "round(17 * 1601.6), round(41 * 1601.6)"
+    );
+    // Each chunk's output samples are the program samples shifted by s0.
+    for c in &part.chunks {
+        let src = c.plan.source_start_frame.unwrap();
+        assert_eq!(
+            c.audio_samples,
+            Some([
+                frame_sample(&tl, src) - s0,
+                frame_sample(&tl, src + c.plan.frames) - s0
+            ])
+        );
+    }
     assert_eq!(rr.source_samples, Some([s0, s1]));
     assert_eq!(rr.output_samples, Some([0, s1 - s0]));
     let pf = read_pcm(&d.join("full.mkv"));
@@ -250,6 +278,12 @@ fn range_master_equals_the_same_frames_and_samples_of_the_full_master() {
     assert_eq!(pp.len() as i64, (s1 - s0) * 2);
     assert_eq!(pp, pf[(s0 * 2) as usize..(s1 * 2) as usize]);
     assert_eq!(part.audio.as_ref().unwrap().samples, s1 - s0);
+    // The loudness/analysis in a range report are the full program's.
+    assert_eq!(
+        part.audio.as_ref().unwrap().measurement_scope,
+        Some("full_program")
+    );
+    assert_eq!(full.audio.as_ref().unwrap().measurement_scope, None);
 
     // Out of bounds is refused before rendering.
     let err = render(

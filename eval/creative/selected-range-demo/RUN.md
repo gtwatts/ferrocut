@@ -19,8 +19,9 @@ written to a new `out/selected-range-demo/` directory.
    - Expect chunks [30,48) and [96,110) RENDERED, and [48,72) and [72,96) reused, with the same keys as full's chunks 2 and 3.
 4. The same range given as rational time: `--range-time 1001/800..4.6` gives [30,111). Its report must show the time-to-frame rule.
 5. Caption sidecar: `$F captions export .../project.json --track Captions -o .../part.srt --range-frames 30..110`.
-   - Expect "Straddles the range start" at 0 → 0.44875 s (1.7 − 1.25125).
-   - Expect "Straddles the range end" from 2.94875 s to the file end.
+   - Step 2 imports with the default frame snapping, so cue edges sit on frame starts. The 1.7 s end snaps to frame 41 and the 4.2 s start to frame 101; frame 30 becomes 0.
+   - Expect "Straddles the range start" from 0 to (41 − 30) · 1001/24000 = 11011/24000 s ≈ 0.458792 s (SRT 00:00:00,459).
+   - Expect "Straddles the range end" from (101 − 30) · 1001/24000 = 71071/24000 s ≈ 2.961292 s (SRT 00:00:02,961) to the file end, 80 · 1001/24000 = 80080/24000 s ≈ 3.336667 s (00:00:03,337).
 6. Identity and time matching through existing outputs (MCP):
    - `artifact_frames {path: part.mkv, frames: [0,1,79,-1]}` and `artifact_frames {path: full.mkv, frames: [30,31,109]}`. Pixel PNG blake3s must match pairwise.
    - `preview_frames {timeline: project.json, frames: [30,31,109], each: true}` gives the native-render side. The same frames' PNG hashes must equal the decoded FFV1 frames.

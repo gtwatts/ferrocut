@@ -1330,6 +1330,10 @@ pub fn summarize(report: &Value) -> Value {
         "placements": report.get("placements").cloned().unwrap_or_else(|| json!([])),
         "warnings": report.get("warnings").cloned().unwrap_or_else(|| json!([])),
     });
+    // Range renders: `loudness` is the full program's, not the excerpt's.
+    if let Some(scope) = audio.get("measurement_scope") {
+        s["loudness_scope"] = scope.clone();
+    }
     if let Some(p) = report.get("proxies") {
         s["draft"] = json!(true);
         s["proxies"] = p.clone();
