@@ -59,6 +59,8 @@ pub const ENV: &str = "FERROCUT_PERCEIVE";
 /// The check report schema this engine reads.
 pub const SCHEMA_VERSION: &str = "ferrocut.perceive.check/1";
 
+pub use ferrocut_perceive::input::{CheckPaths, ChunkDirResolution, ChunkDirSource, check_paths};
+
 /// Problem reason codes; codes added later are kept as `Other`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
