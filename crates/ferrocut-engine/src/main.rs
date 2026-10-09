@@ -342,7 +342,9 @@ enum TrackingCmd {
 enum CaptionCmd {
     /// Import cues through normal atomic edits and undo journal. Fonts are
     /// resolved relative to the style JSON file and stored relative to the
-    /// timeline when inside its directory (else absolute, with a note).
+    /// timeline when their real (symlink-resolved) file is inside its
+    /// directory; others are stored absolute and reported as not portable
+    /// (`nonportable_fonts`). A missing font is an error.
     /// Overlaps need separate tracks.
     Import {
         timeline: PathBuf,
@@ -581,7 +583,7 @@ fn main() -> anyhow::Result<()> {
                     )?;
                     for f in &outside {
                         eprintln!(
-                            "note: font {} is outside the timeline's directory, so it is stored as an absolute path; copy it into the project to keep the project portable",
+                            "note: font {} is outside the timeline's directory, so it is stored as an absolute path and the project is not portable; copy it into the project",
                             f.display()
                         );
                     }
@@ -620,6 +622,7 @@ fn main() -> anyhow::Result<()> {
                         )?;
                         let mut v = serde_json::to_value(&outcome)?;
                         v["caption_timing"] = serde_json::to_value(&report)?;
+                        v["nonportable_fonts"] = serde_json::to_value(&outside)?;
                         println!("{}", serde_json::to_string_pretty(&v)?);
                     }
                 }
