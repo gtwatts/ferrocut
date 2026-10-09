@@ -116,7 +116,7 @@ fn the_render_recorded_target_and_ceiling_are_the_default() {
     let (p, w) = grade_audio(Some(&master(Some(-16.0), Some(-1.51))), &[], 48, fps(), &r);
     assert!(p.is_empty(), "{p:?}");
     assert!(w.is_empty());
-    let old = Resolved::defaults(Default::default());
+    let old = Resolved::defaults(ferrocut_perceive::CheckThresholds::default());
     let (p, _) = grade_audio(
         Some(&master(Some(-16.0), Some(-1.51))),
         &[],
@@ -134,7 +134,8 @@ fn the_render_recorded_target_and_ceiling_are_the_default() {
         Render
     );
     let (p, _) = grade_audio(Some(&master(Some(-16.0), Some(-1.2))), &[], 48, fps(), &old);
-    assert!(p.is_empty(), "the old default passed it: {p:?}");
+    // The old -1 dBTP default lets -1.2 through (only the loudness fails).
+    assert_eq!(reasons(&p), [reason::LOUDNESS_OFF_TARGET], "{p:?}");
 }
 
 #[test]
