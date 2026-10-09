@@ -146,6 +146,11 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
 - **Decode.** FFmpeg decode + swresample to the project rate (default 48 kHz) as f32 planar, mono kept
   mono, >2 channels downmixed to stereo. Source time 0 is the video stream's start (A/V files) so linked
   audio lines up with the decoder's frames. Mono pans with constant power (-3 dB center), stereo with balance.
+  Audio-only sources use their audio stream's start. The decoder receives the stream packet timebase
+  before opening, so automatic priming removal advances retained-sample timestamps before source-origin
+  alignment. Audio decode cache version 2 invalidates older decoded sources and dependent mixes once;
+  video chunk keys are unchanged. Public regression and validation status:
+  [audio-origin evaluation](docs/evaluations/2026-10-09-audio-origin-regression.md).
 - **Sample-exact placement.** Every position is `RationalTime -> sample` with the same rounding as the video
   side (nearest, halves away from zero). Chunk `[f0, f1)` gets samples `[S(f0/fps), S(f1/fps))`, and the master
   carries one PCM packet per video frame `[S(i), S(i+1))`, so 48000/23.976 = 2002.002 samples/frame

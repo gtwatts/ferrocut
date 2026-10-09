@@ -24,7 +24,8 @@ use ffmpeg_next::{ChannelLayout, codec, format, frame, media};
 use super::{init, to_core};
 
 /// Part of the audio cache keys: bump when decoding/resampling changes.
-pub const AUDIO_DECODE_VERSION: &str = "audio-decode.v1:swr-default:f32p:mono-or-stereo";
+pub const AUDIO_DECODE_VERSION: &str =
+    "audio-decode.v2:pkt-timebase:swr-default:f32p:mono-or-stereo";
 
 #[derive(Clone, Debug)]
 pub struct DecodedAudio {
@@ -97,7 +98,11 @@ impl AudioStream {
             kind: codec::threading::Type::None,
             count: 1,
         });
-        let dec = cctx.decoder().audio().context("opening audio decoder")?;
+        let mut decoder = cctx.decoder();
+        // Automatic priming removal must advance the retained frame's PTS in
+        // packet units, or origin alignment below drops those samples again.
+        decoder.set_packet_time_base(ist.time_base());
+        let dec = decoder.audio().context("opening audio decoder")?;
         let codec_name = dec
             .codec()
             .map(|c| c.name().to_string())

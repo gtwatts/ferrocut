@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Import public synthetic inputs from the completed, pinned audio-origin experiment.
 
-Preparation only: this adapter has not been executed. It invokes no codec or
-subprocess. It refuses incomplete/changed evidence and existing output folders.
+This copy-only adapter invokes no codec or subprocess. It refuses
+incomplete/changed evidence and existing output folders.
 Import is provenance conversion, never a mechanism or repair acceptance verdict.
 """
 
