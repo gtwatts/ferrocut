@@ -265,30 +265,37 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
     let media_hash = blake3_file(media)?;
     let p = plan(&media_hash, opts);
     let path = index_path(media, &p.key);
-    if !opts.force
-        && let Ok(text) = std::fs::read_to_string(&path)
-        && let Ok(mut ix) = serde_json::from_str::<MediaIndex>(&text)
-        && ix.key == p.key
-    {
-        // This key means whisper or its model is missing now. Report why as
-        // of now (the CLI may have been fixed but not the model), never a
-        // reason saved by an earlier run.
-        if let Some(err) = &p.whisper_err
-            && ix.media.has_audio
-            && matches!(ix.transcript, Part::Unavailable { .. })
-        {
-            ix.transcript = Part::Unavailable {
-                reason: err.clone(),
-            };
+    let cached = (!opts.force)
+        .then(|| std::fs::read_to_string(&path).ok())
+        .flatten()
+        .and_then(|text| serde_json::from_str::<MediaIndex>(&text).ok())
+        .filter(|ix| ix.key == p.key);
+    // Shots of a cached index rebuilt only to retry its transcript.
+    let mut keep_shots = None;
+    if let Some(mut ix) = cached {
+        let unavailable = ix.media.has_audio && matches!(ix.transcript, Part::Unavailable { .. });
+        if unavailable && p.whisper.is_some() && !opts.cached_only {
+            // Written before transcription errors stopped being cached: an
+            // unavailable transcript under a key whose whisper and model
+            // exist. Retry it, keeping the shots.
+            keep_shots = Some(ix.shots);
+        } else {
+            // A missing whisper or model: report why as of now (the CLI may
+            // have been fixed but not the model), not a saved reason.
+            if unavailable && let Some(err) = &p.whisper_err {
+                ix.transcript = Part::Unavailable {
+                    reason: err.clone(),
+                };
+            }
+            return Ok((
+                ix,
+                IndexInfo {
+                    index_path: path,
+                    cached: true,
+                    elapsed_ms: t0.elapsed().as_millis(),
+                },
+            ));
         }
-        return Ok((
-            ix,
-            IndexInfo {
-                index_path: path,
-                cached: true,
-                elapsed_ms: t0.elapsed().as_millis(),
-            },
-        ));
     }
     if opts.cached_only {
         bail!(
@@ -319,7 +326,9 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
             reason: p.whisper_err.clone().unwrap_or_default(),
         }
     };
-    let shots = if !opts.shots {
+    let shots = if let Some(s) = keep_shots {
+        s
+    } else if !opts.shots {
         Part::Skipped
     } else if !info.has_video {
         Part::Unavailable {

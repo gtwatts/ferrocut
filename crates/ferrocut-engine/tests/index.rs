@@ -464,3 +464,52 @@ fn failed_or_unparsable_transcription_is_retried_and_no_speech_is_kept() {
     let (ix2, info) = index::index_media(&media, &opts).unwrap();
     assert!(info.cached && ix2 == ix && runs(&tools) == n);
 }
+
+#[test]
+fn legacy_cached_transcription_errors_are_retried() {
+    // Before this fix a parse or decode error was cached under the model's
+    // key and returned on every later request.
+    let d = tempfile::tempdir().unwrap();
+    let tools = d.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    let cli = moody_whisper(&tools);
+    let model = tools.join("ggml-test.bin");
+    std::fs::write(&model, b"model v1").unwrap();
+    let media = d.path().join("vo.wav");
+    write_tone(&media, 1.0);
+    let opts = |cached_only: bool| IndexOptions {
+        transcribe: true,
+        shots: true,
+        cached_only,
+        whisper: WhisperConfig {
+            cli: Some(cli.clone()),
+            model: Some(model.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let (good, info) = index::index_media(&media, &opts(false)).unwrap();
+    // Rewrite it as the old code left it: same key, unavailable transcript.
+    // The shots reason marks whether the cached shots are reused.
+    let mut legacy = serde_json::to_value(&good).unwrap();
+    legacy["transcript"] =
+        serde_json::json!({"status":"unavailable","reason":"whisper JSON: expected value"});
+    legacy["shots"] = serde_json::json!({"status":"unavailable","reason":"cached shots"});
+    std::fs::write(&info.index_path, legacy.to_string()).unwrap();
+    // cached_only reads it as it is and never runs whisper.
+    let (ix, info) = index::index_media(&media, &opts(true)).unwrap();
+    assert!(info.cached && ix.transcript.done().is_none() && runs(&tools) == 1);
+    // A normal request retries the transcript and keeps the cached shots.
+    let (ix, info) = index::index_media(&media, &opts(false)).unwrap();
+    assert!(!info.cached && runs(&tools) == 2);
+    assert_eq!(ix.transcript, good.transcript);
+    assert_eq!(
+        ix.shots,
+        Part::Unavailable {
+            reason: "cached shots".into()
+        }
+    );
+    // Rewritten: the next request is a plain cache hit.
+    let (ix2, info) = index::index_media(&media, &opts(false)).unwrap();
+    assert!(info.cached && ix2 == ix && runs(&tools) == 2);
+}
