@@ -9,7 +9,7 @@ use ferrocut_engine::Timeline;
 use ferrocut_engine::blend::{BlendMode, MatteMode, blend_px, matte_px};
 use ferrocut_engine::compile::{Compiled, compile};
 use ferrocut_engine::compositor::{Compositor, compositor_slot};
-use ferrocut_engine::edit::{MediaLengths, apply, parse_ops};
+use ferrocut_engine::edit::{Item, MediaLengths, apply, parse_ops};
 use ferrocut_engine::graph::FrameCache;
 use half::f16;
 use serde_json::{Value, json};
