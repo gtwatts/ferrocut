@@ -365,7 +365,7 @@ fn index_files(media: &Path) -> usize {
 
 #[test]
 fn unavailable_transcripts_recover_without_deleting_the_cache() {
-    // jpope-s08 narration: an installed ferrocut found neither whisper-cli
+    // Seen on an installed build indexing narration: it found neither whisper-cli
     // nor a model and cached that; after only the CLI was fixed it still
     // answered "whisper-cli not found", from the cache.
     let d = tempfile::tempdir().unwrap();
