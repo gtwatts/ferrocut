@@ -1,0 +1,39 @@
+{
+  "output": {"width":128,"height":96,"fps":24,"duration":2,"gop":12},
+  "tracks": [
+    {"name":"Background","clips":[
+      {"id":"background","start":0,"duration":2,
+       "generator":{"type":"solid","color":["0.04","0.08","0.15",1]}}
+    ]},
+    {"name":"Vector","clips":[
+      {"id":"translated","start":0,"duration":1,
+       "generator":{"type":"shape","shape":{
+         "geometry":{"type":"path","commands":[
+           {"type":"move_to","point":[-48,16]},
+           {"type":"line_to","point":[-16,16]},
+           {"type":"line_to","point":[-16,24]},
+           {"type":"line_to","point":[-36,24]},
+           {"type":"line_to","point":[-36,48]},
+           {"type":"line_to","point":[-48,48]},
+           {"type":"close"}
+         ]},
+         "fill":{"type":"solid","color":[1,"0.55","0.1",1]}
+       }},
+       "transform":{"position":[128,48]}},
+      {"id":"rotated","start":1,"duration":1,
+       "generator":{"type":"shape","shape":{
+         "geometry":{"type":"path","commands":[
+           {"type":"move_to","point":[-48,16]},
+           {"type":"line_to","point":[-16,16]},
+           {"type":"line_to","point":[-16,24]},
+           {"type":"line_to","point":[-36,24]},
+           {"type":"line_to","point":[-36,48]},
+           {"type":"line_to","point":[-48,48]},
+           {"type":"close"}
+         ]},
+         "fill":{"type":"solid","color":[1,"0.55","0.1",1]}
+       }},
+       "transform":{"anchor":[-32,32],"position":[88,48],"rotation":90}}
+    ]}
+  ]
+}
