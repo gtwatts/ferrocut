@@ -50,7 +50,7 @@ fn resolve(
     config: Option<&Path>,
     flags: &[(&str, Value)],
 ) -> Resolved {
-    Resolved::resolve(&Authored::new(rr, tl), config, flags).unwrap()
+    Resolved::resolve(&Authored::new(rr, tl).unwrap(), config, flags).unwrap()
 }
 /// (target, tolerance, ceiling) values and sources.
 fn audio_keys(r: &Resolved) -> [(f64, ThresholdSource); 3] {
@@ -188,7 +188,7 @@ fn flags_and_supplied_config_keys_override_per_key() {
     );
     // Unknown config keys are still rejected.
     let c = config(d.path(), r#"{"loudness": 1}"#);
-    assert!(Resolved::resolve(&Authored::new(&rr, &tl), Some(&c), &[]).is_err());
+    assert!(Resolved::resolve(&Authored::new(&rr, &tl).unwrap(), Some(&c), &[]).is_err());
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn missing_metadata_falls_back_to_the_timeline_but_null_means_no_target() {
     );
     assert!(r.mismatches.is_empty());
     // An analysis object without those keys counts as older too.
-    let a = Authored::new(&render(Some(json!({"ducks": []}))), &tl16);
+    let a = Authored::new(&render(Some(json!({"ducks": []}))), &tl16).unwrap();
     assert_eq!(
         (a.render_target, a.render_ceiling),
         (Recorded::Absent, Recorded::Absent)
@@ -321,4 +321,24 @@ fn the_report_line_names_each_source() {
         j["true_peak_max_dbtp"],
         json!({"value": -1.5, "source": "render"})
     );
+}
+
+#[test]
+fn a_malformed_recorded_value_is_an_error_not_a_timeline_fallback() {
+    // A present target or ceiling must be a number or null; falling back to
+    // a (possibly edited) timeline would grade the wrong intent silently.
+    let tl = timeline(Some(json!({"target_lufs": "-12"})));
+    for (target, ceiling, field) in [
+        (json!(true), json!(-1.5), "target_lufs"),
+        (json!("bogus"), json!(-1.5), "target_lufs"),
+        (json!(-16.0), json!({"db": -1}), "true_peak_ceiling_dbtp"),
+    ] {
+        let e = Authored::new(&rendered(target, ceiling), &tl)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains(&format!("audio.analysis.{field} must be a number or null")),
+            "{e}"
+        );
+    }
 }

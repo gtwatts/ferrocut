@@ -136,7 +136,8 @@ true-peak problems carry their `threshold_sources`. An existing audio stream mea
 `loudness_off_target`; a render without audio is `missing_audio` (no loudness target is used). Other defaults: cut
 tolerance ±1 frame, no mid-program black, ≤ 2 s black at the edges (fades), frozen ≤ 2 s, no flash frames, audio
 required. Library: `check::grade(&report, &timeline, brief, &thresholds)` (all `default`), or
-`check::grade_resolved(.., &targets::Resolved::resolve(&Authored::new(&render_report, &timeline), config, flags)?)`.
+`check::grade_resolved(.., &targets::Resolved::resolve(&Authored::new(&render_report, &timeline)?, config, flags)?)`.
+A recorded target or ceiling that is neither a number nor `null` is an error, not a fallback.
 
 ## Library
 

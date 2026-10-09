@@ -54,12 +54,19 @@ pub enum Recorded {
 }
 
 impl Recorded {
-    fn from_analysis(analysis: Option<&Map<String, Value>>, key: &str) -> Recorded {
-        match analysis.and_then(|a| a.get(key)) {
+    /// A present value must be a number or `null`; anything else is an
+    /// error, never a silent fall-through to the timeline.
+    fn from_analysis(analysis: Option<&Map<String, Value>>, key: &str) -> anyhow::Result<Recorded> {
+        Ok(match analysis.and_then(|a| a.get(key)) {
             None => Recorded::Absent,
             Some(Value::Null) => Recorded::None,
-            Some(v) => v.as_f64().map_or(Recorded::Absent, Recorded::Value),
-        }
+            Some(v) => match v.as_f64() {
+                Some(x) => Recorded::Value(x),
+                None => {
+                    bail!("render report audio.analysis.{key} must be a number or null, got {v}")
+                }
+            },
+        })
     }
 }
 
@@ -74,13 +81,13 @@ pub struct Authored {
 }
 
 impl Authored {
-    pub fn new(render: &RenderReport, tl: &Timeline) -> Authored {
+    pub fn new(render: &RenderReport, tl: &Timeline) -> anyhow::Result<Authored> {
         let analysis = render.audio.as_ref().and_then(|a| a.analysis.as_ref());
-        Authored {
-            render_target: Recorded::from_analysis(analysis, "target_lufs"),
-            render_ceiling: Recorded::from_analysis(analysis, "true_peak_ceiling_dbtp"),
+        Ok(Authored {
+            render_target: Recorded::from_analysis(analysis, "target_lufs")?,
+            render_ceiling: Recorded::from_analysis(analysis, "true_peak_ceiling_dbtp")?,
             timeline: tl.loudness(),
-        }
+        })
     }
 
     /// One `(key, recorded, timeline value)` per authored threshold.

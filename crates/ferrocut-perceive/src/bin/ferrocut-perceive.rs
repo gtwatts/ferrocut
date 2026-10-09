@@ -161,7 +161,7 @@ fn thresholds(a: &CheckArgs, rr: &RenderReport, tl: &Timeline) -> anyhow::Result
     if a.no_cut_check {
         flags.push(("check_cuts", Value::Bool(false)));
     }
-    Resolved::resolve(&Authored::new(rr, tl), a.config.as_deref(), &flags)
+    Resolved::resolve(&Authored::new(rr, tl)?, a.config.as_deref(), &flags)
 }
 
 fn run_check(a: &CheckArgs) -> anyhow::Result<CheckReport> {
