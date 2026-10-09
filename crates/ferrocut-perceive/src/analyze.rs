@@ -401,6 +401,13 @@ fn find_chunk(rr: &RenderReport, cache_dir: &Path, key: &str) -> PathBuf {
 pub fn analyze(req: Request) -> anyhow::Result<(Report, Stats)> {
     let tl = req.timeline;
     let rr = req.render;
+    // A selected-range master starts mid-timeline: comparing it to the whole
+    // timeline would misplace every cut and duration. Refuse before any work.
+    if let Some(r) = &rr.range {
+        bail!(
+            "this render report is a selected-range master (range {r}); it is not graded against the whole timeline yet, check the full render"
+        );
+    }
     let o = &req.options;
     let fps = tl.output.fps;
     let fps_f = fps.num() as f64 / fps.den() as f64;

@@ -38,6 +38,11 @@ pub struct RenderReport {
     /// Present when the master carries audio.
     #[serde(default)]
     pub audio: Option<EngineAudio>,
+    /// Present for a selected-range render (engine `render --range-frames`):
+    /// the master holds only part of the timeline, so it cannot be graded
+    /// against the whole timeline. Kept raw; only its presence is used.
+    #[serde(default)]
+    pub range: Option<serde_json::Value>,
 }
 
 /// The engine's audio summary for the master.
