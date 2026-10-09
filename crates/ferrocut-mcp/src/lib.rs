@@ -230,7 +230,7 @@ fn build_tools() -> Vec<Tool> {
         tool(
             "diff",
             "Diff two timelines",
-            "Structured diff of two timeline files: settings and track changes, clips added/removed/changed by id with tags (moved, trimmed_in, trimmed_out, slipped, retimed, track_changed, opacity_changed, transform_changed, audio_changed, keyframes_changed, ...), field-level from/to, keyframe changes by key time, affected spans, and (render=true) the chunks/frame ranges that would re-render.",
+            "Structured diff of two timeline files: settings and track changes, clips added/removed/changed by id with tags (moved, trimmed_in, trimmed_out, slipped, retimed, track_changed, opacity_changed, transform_changed, audio_changed, keyframes_changed, ...), field-level from/to, keyframe changes by key time, affected spans, and (render=true) the chunks/frame ranges that would re-render. With render=true, text font fields compare blake3 content identities in primary/fallback order; relocating identical fonts is not a font change. Missing/invalid fonts retain structural fields plus render_error. render=false never reads font contents and still reports font-path changes. a_hash/b_hash remain document hashes, not asset snapshots.",
             schema::diff(),
             ro().idempotent(true),
         ),
