@@ -246,9 +246,11 @@ fn journaled_geometry_and_transform_edits_rekey_only_the_edited_shot_and_undo() 
     std::fs::write(&path, project::timeline_text(&timeline).unwrap()).unwrap();
     let before_bytes = std::fs::read(&path).unwrap();
     let before = compile(&timeline).unwrap();
+    let mut geometry = fixture()["tracks"][1]["clips"][0]["generator"]["shape"]["geometry"].clone();
+    geometry["commands"][0]["point"][0] = json!(-50);
     let ops = parse_ops(&json!([
         {"op":"set_param","clip":"translated","param":"transform.position.x","value":132},
-        {"op":"set_param","clip":"translated","param":"generator.shape.geometry.commands.0.point.x","value":-50}
+        {"op":"set_param","clip":"translated","param":"generator.shape.geometry","value":geometry}
     ]).to_string()).unwrap();
     project::edit_file(
         &path,
