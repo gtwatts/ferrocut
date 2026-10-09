@@ -610,12 +610,76 @@ pub fn png_bytes_straight(width: u32, height: u32, rgba: &[u8]) -> anyhow::Resul
     Ok(out)
 }
 
-/// Upper bound on the extra bytes [`png_bytes_straight`] holds while
-/// encoding a `len`-byte RGBA image: the translucent path's single output
-/// buffer (about 1x), or the opaque path's premultiplied copy, demultiplied
-/// copy and compressed output (about 3x), plus fixed headroom.
-pub fn png_scratch_bound(len: u64) -> u64 {
-    len * 4 + (1 << 20)
+/// Accounted output-buffer budget (an estimate of the buffers the encoder
+/// allocates, not total process memory) for one PNG encode of a
+/// `width` x `height` RGBA image by [`png_bytes_straight`] or [`png_bytes`].
+///
+/// The translucent path holds one exact-size buffer (about 1x). The opaque
+/// path (tiny-skia 0.12 + png 0.18) is the larger and is what this covers:
+/// the pixmap copy and the demultiplied copy (2x), filtered-row buffers (a
+/// few rows), and the zlib output and final file vectors, each up to twice a
+/// worst-case incompressible stream after geometric growth, plus a stored
+/// fallback candidate of the same size (5 streams), plus 1 MiB of headroom.
+pub fn png_encode_bound(width: u32, height: u32) -> u64 {
+    let (w, h) = (width as u64, height as u64);
+    let row = w * 4 + 1;
+    let raw = row * h;
+    // Stored deflate: 5 bytes per 64 KiB block plus zlib/PNG framing.
+    let stream = raw + raw.div_ceil(65_535) * 5 + 64;
+    2 * w * h * 4 + 8 * row + 5 * stream + (1 << 20)
+}
+
+/// One frame (or the only image) of an inspection output plan.
+#[derive(Clone, Copy, Debug)]
+pub struct OutputFrame {
+    pub width: u32,
+    pub height: u32,
+    /// Any alpha below 255 (needs a display composite copy).
+    pub translucent: bool,
+}
+
+/// Accounted output-buffer bytes for writing `frames` as full-resolution
+/// PNGs (`each`, one at a time) and then the display: translucent
+/// composites, plus the contact sheet (`cols`, `cell_w`) with its PNG and
+/// the inline copy and its PNG, or for one frame the inline copy and its PNG.
+/// The two phases do not overlap, so the larger counts.
+pub fn output_bytes_needed(frames: &[OutputFrame], each: bool, cols: u32, cell_w: u32) -> u64 {
+    if frames.is_empty() {
+        return 0;
+    }
+    let size = |f: &OutputFrame| f.width as u64 * f.height as u64 * 4;
+    let pngs = if each {
+        frames
+            .iter()
+            .map(|f| png_encode_bound(f.width, f.height))
+            .max()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let composites: u64 = frames.iter().filter(|f| f.translucent).map(size).sum();
+    let picture = if frames.len() == 1 {
+        let f = &frames[0];
+        size(f) + png_encode_bound(f.width, f.height)
+    } else {
+        let f0 = &frames[0];
+        let (w, h, ..) = sheet_layout(f0.width, f0.height, frames.len(), cols, cell_w);
+        let (w, h) = (w.min(u32::MAX as u64) as u32, h.min(u32::MAX as u64) as u32);
+        let sheet = w as u64 * h as u64 * 4;
+        // Sheet + its PNG, then the inline copy (at most the sheet) + its PNG.
+        2 * sheet + 2 * png_encode_bound(w, h)
+    };
+    pngs.max(composites + picture)
+}
+
+/// Refuse output whose accounted buffers plus `held` (decoded frames) exceed
+/// `budget`.
+pub fn ensure_output_budget(held: u64, needed: u64, budget: u64) -> anyhow::Result<()> {
+    ensure!(
+        held + needed <= budget,
+        "frames ({held} bytes) plus their PNG/sheet/inline output buffers ({needed} bytes, accounted estimate) exceed {budget} bytes; request fewer or smaller frames, or a smaller cell_width"
+    );
+    Ok(())
 }
 
 /// Display composite of straight-alpha RGBA over an 8-pixel checkerboard

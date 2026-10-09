@@ -1156,43 +1156,23 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
     // The file is read only through one handle (no secondary files), hashed
     // before and after decoding; the pixels belong to that observed content.
     let ins = inspect::inspect_file(&path, &a.frames, &cx.cancel, None)?;
-    // Output memory counts against the same budget as the decoded frames and
-    // is checked before any of it is allocated (upper bounds): one frame's
-    // PNG scratch at a time (raw rows + deflate + file bytes), translucent
-    // display composites, and the sheet with its PNG and inline copies.
+    // Output buffers (accounted estimate, not total RSS) count against the
+    // same budget as the decoded frames, checked before any is allocated.
     let single = ins.frames.len() == 1;
-    let largest = ins
+    let plan: Vec<preview::OutputFrame> = ins
         .frames
         .iter()
-        .map(|f| f.rgba.len() as u64)
-        .max()
-        .unwrap_or(0);
-    let scratch = if a.each {
-        preview::png_scratch_bound(largest)
-    } else {
-        0
-    };
-    let translucent: u64 = ins
-        .frames
-        .iter()
-        .filter(|f| f.rgba.chunks_exact(4).any(|p| p[3] != 255))
-        .map(|f| f.rgba.len() as u64)
-        .sum();
-    let picture: u64 = if single {
-        // Composite, inline resize and its PNG encode.
-        largest * 2 + preview::png_scratch_bound(largest)
-    } else {
-        let f0 = &ins.frames[0];
-        let (w, h, ..) =
-            preview::sheet_layout(f0.width, f0.height, ins.frames.len(), a.cols, a.cell_width);
-        // The sheet, its PNG encode, and the inline resize with its encode.
-        w * h * 4 * 2 + 2 * preview::png_scratch_bound(w * h * 4)
-    };
-    let budget = inspect::MAX_RETAINED_BYTES;
-    anyhow::ensure!(
-        ins.held_bytes + scratch.max(translucent + picture) <= budget,
-        "frames plus their PNG/sheet/inline output would hold more than {budget} bytes; request fewer or smaller frames, or a smaller cell_width"
-    );
+        .map(|f| preview::OutputFrame {
+            width: f.width,
+            height: f.height,
+            translucent: f.rgba.chunks_exact(4).any(|p| p[3] != 255),
+        })
+        .collect();
+    preview::ensure_output_budget(
+        ins.held_bytes,
+        preview::output_bytes_needed(&plan, a.each, a.cols, a.cell_width),
+        inspect::MAX_RETAINED_BYTES,
+    )?;
     // The lock stays held through output: one inspection's memory at a time.
     let art = &ins.identity.blake3[..16];
     let mut frames_json = Vec::new();

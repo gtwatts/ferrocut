@@ -311,3 +311,51 @@ fn preview_snapshot_is_not_affected_by_a_later_file_change() {
         before["frames"][0]["png_blake3"]
     );
 }
+
+/// A translucent image whose stored stream spans several deflate blocks
+/// (200 x 100 RGBA: 80,100 raw bytes > 65,535) round-trips exactly.
+#[test]
+fn multi_block_translucent_png_is_exact() {
+    let (w, h) = (200u32, 100u32);
+    let rgba: Vec<u8> = (0..w * h)
+        .flat_map(|i| {
+            [
+                (i % 251) as u8,
+                (i % 7) as u8 * 30,
+                (i / 200) as u8,
+                (i % 256) as u8,
+            ]
+        })
+        .collect();
+    assert!(rgba.chunks(4).any(|p| p[3] != 255));
+    let png = preview::png_bytes_straight(w, h, &rgba).unwrap();
+    assert_eq!(stored_png_pixels(&png), rgba);
+}
+
+/// The output budget is plain arithmetic over the planned buffers, and an
+/// over-budget plan is refused before anything is written.
+#[test]
+fn output_budget_arithmetic_and_refusal() {
+    use preview::{OutputFrame, ensure_output_budget, output_bytes_needed, png_encode_bound};
+    // 32 x 16: row 129, raw 2064, stream 2064 + 5 + 64 = 2133;
+    // 2*2048 + 8*129 + 5*2133 + 1 MiB = 1,064,369.
+    assert_eq!(png_encode_bound(32, 16), 1_064_369);
+    let opaque = OutputFrame {
+        width: 32,
+        height: 16,
+        translucent: false,
+    };
+    // One frame: max(frame PNG, inline copy 2048 + its PNG).
+    assert_eq!(output_bytes_needed(&[opaque], true, 4, 480), 1_066_417);
+    let translucent = OutputFrame {
+        translucent: true,
+        ..opaque
+    };
+    assert_eq!(
+        output_bytes_needed(&[translucent], false, 4, 480),
+        1_068_465
+    );
+    assert!(ensure_output_budget(9, 1000, 1009).is_ok());
+    let e = ensure_output_budget(10, 1000, 1009).unwrap_err();
+    assert!(format!("{e:#}").contains("exceed 1009 bytes"), "{e:#}");
+}
