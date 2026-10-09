@@ -10,6 +10,39 @@ import shutil
 import subprocess
 import tomllib
 
+# whisper.cpp files the engine's discovery looks for under an ancestor of the
+# running executable (crates/ferrocut-engine/src/index/whisper.rs), in its
+# model order. The installed runtime gets links at these same paths so an
+# installed ferrocut finds the checkout's whisper from any directory.
+WHISPER_CLI = Path("third_party/whisper.cpp/build/bin/whisper-cli")
+WHISPER_MODELS = [Path("third_party/whisper-models") / name for name in
+                  ("ggml-medium.en.bin", "ggml-medium.bin", "ggml-small.en.bin", "ggml-small.bin")]
+
+
+def whisper_links(root):
+    """(path in the runtime, checkout file) for each whisper file that exists.
+
+    Optional: none at all is fine. Only an executable CLI and the discovery
+    model names are linked, never other third_party data; nothing is copied
+    or downloaded.
+    """
+    links = []
+    cli = root / WHISPER_CLI
+    if cli.is_file() and os.access(cli, os.X_OK):
+        links.append((WHISPER_CLI, cli.resolve()))
+    links += [(model, (root / model).resolve()) for model in WHISPER_MODELS if (root / model).is_file()]
+    return links
+
+
+def link(path, target):
+    """Point `path` at `target`, replacing an earlier link atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".installing")
+    if temporary.is_symlink() or temporary.exists():
+        temporary.unlink()
+    temporary.symlink_to(target)
+    os.replace(temporary, path)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -51,9 +84,12 @@ def main():
     if not (libraries / "libavutil.so").is_file():
         raise SystemExit("Build the project's shared LGPL FFmpeg before installing.")
     runtime = home / ".local/share/ferrocut/versions" / (revision[:12] + "-" + binaries["ferrocut"][:12])
+    links = whisper_links(root)
+    whisper = {"cli": next((str(t) for p, t in links if p == WHISPER_CLI), None),
+               "models": [str(t) for p, t in links if p != WHISPER_CLI]}
     print(json.dumps({"root": str(root), "revision": revision, "binary_destination": str(bindir),
                       "runtime": str(runtime), "runtime_libraries": str(libraries),
-                      "codex_config": str(config), "mcp": entry, "sha256": binaries,
+                      "codex_config": str(config), "mcp": entry, "sha256": binaries, "whisper": whisper,
                       "write": not args.check}, indent=2), flush=True)
     if args.check:
         return
@@ -67,6 +103,14 @@ def main():
     runtime_lib = runtime / "third_party/ffmpeg-lgpl/lib"
     shutil.copytree(libraries, runtime_lib, symlinks=True, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("pkgconfig"))
+    # Links into the checkout (absolute, so not portable): the installed
+    # route transcribes with the checkout's whisper, as the MCP entry runs
+    # in the checkout. Explicit options and FERROCUT_WHISPER_* still win.
+    for path, target in links:
+        link(runtime / path, target)
+    for path in {WHISPER_CLI, *WHISPER_MODELS} - {path for path, _ in links}:
+        if (runtime / path).is_symlink():  # gone from the checkout since an earlier install
+            (runtime / path).unlink()
     shutil.copy2(root / "LICENSE", runtime / "LICENSE")
     (runtime / "SOURCE.txt").write_text(
         f"Ferrocut source: https://github.com/gtwatts/ferrocut/tree/{revision}\n"
@@ -95,7 +139,7 @@ def main():
         os.replace(temporary, config)
     record = home / ".local/share/ferrocut/install.json"
     record.write_text(json.dumps({"installed_at": stamp, "revision": revision, "root": str(root),
-                                  "runtime": str(runtime), "sha256": binaries,
+                                  "runtime": str(runtime), "sha256": binaries, "whisper": whisper,
                                   "backup": str(backup)}, indent=2) + "\n")
     print(f"Installed; recoverable backup: {backup}")
 

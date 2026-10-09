@@ -311,6 +311,15 @@ LGPL FFmpeg libraries with the binaries, creates commands in `~/.local/bin`,
 and adds the MCP entry while preserving other Codex settings. Existing commands
 and configuration are backed up under `~/.local/share/ferrocut/backups/`.
 It stops for review if a different Ferrocut MCP entry already exists.
+If the checkout has a whisper.cpp build and models (`scripts/build-whisper.sh`,
+`scripts/fetch-whisper-model.sh`), the installed runtime gets symlinks to exactly
+`third_party/whisper.cpp/build/bin/whisper-cli` and the discovery model names
+(`ggml-{medium,small}{.en,}.bin`) that exist, so `ferrocut index` finds them from
+any directory. They are absolute links into the checkout, not copies: moving or
+deleting it leaves them dangling, and discovery then reports the variables to set.
+Without whisper, nothing is linked and the install is otherwise unchanged.
+`--whisper-cli`/`--model` and `FERROCUT_WHISPER_CLI`/`FERROCUT_WHISPER_MODEL` still
+take precedence. Python tests: `python3 -m unittest discover -s scripts/tests`.
 
 The [60-second creative brief](eval/creative/agent-editor-60s/BRIEF.md) can be run
 with `python3 eval/run-creative.py --work /absolute/path/to/new/workdir`.
