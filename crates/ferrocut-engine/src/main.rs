@@ -1077,10 +1077,11 @@ fn main() -> anyhow::Result<()> {
                     .join(".ferrocut-cache")
             });
             let jobs = jobs.unwrap_or_else(|| {
-                let (j, why) = ferrocut_engine::vram::default_jobs(
+                let (j, why) = ferrocut_engine::vram::default_jobs_with_extra(
                     &gpu.get().info,
                     c.max_layer_size.0,
                     c.max_layer_size.1,
+                    c.extra_gpu_bytes_per_job,
                 );
                 println!("jobs:    {why}");
                 j

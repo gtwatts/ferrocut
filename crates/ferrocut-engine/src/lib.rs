@@ -9,6 +9,8 @@ pub mod comp;
 pub mod compile;
 pub mod compositor;
 pub mod deliver;
+pub mod depth;
+mod depth_gpu;
 pub mod diff;
 pub mod edit;
 pub mod expr;

@@ -321,14 +321,21 @@ pub const AUDIO_CLIP: &[ParamSpec] = &[
     CA[0], CA[1], CA[2], CA[3], CA[4], CA[5], CA[6], CA[7], CA[8], CA[9],
 ];
 
-/// Parameters of a track's audio bus (video tracks' linked audio, or audio tracks).
+/// Track picture controls and audio bus (video linked audio, or audio tracks).
 pub const TRACK: &[ParamSpec] = &[
+    ParamSpec::fixed(
+        "visible",
+        Bool,
+        "",
+        "true",
+        "video tracks only: include the track in the final picture stack; false keeps it available as a matte source and leaves linked audio unchanged; legacy track_above sources are consumed regardless of visibility",
+    ),
     ParamSpec::fixed(
         "matte",
         Object,
         "",
         "null",
-        "video tracks only: {mode: alpha | alpha_inverted | luma | luma_inverted}; the track above becomes this track's matte and is not composited itself",
+        "video tracks only: {mode: alpha | alpha_inverted | luma | luma_inverted, source?: track_above | {track: unique nonempty video track name}}; default track_above consumes the adjacent source; a named source can be reused independently of its visibility; source and recipient use the same composition time",
     ),
     ParamSpec::fixed(
         "effects",
@@ -422,6 +429,10 @@ pub const TIMELINE: &[ParamSpec] = &[
         "explicit output duration (default: end of the last clip); null clears it",
     ),
     ParamSpec::fixed(
+        "renderer", Choice, "", "\"legacy\"",
+        "legacy | depth_layers_v1: opt-in native per-pixel planar depth, at most 16 authored surfaces per 3D run; no lights/shadows/aperture in D1",
+    ),
+    ParamSpec::fixed(
         "camera",
         Object,
         "",
@@ -460,6 +471,11 @@ pub const TIMELINE: &[ParamSpec] = &[
         "horizontal angle of view in degrees, in (0, 180) (exclusive with zoom)",
     )
     .range(1e-9, 179.999),
+    s("camera.reference_up", Tl, "", "[0,-1,0]",
+        "depth_layers_v1: nonzero world up vector, not collinear with the viewing axis; exact camera sample degeneracy is an error").with_kind(Vec3),
+    s("camera.roll", Tl, "deg", "0", "depth_layers_v1: roll about the viewing axis"),
+    ParamSpec::fixed("camera.near", Scalar, "px", "1", "depth_layers_v1: positive near clipping distance"),
+    ParamSpec::fixed("camera.far", Scalar, "px", "100000", "depth_layers_v1: far clipping distance, strictly greater than near"),
     ParamSpec::fixed(
         "motion_blur",
         Object,
@@ -937,6 +953,7 @@ pub(crate) fn vec_default(spec: &ParamSpec, frame: (u32, u32)) -> Value {
         Vec3 if spec.name == "camera.point_of_interest" => {
             json!([half(frame.0), half(frame.1), "0"])
         }
+        Vec3 if spec.name == "camera.reference_up" => json!(["0", "-1", "0"]),
         _ if spec.name.ends_with("scale") => json!(["1", "1"]),
         _ if spec.name.starts_with("generator.text.")
             || spec.name.starts_with("generator.shape.") =>

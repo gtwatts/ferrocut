@@ -1,0 +1,52 @@
+{
+  "output": {
+    "width": 64,
+    "height": 32,
+    "fps": 24,
+    "gop": 12,
+    "duration": 1
+  },
+  "tracks": [
+    {
+      "name": "Panel",
+      "matte": {
+        "mode": "alpha"
+      },
+      "clips": [
+        {
+          "id": "panel",
+          "start": 0,
+          "duration": 1,
+          "generator": {
+            "type": "solid",
+            "color": [
+              1,
+              0,
+              0,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stencil",
+      "clips": [
+        {
+          "id": "stencil",
+          "start": 0,
+          "duration": 1,
+          "generator": {
+            "type": "solid",
+            "color": [
+              1,
+              1,
+              1,
+              "1/2"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

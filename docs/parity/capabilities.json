@@ -19638,7 +19638,7 @@
       "proposed_acceptance": "Use one nonadjacent matte for two layers and compare alpha versus luminance.",
       "ferrocut": {
         "status": "partial",
-        "assessed_at": "2026-10-08",
+        "assessed_at": "2026-10-09",
         "acceptance_complete": false,
         "evidence": [
           {
@@ -19646,10 +19646,18 @@
             "path": "crates/ferrocut-engine/src/compile.rs",
             "locator": "",
             "claim": "Native alpha/luma matte compilation exists."
+          },
+          {
+            "stage": "implemented",
+            "path": "docs/design/2026-10-09-reusable-track-mattes.md",
+            "locator": "",
+            "claim": "Source-only additive named matte references and independent video track visibility; normal set_param/schema wiring and focused controls prepared. Candidate compilation, rendered inspection, independent technical acceptance and installed verification are pending."
           }
         ],
         "limitations": [
-          "Baseline mattes use adjacency/consumption; arbitrary reusable nonadjacent matte references are not supported."
+          "Named sources use existing unique nonempty video track names inside one composition; no adjustment source, self/cycles or cross-composition references. Legacy track_above retains adjacency and consumption.",
+          "Track visibility is a fixed Boolean. Nest/unnest reject relationships or visibility they would discard; foreign interchange reports matte and hidden-video loss.",
+          "New candidate source tests are not yet compiled/executed. Native/encoded moving-output inspection, exact CLI/MCP route and installed verification remain pending; status stays partial and acceptance_complete stays false."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -19657,7 +19665,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Conservative code audit only; test-source references are not fresh execution or creative-review claims."
+          "Conservative code audit only; test-source references are not fresh execution or creative-review claims.",
+          "2026-10-09 reusable-matte source checkpoint adds code without promoting the capability. Historical adjacent-matte evidence is preserved; no source-test, pixel, playback or installed pass is inferred from this entry."
         ],
         "needs_design": false
       }
@@ -19683,7 +19692,7 @@
       "proposed_acceptance": "Show a matte source while it also controls another layer's transparency.",
       "ferrocut": {
         "status": "partial",
-        "assessed_at": "2026-10-08",
+        "assessed_at": "2026-10-09",
         "acceptance_complete": false,
         "evidence": [
           {
@@ -19697,10 +19706,18 @@
             "path": "crates/ferrocut-engine/src/compile.rs",
             "locator": "",
             "claim": "The current adjacent matte source is consumed instead of composited."
+          },
+          {
+            "stage": "implemented",
+            "path": "docs/design/2026-10-09-reusable-track-mattes.md",
+            "locator": "",
+            "claim": "Source-only additive named matte references and independent video track visibility; normal set_param/schema wiring and focused controls prepared. Candidate compilation, rendered inspection, independent technical acceptance and installed verification are pending."
           }
         ],
         "limitations": [
-          "Matte-source visibility cannot be independently enabled while reusing that source as a matte."
+          "Named sources use existing unique nonempty video track names inside one composition; no adjustment source, self/cycles or cross-composition references. Legacy track_above retains adjacency and consumption.",
+          "Track visibility is a fixed Boolean. Nest/unnest reject relationships or visibility they would discard; foreign interchange reports matte and hidden-video loss.",
+          "New candidate source tests are not yet compiled/executed. Native/encoded moving-output inspection, exact CLI/MCP route and installed verification remain pending; status stays partial and acceptance_complete stays false."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -19708,7 +19725,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "2026-10-09 reusable-matte source checkpoint adds code without promoting the capability. Historical adjacent-matte evidence is preserved; no source-test, pixel, playback or installed pass is inferred from this entry."
         ],
         "needs_design": false
       }

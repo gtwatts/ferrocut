@@ -148,14 +148,24 @@ fn blend_mode() -> Value {
 
 fn matte() -> Value {
     json!({
-        "description": "Track matte: the track directly above is this track's matte source (and is not composited itself). alpha keeps this track where the matte is opaque, luma where it is bright (ACEScg luminance of the premultiplied matte, i.e. luminance times alpha); the _inverted variants keep the rest. The matte track's own linked audio still plays.",
+        "description": "Track matte: default track_above consumes the adjacent video track. source:{track:name} reuses a unique nonempty video track name in this composition, without consuming it. Its visible switch affects compositing, not matte availability or linked audio. Sources include their own effects/matte; cycles, self references and adjustment sources are rejected. Both pictures use the same composition time and independent clip retiming. alpha uses coverage; luma uses ACEScg luminance of premultiplied RGB (brightness times alpha); inverted variants keep the rest.",
         "anyOf": [
             { "type": "null" },
             {
                 "type": "object",
                 "properties": {
                     "mode": { "enum": ["alpha", "alpha_inverted", "luma", "luma_inverted"] },
-                    "source": { "const": "track_above", "description": "default; other matte sources (e.g. vector masks) are a planned hook" }
+                    "source": {
+                        "default": "track_above",
+                        "anyOf": [
+                            { "const": "track_above" },
+                            {
+                                "type": "object",
+                                "properties": { "track": { "type": "string", "minLength": 1 } },
+                                "required": ["track"], "additionalProperties": false
+                            }
+                        ]
+                    }
                 },
                 "required": ["mode"], "additionalProperties": false
             }
@@ -645,10 +655,10 @@ pub fn edit_op() -> Value {
         ),
         op(
             "set_param",
-            "Set one parameter by name on a clip (`clip`), a track's audio bus (`track`) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant, {keyframes} or {expression, value?} (see the guide's Expressions); objects take an object, or null to remove.",
+            "Set one parameter by name on a clip (`clip`), a track (`track`: visible, matte, effects or its audio bus) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant, {keyframes} or {expression, value?} (see the guide's Expressions); objects take an object, or null to remove. Reusable matte example: track:Panel, param:matte, value:{mode:alpha,source:{track:Stencil}}; hide only its source picture with track:Stencil, param:visible, value:false.",
             json!({
                 "clip": clip_id(),
-                "track": { "type": "string", "minLength": 1, "description": "track name (its audio bus)" },
+                "track": { "type": "string", "minLength": 1, "description": "track name (video picture controls or audio bus)" },
                 "param": { "type": "string", "minLength": 1, "description": "parameter name" },
                 "value": param_value()
             }),
@@ -948,7 +958,7 @@ fn transform() -> Value {
 }
 
 fn three_d() -> Value {
-    json!({ "type": "boolean", "default": false, "description": "After Effects 3D layer switch: a card in 3D space seen through the timeline camera; consecutive 3D layers are depth-sorted (farthest first), 2D layers split the runs" })
+    json!({ "type": "boolean", "default": false, "description": "A planar card seen through the timeline camera. Default legacy mode painter-sorts consecutive 3D layers by anchor depth. Opt-in depth_layers_v1 resolves intersections and fractional alpha per pixel, up to 16 authored surfaces per run; visible unconsumed 2D tracks split runs." })
 }
 
 fn clip_motion_blur() -> Value {
@@ -965,7 +975,11 @@ fn camera() -> Value {
             "position": triple("camera position [x, y, z], output pixels"),
             "point_of_interest": triple("the point the camera looks at [x, y, z]"),
             "zoom": animatable("distance in pixels at which a layer appears at 100 %, > 0; exclusive with fov_deg"),
-            "fov_deg": animatable("horizontal angle of view, degrees, (0, 180); exclusive with zoom")
+            "fov_deg": animatable("horizontal angle of view, degrees, (0, 180); exclusive with zoom"),
+            "reference_up": triple("depth_layers_v1 only: finite nonzero world-up [x,y,z], default [0,-1,0]; must not be collinear with viewing axis"),
+            "roll": animatable("depth_layers_v1 only: degrees about viewing axis, default 0"),
+            "near": rational("depth_layers_v1 only: positive near clip distance, default 1"),
+            "far": rational("depth_layers_v1 only: far clip distance > near, default 100000")
         },
         "additionalProperties": false
     })
@@ -1134,6 +1148,7 @@ pub fn timeline() -> Value {
                     "type": "object",
                     "properties": {
                         "name": { "type": "string", "description": "unique (edit ops and duck keys refer to it)" },
+                        "visible": { "type": "boolean", "default": true, "description": "join the final picture stack; false still permits matte use and linked audio; legacy track_above source consumption is unchanged" },
                         "audio": bus(),
                         "matte": matte(),
                         "effects": video_effects(),
@@ -1177,6 +1192,7 @@ pub fn timeline() -> Value {
                 "additionalProperties": false
             },
             "camera": camera(),
+            "renderer": { "type": "string", "enum": ["legacy", "depth_layers_v1"], "default": "legacy", "description": "Opt-in per-pixel planar depth with ordered fractional alpha; at most 16 authored surfaces per consecutive 3D run. Default preserves legacy painter keys and pixels. Unsupported matte, track-effect, overlap or blend interactions error with nesting guidance. D1 has no lights, shadows or aperture DOF." },
             "motion_blur": motion_blur(),
             "markers": markers("timeline time, >= 0 (does not move with ripple edits)")
         },

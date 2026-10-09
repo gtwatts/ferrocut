@@ -1,0 +1,8 @@
+[
+  {
+    "op": "set_param",
+    "track": "Stencil",
+    "param": "visible",
+    "value": false
+  }
+]

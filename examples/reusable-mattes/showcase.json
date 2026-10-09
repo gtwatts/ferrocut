@@ -1,0 +1,38 @@
+{
+  "name": "Reusable mattes: alpha, luma, hidden source",
+  "output": {
+    "width": 640,
+    "height": 240,
+    "fps": 24,
+    "gop": 24,
+    "duration": 6
+  },
+  "tracks": [
+    {
+      "name": "Phases",
+      "clips": [
+        {
+          "id": "alpha-phase",
+          "source": "reusable-mattes.json",
+          "start": 0,
+          "source_in": 0,
+          "duration": 2
+        },
+        {
+          "id": "luma-phase",
+          "source": "luma.json",
+          "start": 2,
+          "source_in": 2,
+          "duration": 2
+        },
+        {
+          "id": "hidden-phase",
+          "source": "hidden.json",
+          "start": 4,
+          "source_in": 4,
+          "duration": 2
+        }
+      ]
+    }
+  ]
+}

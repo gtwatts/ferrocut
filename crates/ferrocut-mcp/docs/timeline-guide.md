@@ -24,7 +24,7 @@ Start with `docs://agent/onboarding.md` for a complete native graphics workflow 
 - `output`: `width`, `height`, `fps`, optional `gop` (24), `gops_per_chunk` (1), `duration`
   (default: end of the last clip).
 - `tracks`: video tracks, **0 = bottom layer**. Each has a unique `name`, an audio bus `audio`, an
-  optional track `matte`, and `clips`.
+  optional track `matte`, `visible` (default true), and `clips`.
 - A **video clip**: `id` (unique), `source` (path relative to the timeline file), `start`
   (timeline), `source_in` (source time of its first frame), `duration`, `opacity`, `transform`,
   `transition_in`, `blend_mode`, `audio` (linked audio: gain, pan, mute, fades, J/L offsets). A clip shows source
@@ -125,7 +125,7 @@ Start with `docs://agent/onboarding.md` for a complete native graphics workflow 
   camera, `zoom = width * 50 / 36` at `[w/2, h/2, -zoom]` looking at `[w/2, h/2, 0]`, so an
   untransformed 3D layer looks exactly like the 2D one. Setting one component (`camera.position.x`)
   fills the others from that default; set `position.z` to `-zoom` yourself if you change `zoom`.
-- Stacking: consecutive 3D layers (tracks whose clip is 3D at that time; empty tracks are
+- Default `renderer: "legacy"` stacking: consecutive 3D layers (tracks whose clip is 3D at that time; empty tracks are
   skipped) are drawn farthest first by the camera-space depth of their position (ties keep
   track order); a 2D layer in between splits the run and stays in track order. No
   intersections, lights, shadows or depth of field. Parts of a card less than 1 px in front of
@@ -133,6 +133,54 @@ Start with `docs://agent/onboarding.md` for a complete native graphics workflow 
 - Recipe: a dolly past generator cards: `set_param` `three_d` true and `transform.position_z`
   on each card, then `set_keyframes` `camera.position.x` (and keep `camera.point_of_interest`
   fixed for an orbit-like move).
+
+## Native planar depth (opt-in)
+
+Set timeline `renderer` to `depth_layers_v1` to resolve intersections per pixel,
+including fractional source alpha and cutout windows. The legacy default and its
+keys remain unchanged when the new mode/controls are absent. This is a bounded
+planar compositor, without native lights, shadows, aperture focus or meshes.
+
+- The existing camera position/target/zoom controls apply. New mode-only controls:
+  `camera.reference_up` (animatable vector, default `[0,-1,0]`), `camera.roll`
+  (animatable degrees about the forward axis, default 0), `camera.near` (fixed,
+  default 1) and `camera.far` (fixed, default 100000). Require `0 < near < far`.
+  Coincident position/target, zero up or collinear up/view direction are errors;
+  there is no automatic replacement axis. Camera validity is rechecked at every
+  shutter sample, including between valid keyframes.
+- Visible, unconsumed 2D tracks delimit scenes even during clip gaps. Hidden or
+  consumed matte tracks do not. Each scene accepts at most **16 authored clips**
+  across its consecutive 3D tracks, with no overlapping clips on a single track.
+  Inactive authored clips still count toward this bound. Higher track/start
+  ordinal wins **exact represented Depth32 ties**; there is no depth epsilon.
+- Sources retain native fit/anchor and signed storage windows. Every texture in a
+  scene must have one common positive pixel aspect; normalize mixed-PAR sources
+  before combining them. A nested composition is one textured plane, with its
+  source-in/speed/remap intact. No implicit collapse-through; `unnest` refuses
+  either a parent or inner depth composition to avoid changing scene boundaries.
+- Only normal blending is supported within a scene. Mixing 2D/3D on one track,
+  track effects, adjustment clips, dissolves or matte participation by 3D tracks
+  is rejected with affected IDs. Apply clip effects before projection, or author
+  the effect/matte inside a nested texture or after a nested scene.
+- With timeline motion blur, every card in a scene must use the same layer blur
+  switch. Geometry, camera and visibility resolve together at each exact shutter
+  sample, then complete sample colors are averaged. Content/masks/clip effects
+  are held at the nominal frame; a card visible only during shutter samples uses
+  its nearest active sample (earlier on ties). This is transform/camera blur,
+  not animated-content blur.
+- Filtering is bilinear in source space, with single-sample raster edges. Very
+  small/oblique cards can alias; this does not claim legacy Catmull-Rom filtering
+  equivalence. Empty projected cards contribute nothing; exactly singular cards
+  warn once per clip/worker. Clipping is against the homogeneous near/far planes.
+- Scratch uses about 40 B/output pixel per worker, plus one 8 B/pixel returned
+  texture, up to two extra working frames for shutter averaging, and source
+  textures. CLI and MCP automatic job sizing include this additional model;
+  explicit job counts and runtime memory backoff keep their existing behavior.
+  The model is not measured peak memory; overscan/effects can need more.
+
+The [Crossing Glass](../../../examples/crossing-glass/README.md) source package
+contains a legacy before case, native candidate and negative controls. Its
+source checkpoint is not evidence of rendered, inspected or installed behavior.
 
 ## Motion blur
 
@@ -152,12 +200,37 @@ Start with `docs://agent/onboarding.md` for a complete native graphics workflow 
   `saturation`, `color`, `luminosity`). Computed in linear light on premultiplied pixels with the
   W3C / After Effects formulas; modes defined on [0, 1] clamp their inputs (HDR values > 1 only
   survive `normal`, `add`, `multiply`, `darken`, `lighten`, `difference`).
-- `matte` on a video track: `{"mode": "alpha" | "alpha_inverted" | "luma" | "luma_inverted"}`.
-  The track directly above becomes the matte (it is not composited); `luma` uses the
-  ACEScg (AP1) luminance of the premultiplied matte, i.e. luminance times alpha. The top track can't have a matte, and a matte
-  source can't have its own matte.
+- `matte` on a video track takes `mode`: `alpha`, `alpha_inverted`, `luma` or
+  `luma_inverted`. Alpha uses source coverage; luma uses ACEScg (AP1) luminance of
+  premultiplied RGB, i.e. brightness times alpha. Inverted modes use one minus
+  that coverage. Outside the source's clips, its picture is transparent black.
+- Reuse one nonadjacent source on multiple tracks with
+  `{"mode":"alpha","source":{"track":"Stencil"}}`. The name must be an
+  existing unique nonempty **video** track in this composition; track insertion
+  and reordering do not retarget it. Source picture includes its own clips,
+  transforms, effects and matte. Acyclic chains are supported; self/cycles,
+  missing names and adjustment-layer sources are errors. Source and recipient
+  sample the same exact composition time, each with its own clip retiming.
+- Set `visible:false` on a video track to hide only its final stack picture.
+  It remains available as a named matte and its linked audio still plays
+  (`bus.mute` controls audio). Visibility is a fixed Boolean, not animation.
+  A source reference never crosses a nested-composition boundary. Hidden-source
+  assets still undergo the normal root/validity checks.
+- Legacy `{"mode":"alpha"}` (omitted source) or `"source":"track_above"`
+  consumes the directly adjacent track above it. That source cannot have a matte
+  itself and remains consumed regardless of either track's visibility. Old
+  adjacent projects retain this behavior. Use named sources throughout to control
+  source visibility independently.
 - Recipe: text through a picture: put the picture on V1, the title on V2 and
   `set_param` `matte` `{"mode": "alpha"}` on V1 (`track: "V1"`).
+- Reusable recipe: apply `set_param` on Panel A and Panel B with `param:"matte"`,
+  `value:{"mode":"alpha","source":{"track":"Stencil"}}`; then on Stencil
+  set `param:"visible",value:false`. Use `plan:true`, dry-run and undo normally.
+  Track rename/delete operations are not provided; dangling references fail
+  validation. `nest` / `unnest` reject hidden or matte relationships they would
+  discard; author an explicit nested project in those cases. The original
+  `examples/reusable-mattes/` demo and the reusable-matte design document record
+  the source contract and execution status.
 
 ## Video effects
 
@@ -238,7 +311,7 @@ pre-expression value, a constant or keyframes, available as `value` in the scrip
 - A clip with `"adjustment": true` (no source or generator) and `effects` applies its stack to
   everything composited below it while it is active (After Effects / Premiere adjustment
   layer); its `opacity` mixes the result with the untouched picture, and a track `matte` on its
-  track (the track above as alpha / luma matte) limits where it applies. An adjustment track
+  track (an adjacent or named alpha / luma source) limits where it applies. An adjustment track
   holds only adjustment clips; they take no transform, 3D, blend mode, speed or transition (use
   a `transform` effect, or a matte, instead).
 - Build one: `add_track` (video, above the tracks it should affect), `add_clip` `{"track":
@@ -295,7 +368,7 @@ pre-expression value, a constant or keyframes, available as `value` in the scrip
 | `add_track` | new empty video track (`index` 0 = bottom; default top) or audio track |
 | `add_clip` | clip from a media file (probed; defaults: `start` = end of track, `source_in` 0, `duration` = rest of the media, `id` = file stem) or a `generator` layer (`duration` required, `id` = its type) |
 | `add_transition` | dissolve into `clip` from the previous clip; `align` `center` (default) / `start` / `end` relative to the cut; uses handles, moves nothing else; adds a matching audio crossfade |
-| `set_param` | any parameter by name on a clip (`clip`), a track (`track`: its bus, or `matte`) or the timeline (neither); `null` removes an optional object |
+| `set_param` | any parameter by name on a clip (`clip`), a track (`track`: its bus, `visible`, `matte` or effects) or the timeline (neither); `null` removes an optional object |
 | `set_keyframes` | keyframes on an animatable parameter (`mode` replace / merge) |
 | `split`, `trim`, `roll`, `slip`, `slide`, `move` | NLE trims and moves (see each op's schema) |
 | `ripple_delete`, `ripple_insert` | remove / insert and close / open the gap (`all_tracks` = sync lock) |
@@ -322,11 +395,12 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
   `generator.start`, `generator.end`, `generator.center` (`.x`/`.y`), `generator.radius`,
   `generator.interpolation`
 - audio clip: the `audio.*` ones, `speed`, `time_remap`
-- track: `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.effects`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
+- track: `visible`, `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.effects`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
   `bus.duck.ratio`, `bus.duck.attack_ms`, `bus.duck.release_ms`, `bus.duck.range_db`
 - timeline: `audio.master_gain_db`, `audio.loudness`, `audio.loudness.target_lufs`,
-  `audio.loudness.true_peak_dbtp`, `output.duration`, `camera`, `camera.position`,
-  `camera.point_of_interest` (`.x`/`.y`/`.z`), `camera.zoom`, `camera.fov_deg`, `motion_blur`,
+  `audio.loudness.true_peak_dbtp`, `output.duration`, `renderer`, `camera`, `camera.position`,
+  `camera.point_of_interest` and `camera.reference_up` (`.x`/`.y`/`.z`), `camera.zoom`, `camera.fov_deg`,
+  `camera.roll`, `camera.near`, `camera.far`, `motion_blur`,
   `motion_blur.shutter_angle`, `motion_blur.shutter_phase`, `motion_blur.samples`
 
 ## Recipes

@@ -144,7 +144,13 @@ pub fn cpu_default_jobs() -> usize {
 /// Pure sizing rule: jobs that fit in `free` bytes at `width`x`height`, within
 /// 1..=`cap`.
 pub fn jobs_for(free: u64, width: u32, height: u32, cap: usize) -> usize {
-    let per_job = (width as u64 * height as u64 * BYTES_PER_PIXEL_PER_JOB).max(1);
+    jobs_for_with_extra(free, width, height, cap, 0)
+}
+
+pub fn jobs_for_with_extra(free: u64, width: u32, height: u32, cap: usize, extra: u64) -> usize {
+    let per_job = (width as u64 * height as u64 * BYTES_PER_PIXEL_PER_JOB)
+        .saturating_add(extra)
+        .max(1);
     let fit = free.saturating_sub(RESERVE_BYTES) / per_job;
     (fit as usize).clamp(1, cap.max(1))
 }
@@ -152,21 +158,39 @@ pub fn jobs_for(free: u64, width: u32, height: u32, cap: usize) -> usize {
 /// Default `-j`: min(cores, 12), lowered to what fits in free VRAM on NVIDIA.
 /// Returns the job count and a one-line reason for logs.
 pub fn default_jobs(info: &wgpu::AdapterInfo, width: u32, height: u32) -> (usize, String) {
+    default_jobs_with_extra(info, width, height, 0)
+}
+
+/// Opt-in scene scratch/source estimate supplements the legacy allocation model.
+pub fn default_jobs_with_extra(
+    info: &wgpu::AdapterInfo,
+    width: u32,
+    height: u32,
+    extra: u64,
+) -> (usize, String) {
     let cap = cpu_default_jobs();
     match memory(info) {
         Some((free, total)) => {
-            let j = jobs_for(free, width, height, cap);
+            let j = jobs_for_with_extra(free, width, height, cap, extra);
             (
                 j,
                 format!(
                     "{j} jobs: {} of {} MiB VRAM free, ~{} MiB per job at {width}x{height} (cap {cap})",
                     free >> 20,
                     total >> 20,
-                    (width as u64 * height as u64 * BYTES_PER_PIXEL_PER_JOB) >> 20
+                    (width as u64 * height as u64 * BYTES_PER_PIXEL_PER_JOB).saturating_add(extra)
+                        >> 20
                 ),
             )
         }
-        None => (cap, format!("{cap} jobs: min(cores, 12)")),
+        None if extra == 0 => (cap, format!("{cap} jobs: min(cores, 12)")),
+        None => (
+            cap,
+            format!(
+                "{cap} jobs: min(cores, 12); depth-scene model adds {} MiB/job (VRAM unavailable)",
+                extra >> 20
+            ),
+        ),
     }
 }
 
