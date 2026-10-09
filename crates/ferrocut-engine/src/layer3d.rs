@@ -1,4 +1,4 @@
-//! 2.5D: After Effects-style 3D layers seen through a camera, and layer
+//! Legacy 2.5D: After Effects-style 3D layers seen through a camera, and layer
 //! motion blur. Both are evaluated on the CPU in f64 and rendered by one GPU
 //! kernel (`shaders/transform_ms.wgsl`) that resamples the layer through one
 //! or more projective maps (homographies) and averages them.
@@ -50,6 +50,10 @@
 //! taken once for all samples (the smallest level any sample needs at the
 //! window's corners and center). Very oblique 3D layers can still alias
 //! towards the horizon.
+//!
+//! The opt-in [`crate::depth`] scene reuses these coordinates and transform
+//! math, with its own validated camera basis, clipping, raster filtering and
+//! per-pixel transparency/depth order. The legacy kernel is unchanged.
 
 use ferrocut_core::{Animatable, PixelRect, Rational, RationalTime};
 use serde::{Deserialize, Serialize};
@@ -77,6 +81,16 @@ pub struct CameraSpec {
     pub zoom: Option<Animatable>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fov_deg: Option<Animatable>,
+    /// Explicit world-up reference for depth_layers_v1; default [0, -1, 0].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_up: Option<[Animatable; 3]>,
+    /// Camera-axis rotation around forward, degrees; depth_layers_v1 only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roll: Option<Animatable>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub near: Option<Rational>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub far: Option<Rational>,
 }
 
 /// The camera at one instant.
@@ -86,6 +100,17 @@ pub struct CameraAt {
     pub point_of_interest: [f64; 3],
     pub zoom: f64,
 }
+
+/// One shared, explicitly validated camera for a depth scene.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DepthCameraAt {
+    pub camera: CameraAt,
+    pub basis: Mat3,
+    pub near: f64,
+    pub far: f64,
+}
+
+pub const DEPTH_FAR: i64 = 100_000;
 
 /// After Effects' 50 mm camera preset for a `w`-pixel-wide frame.
 pub fn default_zoom(w: f64) -> f64 {
@@ -127,6 +152,10 @@ impl CameraSpec {
                 ],
                 &self.point_of_interest,
             ),
+            (
+                ["reference_up.x", "reference_up.y", "reference_up.z"],
+                &self.reference_up,
+            ),
         ] {
             if let Some([x, y, z]) = p {
                 v.push((n[0], x));
@@ -139,6 +168,9 @@ impl CameraSpec {
         }
         if let Some(f) = &self.fov_deg {
             v.push(("fov_deg", f));
+        }
+        if let Some(r) = &self.roll {
+            v.push(("roll", r));
         }
         v
     }
@@ -161,7 +193,60 @@ impl CameraSpec {
                 return Err("camera.fov_deg must be in (0, 180)".into());
             }
         }
+        let near = self.near.unwrap_or(Rational::ONE);
+        let far = self.far.unwrap_or(Rational::from_int(DEPTH_FAR));
+        if near <= Rational::ZERO || far <= near {
+            return Err("camera clipping requires 0 < near < far".into());
+        }
         Ok(())
+    }
+
+    pub fn has_depth_controls(&self) -> bool {
+        self.reference_up.is_some()
+            || self.roll.is_some()
+            || self.near.is_some()
+            || self.far.is_some()
+    }
+
+    /// No fallback axis in the opt-in scene. Recheck at every exact shutter
+    /// sample, since valid key endpoints can interpolate through degeneracy.
+    pub fn depth_at(&self, t: RationalTime, w: f64, h: f64) -> Result<DepthCameraAt, String> {
+        let camera = self.at(t, w, h);
+        let forward = depth_norm(sub3(camera.point_of_interest, camera.position))
+            .ok_or_else(|| format!("camera at {t}: position and point_of_interest must differ"))?;
+        let up = depth_norm(xyz(&self.reference_up, t, [0.0, -1.0, 0.0])).ok_or_else(|| {
+            format!("camera at {t}: reference_up must be a nonzero finite vector")
+        })?;
+        let right = depth_norm(cross(forward, up)).ok_or_else(|| {
+            format!("camera at {t}: reference_up must not be collinear with the viewing axis")
+        })?;
+        let down = cross(forward, right);
+        let (s, c) = sc(self.roll.as_ref().map_or(0.0, |r| r.eval(t)));
+        let basis = [
+            [0, 1, 2].map(|i| c * right[i] + s * down[i]),
+            [0, 1, 2].map(|i| -s * right[i] + c * down[i]),
+            forward,
+        ];
+        let near = self.near.unwrap_or(Rational::ONE).to_f64();
+        let far = self.far.unwrap_or(Rational::from_int(DEPTH_FAR)).to_f64();
+        if !camera.zoom.is_finite()
+            || camera.zoom <= 0.0
+            || !basis.iter().flatten().all(|v| v.is_finite())
+            || !near.is_finite()
+            || !far.is_finite()
+            || near <= 0.0
+            || far <= near
+        {
+            return Err(format!(
+                "camera at {t}: nonfinite/invalid evaluated camera or clipping planes"
+            ));
+        }
+        Ok(DepthCameraAt {
+            camera,
+            basis,
+            near,
+            far,
+        })
     }
 
     pub fn is_animated(&self) -> bool {
@@ -179,6 +264,10 @@ impl CameraSpec {
             point_of_interest: s3(&self.point_of_interest),
             zoom: self.zoom.as_ref().map(|a| a.shifted(dt)),
             fov_deg: self.fov_deg.as_ref().map(|a| a.shifted(dt)),
+            reference_up: s3(&self.reference_up),
+            roll: self.roll.as_ref().map(|a| a.shifted(dt)),
+            near: self.near,
+            far: self.far,
         }
     }
 
@@ -187,6 +276,15 @@ impl CameraSpec {
         for (n, a) in self.all() {
             h.update(n.as_bytes());
             a.hash_into(h);
+        }
+        for (name, value) in [
+            (b"near".as_slice(), self.near),
+            (b"far".as_slice(), self.far),
+        ] {
+            if let Some(value) = value {
+                h.update(name);
+                h.update(&value.hash_bytes());
+            }
         }
     }
 }
@@ -327,6 +425,53 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 fn norm(a: [f64; 3]) -> Option<[f64; 3]> {
     let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
     (l > 1e-12 && l.is_finite()).then(|| a.map(|v| v / l))
+}
+
+// Scale first so finite very small/large reference vectors remain valid.
+// This is separate from the legacy camera's fallback/threshold math.
+fn depth_norm(a: [f64; 3]) -> Option<[f64; 3]> {
+    if !a.iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    let scale = a.iter().map(|v| v.abs()).fold(0.0, f64::max);
+    if scale == 0.0 {
+        return None;
+    }
+    let v = a.map(|x| x / scale);
+    let length = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    Some(v.map(|x| x / length))
+}
+
+/// Source pixel coordinates -> camera XYZ affine matrix for the opt-in scene.
+/// Column 2 is translation, not a source Z axis; the source is a flat card.
+pub fn layer_camera_affine(
+    t: &TransformAt,
+    d3: [f64; 7],
+    cam: &DepthCameraAt,
+    pixel_aspect: f64,
+) -> Mat3 {
+    let [pz, az, ox, oy, oz, rxd, ryd] = d3;
+    let r = mul(
+        &mul(&mul(&rx(ox), &ry(oy)), &rz(oz)),
+        &mul(&mul(&rx(rxd), &ry(ryd)), &rz(t.rotation_deg)),
+    );
+    let m = mul(
+        &r,
+        &[
+            [t.scale[0], 0.0, 0.0],
+            [0.0, t.scale[1], 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+    );
+    let pos = [t.position[0] * pixel_aspect, t.position[1], pz];
+    let anchor = [t.anchor[0] * pixel_aspect, t.anchor[1], az];
+    let a = apply(&cam.basis, [m[0][0], m[1][0], m[2][0]]);
+    let b = apply(&cam.basis, [m[0][1], m[1][1], m[2][1]]);
+    let c = apply(
+        &cam.basis,
+        sub3(sub3(pos, apply(&m, anchor)), cam.camera.position),
+    );
+    [0, 1, 2].map(|k| [a[k] * pixel_aspect, b[k], c[k]])
 }
 
 /// World -> camera rotation (rows: camera right, down, forward).

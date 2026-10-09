@@ -1457,11 +1457,11 @@ where
             to_tick(duration)?;
         }
         tl.validate()?;
-        if tl.camera.is_some() || tl.motion_blur.is_some() {
+        if tl.camera.is_some() || tl.motion_blur.is_some() || !tl.renderer.is_legacy() {
             self.report.loss(
                 "composition_3d",
                 &tl.name,
-                "camera and motion-blur composition settings omitted",
+                "camera, depth renderer and motion-blur composition settings omitted",
             );
         }
         if tl.audio.loudness.is_some() {

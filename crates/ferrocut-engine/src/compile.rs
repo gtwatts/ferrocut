@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 
 use crate::comp::{CompStack, is_comp};
+use crate::depth::{SceneClip, SceneNode};
 use crate::fx::{AdjustClip, AdjustNode, EffectNode, EffectStack};
 use ferrocut_core::RationalTime;
 
@@ -20,6 +21,7 @@ use crate::timeline::Timeline;
 
 enum TrackOut {
     Layer(NodeId, BlendNode, Vec<StackClip>),
+    Depth(Vec<(SceneClip, NodeId)>),
     Adjust(Vec<AdjustClip>),
 }
 
@@ -40,6 +42,9 @@ pub struct Compiled {
     pub warnings: Vec<String>,
     /// Largest native or output canvas used for conservative job sizing.
     pub max_layer_size: (u32, u32),
+    /// Conservative additional depth-scene allocation model per worker.
+    /// Not a measured peak; existing pool/OOM backoff remains authoritative.
+    pub extra_gpu_bytes_per_job: u64,
 }
 
 #[derive(Default)]
@@ -47,6 +52,7 @@ struct BuildInfo {
     placements: Vec<PlacementReport>,
     warnings: Vec<String>,
     max_layer_size: (u32, u32),
+    extra_gpu_bytes_per_job: u64,
 }
 
 impl BuildInfo {
@@ -87,6 +93,7 @@ pub fn compile_with(
         placements: info.placements,
         warnings: info.warnings,
         max_layer_size: info.max_layer_size,
+        extra_gpu_bytes_per_job: info.extra_gpu_bytes_per_job,
     })
 }
 
@@ -103,12 +110,14 @@ fn build(
     // nested comps are baked here too.
     let baked = crate::expr::bake(tl)?;
     let tl: &Timeline = &baked;
+    crate::depth::validate(tl)?;
     let mattes = crate::blend::matte_plan(&tl.tracks)?;
     let (w, h) = (tl.output.width, tl.output.height);
     info.include_size((w, h));
     // Painter's sort only when there are 3D layers (otherwise the plain
     // over/blend chain, so 2D graphs and keys are unchanged).
-    let any_3d = tl.tracks.iter().any(|t| t.clips.iter().any(|c| c.three_d));
+    let depth_mode = !tl.renderer.is_legacy();
+    let any_3d = !depth_mode && tl.tracks.iter().any(|t| t.clips.iter().any(|c| c.three_d));
     let mut track_outputs = Vec::new();
     for track in &tl.tracks {
         let mut clips: Vec<_> = track.clips.iter().collect();
@@ -117,6 +126,7 @@ fn build(
         let mut ranges = Vec::new();
         let mut modes = Vec::new();
         let mut stack_clips = Vec::new();
+        let mut scene_clips = Vec::new();
         if track.clips.iter().any(|c| c.adjustment) {
             let mut adj = Vec::new();
             for c in clips {
@@ -240,6 +250,23 @@ fn build(
                 top = g.add(Arc::new(node), vec![top]);
             }
             let blur = tl.motion_blur.filter(|_| c.motion_blur);
+            if depth_mode && c.three_d {
+                scene_clips.push((
+                    SceneClip {
+                        id: c.id.clone(),
+                        range: ClipRange {
+                            start: c.start,
+                            end: c.end(),
+                            dissolve_in: None,
+                        },
+                        spec: c.transform.clone().unwrap_or_default(),
+                        placement,
+                        motion_blur: c.motion_blur,
+                    },
+                    top,
+                ));
+                continue;
+            }
             if !placement.is_trivial() || c.transform.is_some() || c.three_d || blur.is_some() {
                 let node = TransformNode {
                     start: c.start,
@@ -271,6 +298,10 @@ fn build(
             });
             modes.push(c.blend_mode);
         }
+        if !scene_clips.is_empty() {
+            track_outputs.push(TrackOut::Depth(scene_clips));
+            continue;
+        }
         let seq = SequenceNode {
             ranges,
             fps: tl.output.fps,
@@ -300,7 +331,7 @@ fn build(
         .iter()
         .map(|t| match t {
             TrackOut::Layer(id, _, _) => Some(*id),
-            TrackOut::Adjust(_) => None,
+            TrackOut::Adjust(_) | TrackOut::Depth(_) => None,
         })
         .collect();
     for &ti in &mattes.order {
@@ -319,13 +350,22 @@ fn build(
     let mut out: Option<NodeId> = None;
     let mut stack_layers = Vec::new();
     let mut stack_inputs = Vec::new();
+    let mut scene_pending = Vec::new();
     for (ti, next) in track_outputs.into_iter().enumerate() {
         if mattes.consumed[ti] || !tl.tracks[ti].visible {
             continue;
         }
         let (layer, blend, stack_clips) = match next {
-            TrackOut::Layer(_, b, s) => (layers[ti].expect("picture track"), b, s),
+            TrackOut::Depth(cards) => {
+                scene_pending.extend(cards);
+                continue;
+            }
+            TrackOut::Layer(_, b, s) => {
+                flush_scene(g, tl, &mut scene_pending, &mut out, info);
+                (layers[ti].expect("picture track"), b, s)
+            }
             TrackOut::Adjust(clips) => {
+                flush_scene(g, tl, &mut scene_pending, &mut out, info);
                 let bg = match out {
                     Some(bg) => bg,
                     None => g.add(Arc::new(empty_sequence(tl)), vec![]),
@@ -354,6 +394,7 @@ fn build(
             Some(bg) => g.add(Arc::new(blend), vec![layer, bg]),
         });
     }
+    flush_scene(g, tl, &mut scene_pending, &mut out, info);
     if any_3d {
         let node = StackNode {
             layers: stack_layers,
@@ -364,6 +405,57 @@ fn build(
         return Ok(g.add(Arc::new(node), stack_inputs));
     }
     Ok(out.unwrap_or_else(|| g.add(Arc::new(empty_sequence(tl)), vec![])))
+}
+
+fn flush_scene(
+    g: &mut Graph,
+    tl: &Timeline,
+    pending: &mut Vec<(SceneClip, NodeId)>,
+    out: &mut Option<NodeId>,
+    info: &mut BuildInfo,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let blur = tl.motion_blur.filter(|_| pending[0].0.motion_blur);
+    let source_bytes: u64 = pending
+        .iter()
+        .map(|(c, _)| {
+            u64::from(c.placement.native.0)
+                .saturating_mul(u64::from(c.placement.native.1))
+                .saturating_mul(8)
+        })
+        .fold(0_u64, u64::saturating_add);
+    // 40B scratch + 8B returned texture; shutter mean retains two more
+    // working frames. Same-worker render-target reuse is command-ordered in
+    // the core pool, so scratch is reused across shutter samples without a
+    // submit. Uploads use the pool's separate recording-epoch fence. Add
+    // native source textures conservatively across scene nodes; this is an
+    // estimate, with runtime pool accounting/backoff covering overscan/FX.
+    let bytes = u64::from(tl.output.width)
+        .saturating_mul(u64::from(tl.output.height))
+        .saturating_mul(
+            crate::depth_gpu::SCRATCH_BYTES_PER_PIXEL + 8 + if blur.is_some() { 16 } else { 0 },
+        );
+    info.extra_gpu_bytes_per_job = info
+        .extra_gpu_bytes_per_job
+        .saturating_add(bytes.saturating_add(source_bytes));
+    let (clips, inputs) = std::mem::take(pending).into_iter().unzip();
+    let layer = g.add(
+        Arc::new(SceneNode {
+            clips,
+            camera: tl.camera.clone().unwrap_or_default(),
+            blur,
+            fps: tl.output.fps,
+            width: tl.output.width,
+            height: tl.output.height,
+        }),
+        inputs,
+    );
+    *out = Some(match *out {
+        None => layer,
+        Some(bg) => g.add(Arc::new(OverNode), vec![layer, bg]),
+    });
 }
 
 /// Compile for a draft render: video sources that have a proxy (see

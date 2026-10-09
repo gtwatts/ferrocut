@@ -125,7 +125,7 @@ Start with `docs://agent/onboarding.md` for a complete native graphics workflow 
   camera, `zoom = width * 50 / 36` at `[w/2, h/2, -zoom]` looking at `[w/2, h/2, 0]`, so an
   untransformed 3D layer looks exactly like the 2D one. Setting one component (`camera.position.x`)
   fills the others from that default; set `position.z` to `-zoom` yourself if you change `zoom`.
-- Stacking: consecutive 3D layers (tracks whose clip is 3D at that time; empty tracks are
+- Default `renderer: "legacy"` stacking: consecutive 3D layers (tracks whose clip is 3D at that time; empty tracks are
   skipped) are drawn farthest first by the camera-space depth of their position (ties keep
   track order); a 2D layer in between splits the run and stays in track order. No
   intersections, lights, shadows or depth of field. Parts of a card less than 1 px in front of
@@ -133,6 +133,54 @@ Start with `docs://agent/onboarding.md` for a complete native graphics workflow 
 - Recipe: a dolly past generator cards: `set_param` `three_d` true and `transform.position_z`
   on each card, then `set_keyframes` `camera.position.x` (and keep `camera.point_of_interest`
   fixed for an orbit-like move).
+
+## Native planar depth (opt-in)
+
+Set timeline `renderer` to `depth_layers_v1` to resolve intersections per pixel,
+including fractional source alpha and cutout windows. The legacy default and its
+keys remain unchanged when the new mode/controls are absent. This is a bounded
+planar compositor, without native lights, shadows, aperture focus or meshes.
+
+- The existing camera position/target/zoom controls apply. New mode-only controls:
+  `camera.reference_up` (animatable vector, default `[0,-1,0]`), `camera.roll`
+  (animatable degrees about the forward axis, default 0), `camera.near` (fixed,
+  default 1) and `camera.far` (fixed, default 100000). Require `0 < near < far`.
+  Coincident position/target, zero up or collinear up/view direction are errors;
+  there is no automatic replacement axis. Camera validity is rechecked at every
+  shutter sample, including between valid keyframes.
+- Visible, unconsumed 2D tracks delimit scenes even during clip gaps. Hidden or
+  consumed matte tracks do not. Each scene accepts at most **16 authored clips**
+  across its consecutive 3D tracks, with no overlapping clips on a single track.
+  Inactive authored clips still count toward this bound. Higher track/start
+  ordinal wins **exact represented Depth32 ties**; there is no depth epsilon.
+- Sources retain native fit/anchor and signed storage windows. Every texture in a
+  scene must have one common positive pixel aspect; normalize mixed-PAR sources
+  before combining them. A nested composition is one textured plane, with its
+  source-in/speed/remap intact. No implicit collapse-through; `unnest` refuses
+  either a parent or inner depth composition to avoid changing scene boundaries.
+- Only normal blending is supported within a scene. Mixing 2D/3D on one track,
+  track effects, adjustment clips, dissolves or matte participation by 3D tracks
+  is rejected with affected IDs. Apply clip effects before projection, or author
+  the effect/matte inside a nested texture or after a nested scene.
+- With timeline motion blur, every card in a scene must use the same layer blur
+  switch. Geometry, camera and visibility resolve together at each exact shutter
+  sample, then complete sample colors are averaged. Content/masks/clip effects
+  are held at the nominal frame; a card visible only during shutter samples uses
+  its nearest active sample (earlier on ties). This is transform/camera blur,
+  not animated-content blur.
+- Filtering is bilinear in source space, with single-sample raster edges. Very
+  small/oblique cards can alias; this does not claim legacy Catmull-Rom filtering
+  equivalence. Empty projected cards contribute nothing; exactly singular cards
+  warn once per clip/worker. Clipping is against the homogeneous near/far planes.
+- Scratch uses about 40 B/output pixel per worker, plus one 8 B/pixel returned
+  texture, up to two extra working frames for shutter averaging, and source
+  textures. CLI and MCP automatic job sizing include this additional model;
+  explicit job counts and runtime memory backoff keep their existing behavior.
+  The model is not measured peak memory; overscan/effects can need more.
+
+The [Crossing Glass](../../../examples/crossing-glass/README.md) source package
+contains a legacy before case, native candidate and negative controls. Its
+source checkpoint is not evidence of rendered, inspected or installed behavior.
 
 ## Motion blur
 
@@ -350,8 +398,9 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
 - track: `visible`, `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.effects`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
   `bus.duck.ratio`, `bus.duck.attack_ms`, `bus.duck.release_ms`, `bus.duck.range_db`
 - timeline: `audio.master_gain_db`, `audio.loudness`, `audio.loudness.target_lufs`,
-  `audio.loudness.true_peak_dbtp`, `output.duration`, `camera`, `camera.position`,
-  `camera.point_of_interest` (`.x`/`.y`/`.z`), `camera.zoom`, `camera.fov_deg`, `motion_blur`,
+  `audio.loudness.true_peak_dbtp`, `output.duration`, `renderer`, `camera`, `camera.position`,
+  `camera.point_of_interest` and `camera.reference_up` (`.x`/`.y`/`.z`), `camera.zoom`, `camera.fov_deg`,
+  `camera.roll`, `camera.near`, `camera.far`, `motion_blur`,
   `motion_blur.shutter_angle`, `motion_blur.shutter_phase`, `motion_blur.samples`
 
 ## Recipes

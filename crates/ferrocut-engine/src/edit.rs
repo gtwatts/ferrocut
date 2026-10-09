@@ -2834,6 +2834,7 @@ fn nest(
             ..tl.output.clone()
         },
         tracks: Vec::new(),
+        renderer: tl.renderer,
         audio_tracks: Vec::new(),
         audio: crate::timeline::AudioSettings {
             sample_rate: tl.audio.sample_rate,
@@ -2938,6 +2939,10 @@ fn unnest(
     let inner = media
         .comp(&full)
         .with_context(|| format!("unnest: reading {}", full.display()))?;
+    ensure!(
+        tl.renderer.is_legacy() && inner.renderer.is_legacy(),
+        "unnest: depth_layers_v1 scene boundaries/camera cannot be flattened safely; keep this composition nested"
+    );
     ensure!(
         c.fit.is_none()
             && (inner.output.width, inner.output.height) == (tl.output.width, tl.output.height),

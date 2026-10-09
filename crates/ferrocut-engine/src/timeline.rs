@@ -34,6 +34,9 @@ pub struct Timeline {
     pub name: String,
     pub output: OutputSpec,
     pub tracks: Vec<Track>,
+    /// Opt-in native per-pixel planar depth; absent preserves legacy keys/math.
+    #[serde(default, skip_serializing_if = "crate::depth::Renderer::is_legacy")]
+    pub renderer: crate::depth::Renderer,
     /// Audio-only tracks, mixed after the video tracks' audio buses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_tracks: Vec<AudioTrack>,
@@ -571,6 +574,7 @@ impl Timeline {
         if let Some(m) = &self.motion_blur {
             m.validate().map_err(|e| anyhow::anyhow!(e))?;
         }
+        crate::depth::validate(self)?;
         crate::markers::validate(&self.markers, "timeline")?;
         for c in self.tracks.iter().flat_map(|t| &t.clips) {
             crate::markers::validate(&c.markers, &format!("clip {}", c.id))?;

@@ -958,7 +958,7 @@ fn transform() -> Value {
 }
 
 fn three_d() -> Value {
-    json!({ "type": "boolean", "default": false, "description": "After Effects 3D layer switch: a card in 3D space seen through the timeline camera; consecutive 3D layers are depth-sorted (farthest first), 2D layers split the runs" })
+    json!({ "type": "boolean", "default": false, "description": "A planar card seen through the timeline camera. Default legacy mode painter-sorts consecutive 3D layers by anchor depth. Opt-in depth_layers_v1 resolves intersections and fractional alpha per pixel, up to 16 authored surfaces per run; visible unconsumed 2D tracks split runs." })
 }
 
 fn clip_motion_blur() -> Value {
@@ -975,7 +975,11 @@ fn camera() -> Value {
             "position": triple("camera position [x, y, z], output pixels"),
             "point_of_interest": triple("the point the camera looks at [x, y, z]"),
             "zoom": animatable("distance in pixels at which a layer appears at 100 %, > 0; exclusive with fov_deg"),
-            "fov_deg": animatable("horizontal angle of view, degrees, (0, 180); exclusive with zoom")
+            "fov_deg": animatable("horizontal angle of view, degrees, (0, 180); exclusive with zoom"),
+            "reference_up": triple("depth_layers_v1 only: finite nonzero world-up [x,y,z], default [0,-1,0]; must not be collinear with viewing axis"),
+            "roll": animatable("depth_layers_v1 only: degrees about viewing axis, default 0"),
+            "near": rational("depth_layers_v1 only: positive near clip distance, default 1"),
+            "far": rational("depth_layers_v1 only: far clip distance > near, default 100000")
         },
         "additionalProperties": false
     })
@@ -1188,6 +1192,7 @@ pub fn timeline() -> Value {
                 "additionalProperties": false
             },
             "camera": camera(),
+            "renderer": { "type": "string", "enum": ["legacy", "depth_layers_v1"], "default": "legacy", "description": "Opt-in per-pixel planar depth with ordered fractional alpha; at most 16 authored surfaces per consecutive 3D run. Default preserves legacy painter keys and pixels. Unsupported matte, track-effect, overlap or blend interactions error with nesting guidance. D1 has no lights, shadows or aperture DOF." },
             "motion_blur": motion_blur(),
             "markers": markers("timeline time, >= 0 (does not move with ripple edits)")
         },

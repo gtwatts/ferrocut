@@ -1162,9 +1162,14 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
     let cache_dir = cache_dir.unwrap_or_else(|| project::dir_of(&output).join(".ferrocut-cache"));
     let jobs = a.jobs.unwrap_or_else(|| {
         let info = &gpu.get().info;
-        ferrocut_engine::vram::default_jobs(info, c.max_layer_size.0, c.max_layer_size.1)
-            .0
-            .min(MCP_MAX_DEFAULT_JOBS)
+        ferrocut_engine::vram::default_jobs_with_extra(
+            info,
+            c.max_layer_size.0,
+            c.max_layer_size.1,
+            c.extra_gpu_bytes_per_job,
+        )
+        .0
+        .min(MCP_MAX_DEFAULT_JOBS)
     });
     let r = render(
         &tl,
