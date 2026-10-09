@@ -378,6 +378,30 @@ pub fn contact_sheet(
     labeled_sheet(&cells, &labels, cols, cell_w)
 }
 
+/// Size of a [`labeled_sheet`] of `n` cells whose first image is `sw` x
+/// `sh` (before the [`MAX_SHEET_PIXELS`] check): `(width, height, cell
+/// width, cell height, columns)`.
+pub fn sheet_layout(
+    sw: u32,
+    sh: u32,
+    n: usize,
+    cols: u32,
+    cell_w: u32,
+) -> (u64, u64, u32, u32, u32) {
+    let cell_w = cell_w.min(sw).max(16);
+    let cell_h = ((sh as u64 * cell_w as u64) / sw as u64).max(1) as u32;
+    let cols = cols.clamp(1, n.max(1) as u32);
+    let rows = (n as u32).div_ceil(cols);
+    let gap = 4u64;
+    (
+        cols as u64 * cell_w as u64 + (cols as u64 + 1) * gap,
+        rows as u64 * cell_h as u64 + (rows as u64 + 1) * gap,
+        cell_w,
+        cell_h,
+        cols,
+    )
+}
+
 /// [`contact_sheet`] for any RGBA images (`(width, height, rgba)`), each
 /// labeled with its own text (digits, `:`, `.`, `f`, `s`, `#`, space). Cells
 /// take the first image's aspect; others are scaled into it.
@@ -389,16 +413,9 @@ pub fn labeled_sheet(
 ) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     ensure!(!cells.is_empty(), "no stills");
     ensure!(cells.len() == labels.len(), "one label per still");
-    let (sw, sh) = (cells[0].0, cells[0].1);
-    let cell_w = cell_w.min(sw).max(16);
-    let cell_h = ((sh as u64 * cell_w as u64) / sw as u64).max(1) as u32;
-    let cols = cols.clamp(1, cells.len() as u32);
-    let rows = (cells.len() as u32).div_ceil(cols);
+    let (w, h, cell_w, cell_h, cols) =
+        sheet_layout(cells[0].0, cells[0].1, cells.len(), cols, cell_w);
     let gap = 4;
-    let (w, h) = (
-        cols as u64 * cell_w as u64 + (cols as u64 + 1) * gap as u64,
-        rows as u64 * cell_h as u64 + (rows as u64 + 1) * gap as u64,
-    );
     ensure!(
         w * h <= MAX_SHEET_PIXELS,
         "a {w}x{h} contact sheet is too large (max {MAX_SHEET_PIXELS} pixels): fewer columns, a smaller cell_width or fewer frames"
@@ -574,9 +591,9 @@ pub fn png_bytes_straight(width: u32, height: u32, rgba: &[u8]) -> anyhow::Resul
 /// Display composite of straight-alpha RGBA over an 8-pixel checkerboard
 /// (grey 102 / 153), so translucency stays visible after resizing or in a
 /// contact sheet; the result is opaque. Opaque input is returned unchanged.
-pub fn over_checkerboard(rgba: &[u8], width: u32) -> Vec<u8> {
+pub fn over_checkerboard(rgba: &[u8], width: u32) -> std::borrow::Cow<'_, [u8]> {
     if rgba.chunks_exact(4).all(|p| p[3] == 255) {
-        return rgba.to_vec();
+        return std::borrow::Cow::Borrowed(rgba);
     }
     let mut out = rgba.to_vec();
     for (i, px) in out.chunks_exact_mut(4).enumerate() {
@@ -592,7 +609,7 @@ pub fn over_checkerboard(rgba: &[u8], width: u32) -> Vec<u8> {
         }
         px[3] = 255;
     }
-    out
+    std::borrow::Cow::Owned(out)
 }
 
 /// Write `bytes` at `path` without replacing anything: the file is created

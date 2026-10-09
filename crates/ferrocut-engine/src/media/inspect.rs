@@ -137,6 +137,9 @@ pub struct Inspection {
     pub identity: FileIdentity,
     pub stream: EncodedStream,
     pub frames: Vec<EncodedFrame>,
+    /// Bytes of RGBA the returned frames hold (one copy per requested
+    /// position, duplicates included), counted against the budget.
+    pub held_bytes: u64,
 }
 
 /// [`inspect_file`] without the identity or a test hook.
@@ -269,6 +272,11 @@ pub fn inspect_with_limits(
         kind: codec::threading::Type::None,
         count: 1,
     });
+    // The decoder refuses larger frames itself, before allocating them.
+    // SAFETY: plain field write on an owned, not yet opened codec context.
+    unsafe {
+        (*cctx.as_mut_ptr()).max_pixels = max_px.min(i64::MAX as u64) as i64;
+    }
     let mut decoder = cctx.decoder().video()?;
     let codec_name = decoder
         .codec()
@@ -324,7 +332,8 @@ pub fn inspect_with_limits(
                     hook();
                 }
                 if let Some(positions) = wanted.remove(&i) {
-                    let add = w * h * 4;
+                    // One RGBA copy per requested position (duplicates too).
+                    let add = w * h * 4 * positions.len() as u64;
                     ensure!(
                         retained + add <= max_bytes,
                         "{}",
@@ -435,10 +444,11 @@ pub fn inspect_with_limits(
         "{} changed while it was decoded (blake3 {before} -> {after}); inspect it again",
         path.display()
     );
-    let frames = out
+    let frames: Vec<EncodedFrame> = out
         .into_iter()
         .map(|f| f.expect("every request filled"))
         .collect();
+    let held_bytes = frames.iter().map(|f| f.rgba.len() as u64).sum();
     Ok(Inspection {
         identity: FileIdentity {
             blake3: before,
@@ -456,11 +466,23 @@ pub fn inspect_with_limits(
             frame_count,
         },
         frames,
+        held_bytes,
     })
 }
 
+type ScalerKey = (
+    Pixel,
+    u32,
+    u32,
+    color::Space,
+    color::Range,
+    color::Primaries,
+    color::TransferCharacteristic,
+);
+
 struct Scaler {
-    key: (Pixel, u32, u32, color::Space, color::Range),
+    /// Everything the conversion and its reported metadata depend on.
+    key: ScalerKey,
     ctx: scaling::Context,
     conversion: Conversion,
     alpha: bool,
@@ -570,7 +592,15 @@ fn to_encoded(
     scaler: &mut Option<Scaler>,
 ) -> anyhow::Result<EncodedFrame> {
     let (w, h) = (f.width(), f.height());
-    let key = (f.format(), w, h, f.color_space(), f.color_range());
+    let key = (
+        f.format(),
+        w,
+        h,
+        f.color_space(),
+        f.color_range(),
+        f.color_primaries(),
+        f.color_transfer_characteristic(),
+    );
     if scaler.as_ref().map(|s| s.key) != Some(key) {
         let (details, conversion, alpha) = conversion_for(f)?;
         let mut ctx = scaling::Context::get(

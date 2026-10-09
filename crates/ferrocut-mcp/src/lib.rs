@@ -1190,14 +1190,37 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
             "png_blake3": png.as_ref().map(|(_, h)| h.clone()),
         }));
     }
+    // Display memory (translucent composites, the sheet and the inline
+    // copy) counts against the same budget as the decoded frames, before any
+    // of it is allocated.
+    let single = ins.frames.len() == 1;
+    let translucent: u64 = ins
+        .frames
+        .iter()
+        .filter(|f| f.rgba.chunks_exact(4).any(|p| p[3] != 255))
+        .map(|f| f.rgba.len() as u64)
+        .sum();
+    let picture: u64 = if single {
+        ins.frames[0].rgba.len() as u64
+    } else {
+        let f0 = &ins.frames[0];
+        let (w, h, ..) =
+            preview::sheet_layout(f0.width, f0.height, ins.frames.len(), a.cols, a.cell_width);
+        // The sheet, and the inline copy made from it.
+        w * h * 4 * 2
+    };
+    let budget = inspect::MAX_RETAINED_BYTES;
+    anyhow::ensure!(
+        ins.held_bytes + translucent + picture <= budget,
+        "frames plus their sheet/inline display would hold more than {budget} bytes; request fewer or smaller frames, or a smaller cell_width"
+    );
     // Sheets and the inline image are display composites: translucent
     // frames are shown over a checkerboard (the full PNGs keep exact alpha).
-    let shown: Vec<Vec<u8>> = ins
+    let shown: Vec<std::borrow::Cow<'_, [u8]>> = ins
         .frames
         .iter()
         .map(|f| preview::over_checkerboard(&f.rgba, f.width))
         .collect();
-    let single = ins.frames.len() == 1;
     let sheet_img = if single {
         None
     } else {
@@ -1210,7 +1233,7 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
             .frames
             .iter()
             .zip(&shown)
-            .map(|(f, px)| (f.width, f.height, px.as_slice()))
+            .map(|(f, px)| (f.width, f.height, px.as_ref()))
             .collect();
         Some(preview::labeled_sheet(
             &cells,
@@ -1250,7 +1273,7 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
     if a.inline {
         let (w, h, img) = match sheet_img {
             Some(s) => s,
-            None => (ins.frames[0].width, ins.frames[0].height, shown[0].clone()),
+            None => (ins.frames[0].width, ins.frames[0].height, shown[0].to_vec()),
         };
         let (w, h, img) = preview::fit_within(&img, w, h, a.inline_max);
         let (w, h, png) = preview::png_within(w, h, &img, INLINE_PNG_MAX_BYTES)?;

@@ -163,6 +163,15 @@ fn frame_size_and_retained_budget_are_enforced() {
         },
     );
     assert!(e.contains("would hold more than"), "{e}");
+    // Duplicate positions are separate copies: [0, 0] needs two frames.
+    let e = run(
+        &[0, 0],
+        Limits {
+            max_frame_pixels: px,
+            max_retained_bytes: px * 4 * 2 - 1,
+        },
+    );
+    assert!(e.contains("would hold more than"), "{e}");
     // Holding the last 8 decoded frames for -8 exceeds a budget of one frame.
     let e = run(
         &[-8],
