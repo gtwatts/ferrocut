@@ -75,6 +75,9 @@ echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
   all. `<adapter>` hashes the adapter's name, ids, backend and driver version, because output is bit-exact
   per adapter and driver but only perceptually equal across them, so a master never mixes chunks from two
   adapters. Keys themselves stay adapter-free, so `plan` and `diff` need no GPU.
+  Native text keys use font bytes in primary/fallback order plus rendering controls, including the face index;
+  font paths only locate those assets. Relocating identical fonts preserves text keys. The content-only font
+  identity change invalidates older text keys once; non-text keys are unchanged.
 - **Chunks** are `gop * gops_per_chunk` frames, GOP-aligned, each an independent closed-GOP encode.
 - **Determinism**: bit-exact on the same machine/driver (any `--jobs`). Across GPUs expect a
   perceptual match (NVIDIA vs Intel Arc on watts: SSIM 0.99989, PSNR 72.7 dB), not identical bytes.
@@ -196,6 +199,13 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
   - `render`: the output chunks that would re-render (`dirty_chunks`, merged frame/second `ranges`, reuse counts).
     This compares chunk keys exactly as the content-addressed cache does, so the media must exist; otherwise
     `render_error` says why. Audio is re-mixed on every render. `--summary` prints a human-readable version.
+  - With render analysis (the default), text font fields compare `blake3:<digest>` content identities in
+    primary/fallback order. A path-only font relocation is not a semantic font change. `a_hash`/`b_hash`
+    remain document hashes; equal documents can refer to different font contents in different directories.
+    Missing or invalid fonts retain the structural comparison and a `render_error`, without asserting content
+    equivalence. `--no-render` (MCP `render:false`) reads no font contents and still reports path changes.
+    Diff compares the assets currently available to each document; it does not reconstruct older font bytes
+    after a shared asset file has been overwritten.
 - **Branches** are named snapshots tracked in the journal:
   - `ferrocut branch <tl> <name>` names the current state;
   - `ferrocut checkout <tl> <name>` swaps the file to that branch's tip (refusing to drop unjournaled changes

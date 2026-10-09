@@ -10,7 +10,8 @@
 //!
 //! Font bytes are frozen when a node is built and included in its hash. A new
 //! compilation sees changed font assets; an existing graph cannot mix old
-//! hashes with newly read font pixels. Font fallback uses only explicit assets.
+//! hashes with newly read font pixels. Paths locate assets but do not identify
+//! rendered text. Font fallback uses only explicit assets, in their given order.
 
 use std::io::Read;
 use std::ops::Range;
@@ -33,7 +34,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::generator::Color;
 
-pub const TEXT_VERSION: &[u8] = b"ferrocut.text.v1.cosmic-0.19.swash-0.2";
+pub const TEXT_VERSION: &[u8] = b"ferrocut.text.v2.content-fonts.cosmic-0.19.swash-0.2";
 pub const MAX_TEXT_BYTES: usize = 256 * 1024;
 const MAX_FONT_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_FONT_TOTAL_BYTES: usize = 256 * 1024 * 1024;
@@ -329,19 +330,29 @@ impl TextSpec {
         self.animatables().iter().any(|(_, v)| v.is_animated())
     }
 
-    /// Structural project hash. Node hashes additionally include frozen fonts.
+    /// Rendering parameters, excluding asset locations. Node hashes additionally
+    /// include the ordered frozen font bytes. The face index stays a parameter.
+    /// Project/journal hashes still use the complete serialized specification.
     pub fn hash_into(&self, h: &mut blake3::Hasher) {
+        let mut parameters = serde_json::to_value(self).expect("text serializes");
+        let fields = parameters.as_object_mut().expect("text is an object");
+        fields.remove("font");
+        fields.remove("fallback_fonts");
         h.update(TEXT_VERSION);
-        h.update(
-            serde_json::to_string(self)
-                .expect("text serializes")
-                .as_bytes(),
-        );
+        h.update(&serde_json::to_vec(&parameters).expect("text parameters serialize"));
     }
 
     /// Reads explicit assets. Validation itself deliberately performs no I/O.
     pub fn font_content_hash(&self) -> Result<NodeHash, NodeError> {
         Ok(load_fonts(self)?.hash)
+    }
+
+    /// Per-asset identities for render-aware diffs, in primary/fallback order.
+    /// Use the same bounded reads and font validation as a newly compiled node.
+    pub(crate) fn font_content_hashes(&self) -> Result<Vec<blake3::Hash>, NodeError> {
+        let fonts = load_fonts(self)?;
+        TextState::new(&fonts, self.font_index)?;
+        Ok(fonts.data.iter().map(|bytes| blake3::hash(bytes)).collect())
     }
 }
 
