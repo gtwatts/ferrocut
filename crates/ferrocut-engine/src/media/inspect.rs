@@ -120,6 +120,15 @@ pub struct FileIdentity {
     pub kind: &'static str,
 }
 
+/// Decoder-side allocation cap for a frame limit of `max_px` pixels:
+/// FFmpeg's `max_pixels` check applies to the decoder's aligned buffer size
+/// (e.g. 64x16 for a 32x16 FFV1 frame), so the cap gets 4x headroom (up to
+/// 2x alignment per dimension). It only stops runaway allocations; the exact
+/// `max_px` limit is enforced on every declared and decoded frame size.
+fn decoder_pixel_cap(max_px: u64) -> i64 {
+    max_px.saturating_mul(4).min(i64::MAX as u64) as i64
+}
+
 /// Resource limits of one inspection ([`Limits::default`] is the published
 /// [`MAX_FRAME_PIXELS`] / [`MAX_RETAINED_BYTES`]).
 #[derive(Clone, Copy, Debug)]
@@ -272,7 +281,7 @@ pub fn inspect_with_limits(
     // The decoder refuses larger frames itself, before allocating them.
     // SAFETY: plain field write on an owned, not yet opened codec context.
     unsafe {
-        (*cctx.as_mut_ptr()).max_pixels = max_px.min(i64::MAX as u64) as i64;
+        (*cctx.as_mut_ptr()).max_pixels = decoder_pixel_cap(max_px);
     }
     let mut decoder = cctx.decoder().video()?;
     let codec_name = decoder
@@ -510,7 +519,8 @@ impl Seek for CancelRead {
 ///   checked against `max_px` BEFORE stream probing;
 /// - demuxers that may add streams while reading are refused, so stream
 ///   probing (`avformat_find_stream_info`, which may decode frames) runs
-///   with `max_pixels = max_px` and one thread for every stream it probes;
+///   with `max_pixels` (the decoder allocation cap) and one thread for every
+///   stream it probes;
 /// - the interrupt callback and the reader stop on `cancel`.
 fn open_contained(
     file: std::fs::File,
@@ -531,7 +541,7 @@ fn open_contained(
     opts.set("protocol_whitelist", "ferrocut-none");
     opts.set("format_whitelist", DEMUXERS);
     let fname = CString::new(name).unwrap_or_default();
-    let px = CString::new(max_px.min(i64::MAX as u64).to_string()).expect("digits");
+    let px = CString::new(decoder_pixel_cap(max_px).to_string()).expect("digits");
     // SAFETY: standard libavformat open sequence on a context we allocate and
     // own: on open failure FFmpeg frees it (and not our custom pb); after open
     // we close it on every early return, or hand it to Input, which then owns

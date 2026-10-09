@@ -449,7 +449,11 @@ fn yuv_matrix_and_range_match_the_reported_conversion() {
     assert!(near(&f[0].rgba, [227, 68, 18]), "{:?}", &f[0].rgba[..4]);
 
     // Packed YUYV in AVI (no tags): treated as YUV, limited assumed, bt601
-    // fallback -> [213, 54, 21]. (Bytes Y0 U Y1 V per pixel pair.)
+    // fallback -> [213, 54, 21] by hand. libswscale's packed 4:2:2 path is
+    // less precise (focused-run-01 observed [211, 53, 19]), so this case
+    // allows +-3: a wrong matrix (bt709 [227,..]), full range ([201, 62, 33])
+    // or no YUV conversion ([100, 90, 100]) are all much further away.
+    // (Bytes Y0 U Y1 V per pixel pair.)
     let p = dir.path().join("yuyv.avi");
     encode_one(&p, "avi", "rawvideo", Pixel::YUYV422, None, |_, x, _| {
         [100u8, 90, 100, 200][x % 4]
@@ -458,7 +462,11 @@ fn yuv_matrix_and_range_match_the_reported_conversion() {
     assert_eq!(f[0].conversion.source_format, "yuyv422");
     assert!(f[0].conversion.applied_range.starts_with("limited"));
     assert!(f[0].conversion.applied_matrix.contains("bt601"));
-    assert!(near(&f[0].rgba, [213, 54, 21]), "{:?}", &f[0].rgba[..4]);
+    let close3 = f[0].rgba[..3]
+        .iter()
+        .zip([213u8, 54, 21])
+        .all(|(&g, w)| (g as i32 - w as i32).abs() <= 3);
+    assert!(close3, "{:?}", &f[0].rgba[..4]);
 
     // A tagged matrix that is not converted correctly here is refused.
     let r = dir.path().join("cl.mkv");
