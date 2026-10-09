@@ -182,13 +182,17 @@ pub struct CheckReport {
     pub measured: Measured,
     /// The perception report's schema version this was graded from.
     pub perceive_schema_version: String,
-    /// How the checker's chunk directory was resolved. `grade_resolved` leaves
+    /// The checker's primary chunk directory and how it was resolved (not
+    /// per-chunk provenance). `grade_resolved` leaves
     /// this empty; `ferrocut-perceive check` fills it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub render_chunks: Option<RenderChunks>,
 }
 
-/// Chunk directory the checker used, and which rule produced it.
+/// The PRIMARY chunk directory (the first existing search directory) and the
+/// rule that produced it. Each chunk file is looked up through the whole
+/// search list, so an individual chunk may have been read from a later
+/// directory (e.g. an explicit `--cache-dir`); this is not per-file provenance.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenderChunks {
     pub chunk_dir: Option<PathBuf>,

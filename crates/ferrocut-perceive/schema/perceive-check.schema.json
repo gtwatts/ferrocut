@@ -323,7 +323,7 @@
           }
         },
         "render_chunks": {
-          "description": "How the checker resolved the render report's chunk_dir. Omitted when grading did not resolve one.",
+          "description": "The checker's PRIMARY chunk directory (the first existing directory it searches) and the rule that produced it. Chunk files are looked up per file through an ordered search list, so a chunk may have been read from a later directory such as an explicit --cache-dir; this is not per-file provenance. Omitted when grading did not resolve one.",
           "type": "object",
           "additionalProperties": false,
           "required": [
