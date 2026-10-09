@@ -441,10 +441,10 @@ pub fn analyze(req: Request) -> anyhow::Result<(Report, Stats)> {
     let every = o.sample_every.unwrap_or_else(|| fps.round()).max(1);
     // An unusable chunk directory fails before the analysis cache is read, so
     // a warm cache cannot hide it.
-    if let Some(res) = rr.chunk_resolution.as_ref().filter(|r| !r.is_usable()) {
-        if !rr.chunks.is_empty() {
-            bail!("{}", res.error(Path::new("render report")));
-        }
+    if let Some(res) = rr.chunk_resolution.as_ref().filter(|r| !r.is_usable())
+        && !rr.chunks.is_empty()
+    {
+        bail!("{}", res.error(Path::new("render report")));
     }
     let cache = Cache {
         dir: req.cache_dir.join("perceive").join("v1"),

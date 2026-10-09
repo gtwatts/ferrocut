@@ -321,15 +321,14 @@ pub fn resolve_chunk_dir(
     // An ambiguous relative directory gets no implicit fallback: only an
     // explicit --cache-dir says which render's chunks to use.
     if !ambiguous {
-        if let Ok((source, dir)) = &primary {
-            if let Some(engine_cache) = dir
+        if let Ok((source, dir)) = &primary
+            && let Some(engine_cache) = dir
                 .parent()
                 .filter(|p| p.file_name().is_some_and(|n| n == "chunks"))
                 .and_then(Path::parent)
-            {
-                for d in cache_cands(engine_cache) {
-                    push(*source, d, &mut tried);
-                }
+        {
+            for d in cache_cands(engine_cache) {
+                push(*source, d, &mut tried);
             }
         }
         for d in cache_cands(&report_dir.join(".ferrocut-cache")) {
