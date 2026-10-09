@@ -357,6 +357,22 @@ enum CaptionCmd {
         /// Print the generated edit list without writing a timeline/journal.
         #[arg(long)]
         ops_only: bool,
+        /// Snap cue boundaries to the output frame grid (first frame at or
+        /// after each time, so no displayed frame changes).
+        #[arg(long, value_enum, default_value_t = CaptionSnap::Frames)]
+        snap: CaptionSnap,
+        /// Close gaps between cues up to this many seconds (rational, max 2;
+        /// 0 disables). Short gaps blink the caption off for a frame or two.
+        #[arg(long, default_value = "1/10")]
+        close_gaps: ferrocut_core::Rational,
+        /// Extend cues shorter than this many seconds into the following gap
+        /// (never over the next cue or past the program end). Off by default.
+        #[arg(long)]
+        min_duration: Option<ferrocut_core::Rational>,
+        /// Keep the subtitle file's times exactly: no snap, gap closing or
+        /// extension (the behavior before these options).
+        #[arg(long, conflicts_with_all = ["snap", "close_gaps", "min_duration"])]
+        exact_timing: bool,
     },
     /// Export text and timing from the explicitly selected text-only track.
     Export {
@@ -367,6 +383,12 @@ enum CaptionCmd {
         #[arg(short, long)]
         output: PathBuf,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum CaptionSnap {
+    Frames,
+    None,
 }
 
 #[derive(Subcommand)]
@@ -532,22 +554,47 @@ fn main() -> anyhow::Result<()> {
                     output,
                     dry_run,
                     ops_only,
+                    snap,
+                    close_gaps,
+                    min_duration,
+                    exact_timing,
                 } => {
                     let tl = Timeline::load(&timeline)?;
                     let cues = captions::parse(
-                        &std::fs::read_to_string(&subtitles)?,
+                        &std::fs::read_to_string(&subtitles)
+                            .with_context(|| format!("reading {}", subtitles.display()))?,
                         CaptionFormat::from_path(&subtitles)?,
                     )?;
-                    let mut spec: ferrocut_engine::text::TextSpec =
-                        serde_json::from_str(&std::fs::read_to_string(&style)?)?;
-                    let base =
-                        std::fs::canonicalize(style.parent().unwrap_or(std::path::Path::new(".")))?;
+                    let mut spec: ferrocut_engine::text::TextSpec = serde_json::from_str(
+                        &std::fs::read_to_string(&style)
+                            .with_context(|| format!("reading style {}", style.display()))?,
+                    )?;
+                    let base = std::fs::canonicalize(project::dir_of(&style))?;
                     for font in spec.font_paths_mut() {
                         if font.is_relative() {
                             *font = base.join(&*font);
                         }
                     }
-                    let ops = captions::import_ops(&tl, &cues, &track, &spec)?;
+                    let timing = if exact_timing {
+                        captions::CaptionTiming::exact()
+                    } else {
+                        captions::CaptionTiming {
+                            snap: matches!(snap, CaptionSnap::Frames),
+                            close_gaps: ferrocut_core::RationalTime(close_gaps),
+                            min_duration: min_duration.map(ferrocut_core::RationalTime),
+                        }
+                    };
+                    let (ops, report) =
+                        captions::import_ops_timed(&tl, &cues, &track, &spec, &timing)?;
+                    for w in &report.warnings {
+                        eprintln!("warning: {w}");
+                    }
+                    eprintln!(
+                        "captions: {} of {} cues retimed, {} uncaptioned gaps kept",
+                        report.changed.len(),
+                        cues.len(),
+                        report.gaps_kept.len()
+                    );
                     if ops_only {
                         println!("{}", serde_json::to_string_pretty(&ops)?);
                     } else {
@@ -561,7 +608,9 @@ fn main() -> anyhow::Result<()> {
                                 ..Default::default()
                             },
                         )?;
-                        println!("{}", serde_json::to_string_pretty(&outcome)?);
+                        let mut v = serde_json::to_value(&outcome)?;
+                        v["caption_timing"] = serde_json::to_value(&report)?;
+                        println!("{}", serde_json::to_string_pretty(&v)?);
                     }
                 }
                 CaptionCmd::Export {
@@ -571,6 +620,18 @@ fn main() -> anyhow::Result<()> {
                 } => {
                     let tl = Timeline::load(&timeline)?;
                     let cues = captions::from_track(&tl, &track)?;
+                    // Report the timeline's own blinks (overlapping tracks
+                    // have none to report); the export is unchanged.
+                    if let Ok((_, report)) = captions::retime(
+                        &cues,
+                        tl.output.fps,
+                        tl.duration(),
+                        &captions::CaptionTiming::exact(),
+                    ) {
+                        for w in &report.warnings {
+                            eprintln!("warning: {w}");
+                        }
+                    }
                     let text = captions::write(&cues, CaptionFormat::from_path(&output)?)?;
                     use std::io::Write as _;
                     let mut file = std::fs::OpenOptions::new()
