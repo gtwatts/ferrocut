@@ -233,6 +233,7 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 | `plan` | Chunk plan (index, frame range, content key) without decoding or GPU |
 | `render` | Incremental render (`jobs` (default 4, lowered to fit free VRAM), `force`, `cache_dir`, `cpu`, `timeout_s`, `deliver: "mp4"` or `{format, output, qp, audio, jobs}`); returns `report_path`, hashes, chunk-reuse stats, `oom_backoffs` and, with `deliver`, a `deliver` section |
 | `preview_frames` | Stills and a labeled contact sheet straight from the graph (`at` times, `frames`, or `spread` N evenly spaced), no video encode; the sheet (or single frame) comes back inline as an image, `each` writes full-resolution PNGs |
+| `artifact_frames` | Exact frames decoded from an encoded file (a delivery or excerpt), by presentation-order ordinal (`-1` = last), each with its own pts/time base, conversion and PNG hash; the file's blake3 is pinned and rechecked; the sheet (or single frame) comes back inline |
 | `timeline_schema` | Timeline JSON Schema, edit-op schema (`op` narrows to one op), parameter registry (`query` filters), authoring guide |
 | `report_read` | Summary (or `full`) of a render report |
 | `quality_check` | Perceptual quality check of a render via `ferrocut-perceive` (below): `status`, `problems`, `warnings`; `render` also takes `check: true` |

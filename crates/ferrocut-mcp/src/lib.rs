@@ -3,7 +3,7 @@
 //!
 //! Tools: `timeline_get`, `timeline_schema`, `media_probe`, `index_media`,
 //! `transcript_search`, `shots_list`, `edit_apply`,
-//! `diff`, `plan`, `render`, `preview_frames`, `report_read`, `quality_check`, `log`, `undo`,
+//! `diff`, `plan`, `render`, `preview_frames`, `artifact_frames`, `report_read`, `quality_check`, `log`, `undo`,
 //! `branch`, `openh264`. Resources: `docs://` documents (timeline JSON
 //! Schema, authoring guide, edit-op schema, parameter registry, the
 //! checker's report schema), see [`resources`]. Every input schema is hand-written
@@ -253,6 +253,13 @@ fn build_tools() -> Vec<Tool> {
             "Preview frames (stills)",
             "Render chosen output frames to PNG stills and a labeled contact sheet without encoding video: the same pixels a master render would hold at those frames (8-bit Rec.709), through the real graph and compositor. Choose frames by timeline time (`at`), index (`frames`) or `spread` (N evenly spaced over the whole timeline; default 12). Returns each frame's time, timecode and path, the sheet path, and (inline=true, default) the sheet or single frame as an image so you can look at it immediately. Use each=true and read the full-resolution PNGs to check small text. Look before and after every edit batch; it is much cheaper than a draft render. Provenance: `hash` is the timeline as parsed once before rendering (the pixels come from that snapshot); `artifact.kind` is native_render (not an encoded file); each frame carries its render-graph `key` and `png_blake3`, and the sheet and inline image their blake3. Referenced media/fonts are read at render time, not frozen.",
             schema::preview_frames(),
+            rw(false).idempotent(true),
+        ),
+        tool(
+            "artifact_frames",
+            "Inspect encoded frames",
+            "Decode exact frames from an encoded video file (a delivery, an excerpt or a master) and look at them: what was actually written, not a re-render (preview_frames renders the timeline instead). Frames are ordinals in presentation order from the stream start (0 = first, -1 = last); each comes back with its own pts, the stream time_base and its exact time from the timestamp (never from nominal fps, so variable-rate files stay exact), key/corrupt flags, the source pixel format and the YUV matrix/range used to convert it, a full-resolution PNG path and png_blake3. artifact.kind is encoded_file, with the file's blake3 taken before decoding and checked again after (a file changed meanwhile is an error). Returns a labeled contact sheet and, inline=true (default), the sheet or single frame as an image. Decoding is sequential from the start, at most 100000 frames.",
+            schema::artifact_frames(),
             rw(false).idempotent(true),
         ),
         tool(
@@ -1025,6 +1032,171 @@ fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
     Ok(out)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactArgs {
+    path: PathBuf,
+    frames: Vec<i64>,
+    output_dir: Option<PathBuf>,
+    #[serde(default = "d_true")]
+    each: bool,
+    #[serde(default = "d_true")]
+    sheet: bool,
+    #[serde(default = "d_cols")]
+    cols: u32,
+    #[serde(default = "d_cell_width")]
+    cell_width: u32,
+    prefix: Option<String>,
+    #[serde(default = "d_true")]
+    inline: bool,
+    #[serde(default = "d_inline_max")]
+    inline_max: u32,
+}
+
+/// `m:ss.ss f<ordinal>` from a frame's exact time; `#<ordinal>` when it has
+/// no timestamp or one before the stream start (labels have no minus sign).
+pub fn ordinal_label(index: u64, time: Option<ferrocut_core::RationalTime>) -> String {
+    let cs = time.map(|t| (t.seconds().to_f64() * 100.0).round() as i64);
+    match cs {
+        Some(cs) if cs >= 0 => format!(
+            "{}:{:02}.{:02} f{index}",
+            cs / 6000,
+            (cs % 6000) / 100,
+            cs % 100
+        ),
+        _ => format!("#{index}"),
+    }
+}
+
+fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
+    use ferrocut_engine::media::inspect;
+    use ferrocut_engine::preview;
+    let path = cx.root.check(&a.path)?;
+    anyhow::ensure!(path.is_file(), "{} is not a file", a.path.display());
+    if !(1..=16).contains(&a.cols) {
+        bail!("cols must be 1..=16");
+    }
+    if !(64..=1920).contains(&a.cell_width) {
+        bail!("cell_width must be 64..=1920");
+    }
+    if !(256..=4096).contains(&a.inline_max) {
+        bail!("inline_max must be 256..=4096");
+    }
+    let prefix = a.prefix.unwrap_or_else(|| {
+        path.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "frames".into())
+    });
+    preview::check_prefix(&prefix)?;
+    let dir = match a.output_dir {
+        Some(d) => cx.root.check(&d)?,
+        None => project::dir_of(&path).join("inspect"),
+    };
+    // Pin the content identity, decode, and confirm it did not change while
+    // decoding: the pixels returned belong to exactly this hash.
+    let before = ferrocut_engine::index::blake3_file(&path)?;
+    let bytes = std::fs::metadata(&path)?.len();
+    let (stream, frames) = {
+        let _one_at_a_time = RENDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        inspect::decode_frames(&path, &a.frames, &cx.cancel)?
+    };
+    let after = ferrocut_engine::index::blake3_file(&path)?;
+    anyhow::ensure!(
+        before == after,
+        "{} changed while it was decoded (blake3 {before} -> {after}); inspect it again",
+        a.path.display()
+    );
+    let tag = &before[..12.min(before.len())];
+    let file_blake3 = |p: &std::path::Path| ferrocut_engine::index::blake3_file(p);
+    let mut frames_json = Vec::new();
+    for f in &frames {
+        let png = if a.each {
+            // Named by content hash and ordinal: one name always holds the
+            // same pixels, so rewriting it never replaces another file's frame.
+            let p = cx
+                .root
+                .check(&dir.join(format!("{prefix}-{tag}-i{:06}.png", f.index)))?;
+            preview::write_png(&p, f.width, f.height, &f.rgba)?;
+            Some(p)
+        } else {
+            None
+        };
+        frames_json.push(json!({
+            "index": f.index,
+            "pts": f.pts,
+            "time": f.time.map(|t| t.seconds().to_string()),
+            "key_frame": f.key_frame,
+            "corrupt": f.corrupt,
+            "width": f.width,
+            "height": f.height,
+            "source_format": f.source_format,
+            "conversion": f.conversion,
+            "path": png.as_deref().map(|p| rel(cx, p)),
+            "png_blake3": png.as_deref().map(file_blake3).transpose()?,
+        }));
+    }
+    let single = frames.len() == 1;
+    let sheet_img = if single {
+        None
+    } else {
+        let labels: Vec<String> = frames
+            .iter()
+            .map(|f| ordinal_label(f.index, f.time))
+            .collect();
+        let cells: Vec<(u32, u32, &[u8])> = frames
+            .iter()
+            .map(|f| (f.width, f.height, f.rgba.as_slice()))
+            .collect();
+        Some(preview::labeled_sheet(
+            &cells,
+            &labels,
+            a.cols,
+            a.cell_width,
+        )?)
+    };
+    let sheet_path = match (&sheet_img, a.sheet) {
+        (Some((w, h, img)), true) => {
+            let p = cx
+                .root
+                .check(&dir.join(format!("{prefix}-{tag}-sheet.png")))?;
+            preview::write_png(&p, *w, *h, img)?;
+            Some(p)
+        }
+        _ => None,
+    };
+    let mut out = json!({
+        "artifact": {
+            "kind": "encoded_file",
+            "path": rel(cx, &path),
+            "blake3": before,
+            "bytes": bytes,
+            "unchanged_after_decode": true,
+        },
+        "stream": stream,
+        "frames": frames_json,
+        "sheet": sheet_path.as_deref().map(|p| rel(cx, p)),
+        "sheet_blake3": sheet_path.as_deref().map(file_blake3).transpose()?,
+    });
+    if a.inline {
+        let (w, h, img) = match sheet_img {
+            Some(s) => s,
+            None => (frames[0].width, frames[0].height, frames[0].rgba.clone()),
+        };
+        let (w, h, img) = preview::fit_within(&img, w, h, a.inline_max);
+        let (w, h, png) = preview::png_within(w, h, &img, INLINE_PNG_MAX_BYTES)?;
+        out["inline"] = json!({
+            "kind": if single { "frame" } else { "sheet" },
+            "width": w,
+            "height": h,
+            "png_bytes": png.len(),
+            "png_blake3": preview::blake3_hex(&png),
+            "max_png_bytes": INLINE_PNG_MAX_BYTES,
+        });
+        out[INLINE_PNG_KEY] = Value::String(base64(&png));
+    }
+    Ok(out)
+}
+
 /// Summary of a render report (from its JSON, so it works for reports on disk).
 pub fn summarize(report: &Value) -> Value {
     let chunks = report["chunks"].as_array().cloned().unwrap_or_default();
@@ -1569,6 +1741,7 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
         "plan" => args(name, a).and_then(|a| plan_tool(cx, a)),
         "render" => args(name, a).and_then(|a| render_tool(cx, a)),
         "preview_frames" => args(name, a).and_then(|a| preview_frames(cx, a)),
+        "artifact_frames" => args(name, a).and_then(|a| artifact_frames(cx, a)),
         "report_read" => args(name, a).and_then(|a| report_read(cx, a)),
         "markers_list" => args(name, a).and_then(|a| markers_list(cx, a)),
         "media_status" => args(name, a).and_then(|a| media_status(cx, a)),

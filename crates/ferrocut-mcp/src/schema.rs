@@ -1222,6 +1222,25 @@ pub fn preview_frames() -> Value {
     )
 }
 
+/// `artifact_frames`: exact frames decoded from an encoded file.
+pub fn artifact_frames() -> Value {
+    object(
+        json!({
+            "path": path("encoded video file to inspect (a delivery, excerpt or master)"),
+            "frames": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "type": "integer", "minimum": -64 }, "description": "frame ordinals in presentation order from the stream start (0 = first); negative counts from the end (-1 = last, needs a full decode)" },
+            "output_dir": path("directory for the PNGs (default: <file dir>/inspect)"),
+            "each": { "type": "boolean", "default": true, "description": "write one full-resolution PNG per frame (<prefix>-<file blake3 prefix>-i<ordinal>.png)" },
+            "sheet": { "type": "boolean", "default": true, "description": "write a labeled contact sheet when more than one frame is requested" },
+            "cols": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4, "description": "contact sheet columns" },
+            "cell_width": { "type": "integer", "minimum": 64, "maximum": 1920, "default": 480, "description": "contact sheet cell width in pixels" },
+            "prefix": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$", "description": "file name prefix (default: the file stem): letters, digits, '.', '_', '-'" },
+            "inline": { "type": "boolean", "default": true, "description": "also return the sheet (or the single frame) as an image content block" },
+            "inline_max": { "type": "integer", "minimum": 256, "maximum": 4096, "default": 1568, "description": "longer side of the inline image in pixels; the PNG is also halved until it is under 3 MB" }
+        }),
+        &["path", "frames"],
+    )
+}
+
 pub fn markers_list() -> Value {
     object(json!({ "timeline": path(TL) }), &["timeline"])
 }

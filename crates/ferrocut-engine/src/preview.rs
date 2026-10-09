@@ -370,12 +370,30 @@ pub fn contact_sheet(
     cols: u32,
     cell_w: u32,
 ) -> anyhow::Result<(u32, u32, Vec<u8>)> {
-    ensure!(!stills.is_empty(), "no stills");
-    let (sw, sh) = (stills[0].width, stills[0].height);
+    let cells: Vec<(u32, u32, &[u8])> = stills
+        .iter()
+        .map(|s| (s.width, s.height, s.rgba.as_slice()))
+        .collect();
+    let labels: Vec<String> = stills.iter().map(|s| timecode(tl, s.frame)).collect();
+    labeled_sheet(&cells, &labels, cols, cell_w)
+}
+
+/// [`contact_sheet`] for any RGBA images (`(width, height, rgba)`), each
+/// labeled with its own text (digits, `:`, `.`, `f`, `s`, `#`, space). Cells
+/// take the first image's aspect; others are scaled into it.
+pub fn labeled_sheet(
+    cells: &[(u32, u32, &[u8])],
+    labels: &[String],
+    cols: u32,
+    cell_w: u32,
+) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    ensure!(!cells.is_empty(), "no stills");
+    ensure!(cells.len() == labels.len(), "one label per still");
+    let (sw, sh) = (cells[0].0, cells[0].1);
     let cell_w = cell_w.min(sw).max(16);
     let cell_h = ((sh as u64 * cell_w as u64) / sw as u64).max(1) as u32;
-    let cols = cols.clamp(1, stills.len() as u32);
-    let rows = (stills.len() as u32).div_ceil(cols);
+    let cols = cols.clamp(1, cells.len() as u32);
+    let rows = (cells.len() as u32).div_ceil(cols);
     let gap = 4;
     let (w, h) = (
         cols as u64 * cell_w as u64 + (cols as u64 + 1) * gap as u64,
@@ -391,16 +409,16 @@ pub fn contact_sheet(
         *px = [24, 24, 28, 255];
     }
     let scale = (cell_w / 160).clamp(1, 4);
-    for (i, s) in stills.iter().enumerate() {
+    for (i, ((cw, ch, rgba), text)) in cells.iter().zip(labels).enumerate() {
         let (cx, cy) = (i as u32 % cols, i as u32 / cols);
         let (ox, oy) = (gap + cx * (cell_w + gap), gap + cy * (cell_h + gap));
-        let small = downscale(&s.rgba, s.width, s.height, cell_w, cell_h);
+        let small = downscale(rgba, *cw, *ch, cell_w, cell_h);
         for y in 0..cell_h {
             let src = &small[(y * cell_w * 4) as usize..((y + 1) * cell_w * 4) as usize];
             let d = (((oy + y) * w + ox) * 4) as usize;
             img[d..d + src.len()].copy_from_slice(src);
         }
-        label(&mut img, w, h, ox, oy, &timecode(tl, s.frame), scale);
+        label(&mut img, w, h, ox, oy, text, scale);
     }
     Ok((w, h, img))
 }
