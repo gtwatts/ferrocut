@@ -155,6 +155,26 @@ The font file determines the face, weight and style; a family name alone is insu
 
 Native shape artwork uses `generator:{"type":"shape","shape":...}` with rectangle, ellipse or path geometry, fill/stroke and source-time numeric keys. Discover its exact payload through the schema and parameter registry; do not route simple editable vector artwork through a browser merely to create pixels.
 
+## Gradients, dashed strokes and motion blur
+
+Two gradient schemas coexist. This is not a version mismatch; each is correct in its own place.
+
+- Layer generators `{"type":"linear_gradient"}` and `{"type":"radial_gradient"}` take two colors, `start_color` and `end_color`, plus `start`/`end` (linear) or `center`/`radius` (radial). They have no stops.
+- Shape paints, in `generator.shape.fill` or `generator.shape.stroke.paint`, use `"type":"linear_gradient"` or `"type":"radial_gradient"` with `stops`: an array of 2 to 256 `{"offset", "color"}` entries.
+
+Shape strokes accept `dashes`, an even-length array of 2 to 256 on/off lengths in pixels (`dash_offset` is the phase, in pixels). An empty array is solid. Lengths clamp to nonnegative, and an all-zero pattern is invisible, not solid. A pattern whose estimated segment count on the path reaches about one million is rejected when the frame is evaluated (render or preview), not when the edit is validated. `dashes` is not a registered numeric parameter, so replace the whole stroke object with `set_param` on `generator.shape.stroke`; `generator.shape.stroke.dash_offset` is keyable.
+
+```json
+{"type":"shape","shape":{
+  "geometry":{"type":"rectangle","x":80,"y":80,"width":320,"height":180},
+  "fill":null,
+  "stroke":{"paint":{"type":"linear_gradient","start":[80,0],"end":[400,0],
+    "stops":[{"offset":0,"color":[1,"1/2",0,1]},{"offset":1,"color":[0,"1/2",1,1]}]},
+    "width":6,"dashes":[12,6],"dash_offset":0}}}
+```
+
+Motion blur is layer transform blur. The timeline's `motion_blur` object (`shutter_angle` default 180, `shutter_phase` default -90, `samples` default 16) and the clip's `motion_blur: true` are both required. Each frame samples the layer's transform, and the camera for 3D layers, across the shutter, then averages the results. The layer's content is still the frame at that time, so motion inside the content (for example an animated path or text effect within the clip) is not blurred. It is not 3D lighting and not depth of field; the 3D layer model has neither.
+
 ## Expressions and deterministic animation
 
 An animatable number can contain an expression object. For example, a `set_param` value for `generator.text.position.x` can be:
