@@ -89,7 +89,12 @@ fn replacing_real_font_bytes_at_the_same_path_invalidates_only_text_chunks() {
     let spec = text_mut(&mut tl).clone();
     let node = TextNode::new(spec.clone(), 320, 180).unwrap();
     let frozen_hash = node.content_hash();
-    let frozen_pixels = node.rasterize(RationalTime::ZERO).unwrap().image.pixels;
+    let frozen_pixels = node
+        .rasterize(RationalTime::ZERO)
+        .unwrap()
+        .image
+        .pixels
+        .clone();
     let before = keys(&tl);
     std::fs::copy(fixture("NotoSansArabic-Regular.ttf"), &spec.font).unwrap();
     let after = keys(&tl);
@@ -127,13 +132,7 @@ fn fallback_order_roles_and_rendering_controls_remain_semantic() {
     assert_ne!(before, keys(&styled));
     let mut invalid_face = original;
     text_mut(&mut invalid_face).font_index = 99;
-    assert!(
-        compile(&invalid_face)
-            .err()
-            .unwrap()
-            .to_string()
-            .contains("face at index 99")
-    );
+    assert!(format!("{:#}", compile(&invalid_face).err().unwrap()).contains("face at index 99"));
 }
 
 #[test]
