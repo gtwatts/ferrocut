@@ -338,7 +338,9 @@ pub struct CaptionTiming {
     /// most this long (0 disables). At most 2 s.
     pub close_gaps: RationalTime,
     /// Extend shorter cues toward this duration, into the following gap only:
-    /// never over the next cue or past the current program end. Off by default.
+    /// never over the next cue and never adding an output frame. With `snap`
+    /// the last cue may end at the end of the program's last frame, past an
+    /// off-grid program end (3.01 s at 30 fps, 91 frames: 91/30). Off by default.
     pub min_duration: Option<RationalTime>,
 }
 

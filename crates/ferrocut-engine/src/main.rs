@@ -366,7 +366,8 @@ enum CaptionCmd {
         #[arg(long, default_value = "1/10")]
         close_gaps: ferrocut_core::Rational,
         /// Extend cues shorter than this many seconds into the following gap
-        /// (never over the next cue or past the program end). Off by default.
+        /// (never over the next cue, never adding an output frame: the last cue
+        /// may end at the end of the program's last frame). Off by default.
         #[arg(long)]
         min_duration: Option<ferrocut_core::Rational>,
         /// Keep the subtitle file's times exactly: no snap, gap closing or
