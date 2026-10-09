@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use ferrocut_core::{AdapterPreference, GpuContext};
-use ferrocut_perceive::check::{CheckError, grade_resolved, parse_brief_cuts};
-use ferrocut_perceive::input::{RenderReport, Timeline};
+use ferrocut_perceive::check::{CheckError, RenderChunks, grade_resolved, parse_brief_cuts};
+use ferrocut_perceive::input::{ChunkDirResolution, RenderReport, Timeline, resolve_chunk_dir};
 use ferrocut_perceive::targets::{Authored, Resolved};
 use ferrocut_perceive::{AudioInput, CheckReport, Options, Report, Request, analyze, diff};
 
@@ -30,8 +30,9 @@ enum Cmd {
         /// The engine's render report (default: <output>.report.json).
         #[arg(long)]
         render_report: PathBuf,
-        /// The engine's cache dir (holds chunks/; default:
-        /// <render report dir>/.ferrocut-cache, like the engine CLI).
+        /// The engine's cache dir (holds chunks/; default: the grandparent of
+        /// the resolved chunk dir when that dir lives under `chunks/`, else
+        /// <render report dir>/.ferrocut-cache).
         #[arg(long)]
         cache_dir: Option<PathBuf>,
         /// Output directory for perceive.json, contact sheets and scope PNGs.
@@ -164,25 +165,45 @@ fn thresholds(a: &CheckArgs, rr: &RenderReport, tl: &Timeline) -> anyhow::Result
     Resolved::resolve(&Authored::new(rr, tl)?, a.config.as_deref(), &flags)
 }
 
+/// Default cache dir: grandparent of the resolved chunk dir when that dir's
+/// parent is named `chunks`, otherwise `<report dir>/.ferrocut-cache`.
+fn cache_dir_from_resolution(resolution: &ChunkDirResolution, report_dir: &Path) -> PathBuf {
+    resolution
+        .dir
+        .as_deref()
+        .and_then(|d| d.parent())
+        .filter(|p| p.file_name().is_some_and(|n| n == "chunks"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| report_dir.join(".ferrocut-cache"))
+}
+
+fn attach_resolution(
+    rr: &mut RenderReport,
+    report_path: &Path,
+    explicit_cache: Option<&Path>,
+) -> anyhow::Result<ChunkDirResolution> {
+    let cwd = std::env::current_dir().context("current directory")?;
+    let resolution = resolve_chunk_dir(rr, report_path, &cwd, explicit_cache);
+    rr.chunk_resolution = Some(resolution.clone());
+    Ok(resolution)
+}
+
 fn run_check(a: &CheckArgs) -> anyhow::Result<CheckReport> {
     let rr_path = match &a.render_report {
         Some(p) => p.clone(),
         None if a.render.extension().is_some_and(|e| e == "json") => a.render.clone(),
         None => a.render.with_extension("report.json"),
     };
-    let rr = RenderReport::load(&rr_path)?;
+    let mut rr = RenderReport::load(&rr_path)?;
+    let resolution = attach_resolution(&mut rr, &rr_path, a.cache_dir.as_deref())?;
     let tl = Timeline::load(&a.timeline)?;
     let resolved = thresholds(a, &rr, &tl)?;
     let report_dir = rr_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let cache_dir = a.cache_dir.clone().unwrap_or_else(|| {
-        rr.chunk_dir
-            .as_ref()
-            .and_then(|d| d.parent())
-            .filter(|p| p.file_name().is_some_and(|n| n == "chunks"))
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| report_dir.join(".ferrocut-cache"))
-    });
+    let cache_dir = a
+        .cache_dir
+        .clone()
+        .unwrap_or_else(|| cache_dir_from_resolution(&resolution, &report_dir));
     let mut rr_audio = rr.clone();
     if a.render_report.is_none() && a.render.extension().is_some_and(|e| e != "json") {
         // The master we were pointed at, not wherever the report says it was written.
@@ -219,7 +240,12 @@ fn run_check(a: &CheckArgs) -> anyhow::Result<CheckReport> {
     if let Some(o) = &a.out {
         std::fs::write(o.join("perceive.json"), report.to_json())?;
     }
-    Ok(grade_resolved(&report, &tl, brief.as_deref(), &resolved))
+    let mut graded = grade_resolved(&report, &tl, brief.as_deref(), &resolved);
+    graded.render_chunks = Some(RenderChunks {
+        chunk_dir: resolution.dir.clone(),
+        resolved_by: resolution.resolved_by,
+    });
+    Ok(graded)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -259,13 +285,14 @@ fn main() -> anyhow::Result<()> {
             cpu,
         } => {
             let tl = Timeline::load(&timeline)?;
-            let rr = RenderReport::load(&render_report)?;
-            let cache_dir = cache_dir.unwrap_or_else(|| {
-                render_report
-                    .parent()
-                    .unwrap_or(std::path::Path::new("."))
-                    .join(".ferrocut-cache")
-            });
+            let mut rr = RenderReport::load(&render_report)?;
+            let resolution = attach_resolution(&mut rr, &render_report, cache_dir.as_deref())?;
+            let report_dir = render_report
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf();
+            let cache_dir =
+                cache_dir.unwrap_or_else(|| cache_dir_from_resolution(&resolution, &report_dir));
             let gpu = if cpu {
                 None
             } else {

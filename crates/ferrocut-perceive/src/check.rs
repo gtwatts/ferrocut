@@ -10,14 +10,14 @@
 //! observations below the thresholds go to `warnings` (same shape).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
 use ferrocut_core::{FrameRate, Rational, RationalTime};
 use serde::{Deserialize, Serialize};
 
 use crate::audio::AudioReport;
-use crate::input::Timeline;
+use crate::input::{ChunkDirSource, Timeline};
 use crate::report::{ChunkReport, Report, timecode};
 use crate::targets::{self, Resolved, ThresholdSource};
 
@@ -182,6 +182,17 @@ pub struct CheckReport {
     pub measured: Measured,
     /// The perception report's schema version this was graded from.
     pub perceive_schema_version: String,
+    /// How the checker's chunk directory was resolved. `grade_resolved` leaves
+    /// this empty; `ferrocut-perceive check` fills it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render_chunks: Option<RenderChunks>,
+}
+
+/// Chunk directory the checker used, and which rule produced it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderChunks {
+    pub chunk_dir: Option<PathBuf>,
+    pub resolved_by: ChunkDirSource,
 }
 
 /// What `check` prints (with `--json`) when it can't grade: exit code 2.
@@ -518,6 +529,7 @@ pub fn grade_resolved(
             cuts_from: cuts_from.into(),
         },
         perceive_schema_version: report.schema_version.clone(),
+        render_chunks: None,
     }
 }
 

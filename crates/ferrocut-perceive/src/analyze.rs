@@ -378,11 +378,19 @@ fn audio_analysis(
     })
 }
 
-/// Where a chunk master lives: the report's `chunk_dir` (per-adapter since
-/// engine 7de57ff), else the same adapter dir under `cache_dir`, else the
-/// older flat `cache_dir/chunks/`.
+/// Where a chunk master lives. When the checker attached a resolution, only
+/// that effective directory is used. Otherwise the report's raw `chunk_dir`
+/// (per-adapter since engine 7de57ff), then the same adapter dir under
+/// `cache_dir`, then the older flat `cache_dir/chunks/`.
 fn find_chunk(rr: &RenderReport, cache_dir: &Path, key: &str) -> PathBuf {
     let name = format!("{key}.mkv");
+    if let Some(res) = &rr.chunk_resolution {
+        // Only the effective directory. No raw-path or cache-dir fallback.
+        return match &res.dir {
+            Some(d) => d.join(&name),
+            None => PathBuf::from(&name),
+        };
+    }
     let mut cands = Vec::new();
     if let Some(d) = &rr.chunk_dir {
         cands.push(d.join(&name));
@@ -396,6 +404,33 @@ fn find_chunk(rr: &RenderReport, cache_dir: &Path, key: &str) -> PathBuf {
         .find(|p| p.exists())
         .unwrap_or(&cands[0])
         .clone()
+}
+
+fn chunk_open_context(index: usize, path: &Path, rr: &RenderReport) -> String {
+    let no_dir = rr
+        .chunk_resolution
+        .as_ref()
+        .is_some_and(|r| r.dir.is_none());
+    if path.exists() && !no_dir {
+        return format!("analyzing chunk {index}");
+    }
+    match &rr.chunk_resolution {
+        Some(r) => {
+            let tried = r
+                .tried
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "analyzing chunk {index}: chunk path {}, resolved_by {}, tried dirs [{tried}]; render with absolute paths or pass --cache-dir",
+                path.display(),
+                r.resolved_by,
+                tried
+            )
+        }
+        None => format!("analyzing chunk {index}"),
+    }
 }
 
 pub fn analyze(req: Request) -> anyhow::Result<(Report, Stats)> {
@@ -436,8 +471,15 @@ pub fn analyze(req: Request) -> anyhow::Result<(Report, Stats)> {
             None => {
                 stats.chunks_analyzed += 1;
                 let path = find_chunk(rr, req.cache_dir, &c.key);
+                if rr
+                    .chunk_resolution
+                    .as_ref()
+                    .is_some_and(|r| r.dir.is_none())
+                {
+                    bail!("{}", chunk_open_context(c.index, &path, rr));
+                }
                 analyze_chunk(&path, &akey, c, every, o, &cache, &mut sc, &mut stats)
-                    .with_context(|| format!("analyzing chunk {}", c.index))?
+                    .with_context(|| chunk_open_context(c.index, &path, rr))?
             }
         };
         chunks.push((c.clone(), a));

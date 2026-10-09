@@ -321,6 +321,33 @@
               }
             }
           }
+        },
+        "render_chunks": {
+          "description": "How the checker resolved the render report's chunk_dir. Omitted when grading did not resolve one.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "resolved_by"
+          ],
+          "properties": {
+            "chunk_dir": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "resolved_by": {
+              "enum": [
+                "recorded",
+                "report_location",
+                "process_cwd",
+                "cache_dir_override",
+                "ambiguous",
+                "unresolved",
+                "absent"
+              ]
+            }
+          }
         }
       }
     },
