@@ -258,7 +258,7 @@ fn build_tools() -> Vec<Tool> {
         tool(
             "artifact_frames",
             "Inspect encoded frames",
-            "Decode exact frames from a self-contained encoded video file (a delivery, an excerpt or a master; Matroska/MP4/MOV/AVI/TS and similar, never playlists or files that reference others) and look at them: what was actually written, not a re-render (preview_frames renders the timeline instead). Frames are ordinals in presentation order from the stream start (0 = first, -1 = last); each comes back with its own pts, the stream time_base and its exact time from the timestamp (never from nominal fps), key/corrupt/alpha flags, and the conversion applied (source tags, the YUV matrix and range actually used, and that transfer/gamut/tone mapping are not converted; unsupported matrices are refused). Full-resolution PNGs keep straight alpha exactly and are named by content, so repeat observations never overwrite earlier ones. artifact.blake3 is the file as observed before decoding and rechecked after (identity: observed_recheck; a change is an error). Returns a labeled sheet and, inline=true (default), the sheet or single frame as an image (translucent frames over a checkerboard). Sequential decode, at most 100000 frames, 64 returned, 1 GiB held; cancellable.",
+            "Decode exact frames from a self-contained encoded video file (a delivery, an excerpt or a master; Matroska/WebM, MP4/MOV, AVI, IVF, NUT, MXF or raw H.264/HEVC; never playlists, files that reference others, or MPEG-TS/PS, FLV and Ogg, whose streams are discovered while reading) and look at them: what was actually written, not a re-render (preview_frames renders the timeline instead). Frames are ordinals in presentation order from the stream start (0 = first, -1 = last); each comes back with its own pts, the stream time_base and its exact time from the timestamp (never from nominal fps), key/corrupt/alpha flags, and the conversion applied (source tags, the YUV matrix and range actually used, and that transfer/gamut/tone mapping are not converted; unsupported matrices are refused). Full-resolution PNGs keep straight alpha exactly and are named by content, so repeat observations never overwrite earlier ones. artifact.blake3 is the file as observed before decoding and rechecked after (identity: observed_recheck; a change is an error). Returns a labeled sheet and, inline=true (default), the sheet or single frame as an image (translucent frames over a checkerboard). Sequential decode, at most 100000 frames, 64 returned, 1 GiB held; cancellable.",
             schema::artifact_frames(),
             rw(false).idempotent(true),
         ),
@@ -1167,7 +1167,11 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
         .map(|f| f.rgba.len() as u64)
         .max()
         .unwrap_or(0);
-    let scratch = if a.each { largest * 3 } else { 0 };
+    let scratch = if a.each {
+        preview::png_scratch_bound(largest)
+    } else {
+        0
+    };
     let translucent: u64 = ins
         .frames
         .iter()
@@ -1175,12 +1179,14 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
         .map(|f| f.rgba.len() as u64)
         .sum();
     let picture: u64 = if single {
-        largest * 3
+        // Composite, inline resize and its PNG encode.
+        largest * 2 + preview::png_scratch_bound(largest)
     } else {
         let f0 = &ins.frames[0];
         let (w, h, ..) =
             preview::sheet_layout(f0.width, f0.height, ins.frames.len(), a.cols, a.cell_width);
-        w * h * 4 * 4
+        // The sheet, its PNG encode, and the inline resize with its encode.
+        w * h * 4 * 2 + 2 * preview::png_scratch_bound(w * h * 4)
     };
     let budget = inspect::MAX_RETAINED_BYTES;
     anyhow::ensure!(

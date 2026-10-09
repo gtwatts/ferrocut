@@ -45,8 +45,13 @@ pub const MAX_FRAME_PIXELS: u64 = 1 << 26;
 /// Most bytes held at once for returned frames (RGBA) plus the frames kept
 /// for indices counted from the end (decoded planes).
 pub const MAX_RETAINED_BYTES: u64 = 1 << 30;
-/// Self-contained container demuxers this route opens (FFmpeg names).
-pub const DEMUXERS: &str = "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts,mpeg,ivf,flv,nut,ogg,mxf,h264,hevc,yuv4mpegpipe";
+/// Self-contained container demuxers this route opens (FFmpeg names): ones
+/// that declare their streams in the header. Formats that discover streams
+/// while reading (MPEG-TS/PS, FLV, Ogg) are not offered, because FFmpeg
+/// probes such late streams with default decoder options (no pixel cap);
+/// any demuxer that still flags late discovery is refused at open.
+pub const DEMUXERS: &str =
+    "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,ivf,nut,mxf,h264,hevc,yuv4mpegpipe";
 
 /// How a frame's code values became RGBA, and what was not converted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -503,8 +508,9 @@ impl Seek for CancelRead {
 ///   and only [`DEMUXERS`] may open, so no secondary file is opened;
 /// - after the container header, every video stream's declared size is
 ///   checked against `max_px` BEFORE stream probing;
-/// - stream probing (`avformat_find_stream_info`, which may decode frames)
-///   runs with `max_pixels = max_px` and one thread for every probe decoder;
+/// - demuxers that may add streams while reading are refused, so stream
+///   probing (`avformat_find_stream_info`, which may decode frames) runs
+///   with `max_pixels = max_px` and one thread for every stream it probes;
 /// - the interrupt callback and the reader stop on `cancel`.
 fn open_contained(
     file: std::fs::File,
@@ -542,6 +548,11 @@ fn open_contained(
         if r < 0 {
             bail!("{}", FfError::from(r));
         }
+        // Late stream discovery would probe new streams with default options.
+        if (*ps).ctx_flags & ffi::AVFMTCTX_NOHEADER != 0 {
+            ffi::avformat_close_input(&mut ps);
+            bail!("this container discovers streams while reading; it is not inspected");
+        }
         let n = (*ps).nb_streams as usize;
         for i in 0..n {
             let par = (*(*(*ps).streams.add(i))).codecpar;
@@ -572,6 +583,10 @@ fn open_contained(
         if r < 0 {
             ffi::avformat_close_input(&mut ps);
             bail!("{}", FfError::from(r));
+        }
+        if (*ps).nb_streams as usize != n {
+            ffi::avformat_close_input(&mut ps);
+            bail!("streams appeared while probing; the file is not inspected");
         }
         Ok(format::context::Input::wrap_with_custom_io_and_interrupt(
             ps,

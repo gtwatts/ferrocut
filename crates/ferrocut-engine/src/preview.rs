@@ -534,8 +534,10 @@ pub fn png_bytes_straight(width: u32, height: u32, rgba: &[u8]) -> anyhow::Resul
     if rgba.chunks_exact(4).all(|p| p[3] == 255) {
         return png_bytes(width, height, rgba);
     }
-    fn crc32(bytes: &[u8]) -> u32 {
-        let mut c = 0xffff_ffffu32;
+    // Written straight into one buffer of the exact final size (no separate
+    // filtered-row, deflate or chunk copies): stored deflate blocks, Adler-32
+    // and the IDAT CRC are computed while the rows are copied.
+    fn crc_update(mut c: u32, bytes: &[u8]) -> u32 {
         for &b in bytes {
             c ^= b as u32;
             for _ in 0..8 {
@@ -546,46 +548,74 @@ pub fn png_bytes_straight(width: u32, height: u32, rgba: &[u8]) -> anyhow::Resul
                 };
             }
         }
-        !c
+        c
     }
     fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
         out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        let mut body = Vec::with_capacity(4 + data.len());
-        body.extend_from_slice(kind);
-        body.extend_from_slice(data);
-        out.extend_from_slice(&body);
-        out.extend_from_slice(&crc32(&body).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        let c = crc_update(crc_update(0xffff_ffff, kind), data);
+        out.extend_from_slice(&(!c).to_be_bytes());
     }
+    const BLOCK: usize = 65_535;
     let row = width as usize * 4;
-    let mut raw = Vec::with_capacity((row + 1) * height as usize);
-    for y in 0..height as usize {
-        raw.push(0); // filter: none
-        raw.extend_from_slice(&rgba[y * row..(y + 1) * row]);
-    }
-    let (mut a, mut b) = (1u32, 0u32);
-    for &v in &raw {
-        a = (a + v as u32) % 65521;
-        b = (b + a) % 65521;
-    }
-    let mut z = vec![0x78, 0x01];
-    let blocks: Vec<&[u8]> = raw.chunks(65_535).collect();
-    for (i, blk) in blocks.iter().enumerate() {
-        z.push(u8::from(i + 1 == blocks.len()));
-        let n = blk.len() as u16;
-        z.extend_from_slice(&n.to_le_bytes());
-        z.extend_from_slice(&(!n).to_le_bytes());
-        z.extend_from_slice(blk);
-    }
-    z.extend_from_slice(&((b << 16) | a).to_be_bytes());
-    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
-    let mut ihdr = Vec::with_capacity(13);
-    ihdr.extend_from_slice(&width.to_be_bytes());
-    ihdr.extend_from_slice(&height.to_be_bytes());
-    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA, no interlace
+    let raw_len = (row + 1) * height as usize;
+    let blocks = raw_len.div_ceil(BLOCK);
+    let z_len = 2 + raw_len + 5 * blocks + 4;
+    ensure!(
+        z_len <= u32::MAX as usize,
+        "image too large for one PNG chunk"
+    );
+    let mut out = Vec::with_capacity(8 + 25 + 12 + z_len + 12);
+    out.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    let mut ihdr = [0u8; 13];
+    ihdr[..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8..].copy_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA, no interlace
     chunk(&mut out, b"IHDR", &ihdr);
-    chunk(&mut out, b"IDAT", &z);
+    out.extend_from_slice(&(z_len as u32).to_be_bytes());
+    let idat_start = out.len();
+    out.extend_from_slice(b"IDAT");
+    out.extend_from_slice(&[0x78, 0x01]);
+    let (mut a, mut b) = (1u32, 0u32);
+    let (mut left_in_block, mut written) = (0usize, 0usize);
+    let mut emit = |out: &mut Vec<u8>, mut bytes: &[u8]| {
+        while !bytes.is_empty() {
+            if left_in_block == 0 {
+                let n = (raw_len - written).min(BLOCK) as u16;
+                out.push(u8::from(written + n as usize == raw_len));
+                out.extend_from_slice(&n.to_le_bytes());
+                out.extend_from_slice(&(!n).to_le_bytes());
+                left_in_block = n as usize;
+            }
+            let take = left_in_block.min(bytes.len());
+            for &v in &bytes[..take] {
+                a = (a + v as u32) % 65521;
+                b = (b + a) % 65521;
+            }
+            out.extend_from_slice(&bytes[..take]);
+            left_in_block -= take;
+            written += take;
+            bytes = &bytes[take..];
+        }
+    };
+    for y in 0..height as usize {
+        emit(&mut out, &[0]); // filter: none
+        emit(&mut out, &rgba[y * row..(y + 1) * row]);
+    }
+    out.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    let c = crc_update(0xffff_ffff, &out[idat_start..]);
+    out.extend_from_slice(&(!c).to_be_bytes());
     chunk(&mut out, b"IEND", &[]);
     Ok(out)
+}
+
+/// Upper bound on the extra bytes [`png_bytes_straight`] holds while
+/// encoding a `len`-byte RGBA image: the translucent path's single output
+/// buffer (about 1x), or the opaque path's premultiplied copy, demultiplied
+/// copy and compressed output (about 3x), plus fixed headroom.
+pub fn png_scratch_bound(len: u64) -> u64 {
+    len * 4 + (1 << 20)
 }
 
 /// Display composite of straight-alpha RGBA over an 8-pixel checkerboard
