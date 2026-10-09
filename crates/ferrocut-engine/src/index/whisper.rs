@@ -104,7 +104,7 @@ pub fn find_cli(cfg: &WhisperConfig) -> anyhow::Result<PathBuf> {
         }
     }
     bail!(
-        "whisper-cli not found: FERROCUT_WHISPER_CLI is unset, no third_party/whisper.cpp/build/bin/whisper-cli up to 6 levels above {}, none on PATH. An installed ferrocut does not include whisper: set FERROCUT_WHISPER_CLI (and FERROCUT_WHISPER_MODEL) to a checkout's third_party build (scripts/build-whisper.sh); an MCP server reads them when it starts",
+        "whisper-cli not found: FERROCUT_WHISPER_CLI is unset, no third_party/whisper.cpp/build/bin/whisper-cli up to 6 levels above {}, none on PATH. scripts/install-local.py links an existing checkout whisper build when present; otherwise set FERROCUT_WHISPER_CLI (and FERROCUT_WHISPER_MODEL) to a checkout's third_party build (scripts/build-whisper.sh). Nothing is downloaded automatically; an MCP server reads environment overrides when it starts",
         searched()
     )
 }
