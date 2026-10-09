@@ -169,8 +169,15 @@ fn opacity_motion_keys_use_source_origin_and_preserve_native_geometry() {
         for time in ["0", "1/2", "1", "3/2", "2"] {
             let time = t(time);
             assert!((a.opacity.eval(time) - b.opacity.eval(time)).abs() < 1e-10);
-            let at = a.transform.as_ref().unwrap().at(time, 640, 360);
-            let bt = b.transform.as_ref().unwrap().at(time, 640, 360);
+            let placement = |fit| ferrocut_engine::placement::Placement {
+                native: (1280, 720),
+                output: (640, 360),
+                fit,
+            };
+            let at = placement(a.effective_fit(&fixture.output))
+                .placed(a.transform.as_ref().unwrap(), time);
+            let bt = placement(b.effective_fit(&imported.timeline.output))
+                .placed(b.transform.as_ref().unwrap(), time);
             assert!((at.position[0] - bt.position[0]).abs() < 1e-8);
             assert!((at.anchor[0] - bt.anchor[0]).abs() < 1e-8);
             assert!((at.scale[0] - bt.scale[0]).abs() < 1e-8);

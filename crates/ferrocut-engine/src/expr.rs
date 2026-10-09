@@ -80,7 +80,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use anyhow::anyhow;
+use anyhow::{anyhow, ensure};
 use ferrocut_core::param::{ParamKind, ParamSpec, TimeBase};
 use ferrocut_core::{Animatable, Expression, Rational, RationalTime};
 use rhai::{AST, Dynamic, Engine, EvalAltResult, NativeCallContext, Position, Scope};
@@ -771,6 +771,11 @@ fn param_value(
                     Next::Value(a.eval(RationalTime(t)))
                 }
                 Some(Value::Bool(b)) => Next::Value(f64::from(u8::from(*b))),
+                _ if spec.as_ref().is_some_and(|s| s.name == "transform.anchor")
+                    && o.json.get("generator").is_none() =>
+                {
+                    return Err(format!("{}: set transform.anchor explicitly before referencing its native-source default in an expression", o.label).into());
+                }
                 _ if spec.is_some() => Next::Value(default_of(spec.as_ref(), comp, s.frame)),
                 _ => {
                     let names: Vec<&str> =
@@ -1294,6 +1299,13 @@ pub fn bake(tl: &Timeline) -> anyhow::Result<Cow<'_, Timeline>> {
                 let h = blake3::hash(format!("{}/{name}", o.key).as_bytes());
                 u64::from_le_bytes(h.as_bytes()[..8].try_into().expect("8 bytes"))
             };
+            ensure!(
+                spec.as_ref().is_none_or(|s| s.name != "transform.anchor")
+                    || o.json.get("generator").is_some()
+                    || expr.value.is_some(),
+                "{}: a native-source transform.anchor expression needs an explicit pre-expression value",
+                o.label
+            );
             by_path.insert((oi, rel.clone()), sites.len());
             sites.push(Site {
                 owner: oi,

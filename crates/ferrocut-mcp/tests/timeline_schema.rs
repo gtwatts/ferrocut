@@ -74,6 +74,8 @@ fn schema_rejects_what_the_engine_rejects() {
         ("/tracks/0/clips/0/duration", json!(2.5)),
         ("/tracks/0/clips/0/bogus", json!(1)),
         ("/output/fps", json!("24fps")),
+        ("/output/fit", json!("fill")),
+        ("/tracks/0/clips/0/fit", json!("fill")),
         ("/tracks/0/clips/0/opacity", json!({"keyframes": []})),
     ] {
         let mut v = base.clone();
@@ -98,7 +100,7 @@ fn timelines_built_with_every_op_validate() {
     .unwrap();
     let ops = parse_ops(
         r#"[
-      {"op":"add_clip","track":"V1","source":"a.mkv","id":"a","duration":"5"},
+      {"op":"add_clip","track":"V1","source":"a.mkv","id":"a","duration":"5","fit":"contain"},
       {"op":"add_clip","track":"V1","source":"b.mkv","id":"b","source_in":"1","duration":"5"},
       {"op":"add_transition","clip":"b","duration":"1"},
       {"op":"set_keyframes","clip":"a","param":"opacity","keyframes":[{"t":"0","v":"0"},{"t":"1","v":"1","interp":"ease_out"}]},

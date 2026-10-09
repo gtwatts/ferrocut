@@ -16,10 +16,12 @@ use crate::layer3d::{
     layer_homography, plan_multi,
 };
 use crate::media::decode::Decoder;
+use crate::placement::Placement;
 use crate::retime::{Sample, Sampling, TimeMap};
 use crate::transform::{TRANSFORM_VERSION, TransformAt, TransformSpec};
 
-/// Bumped whenever the pixel math of a node changes, so stale cache entries die.
+/// Decoded width/height are native dimensions and already part of the key.
+/// Native-size decode preserves equal-size pixels/keys; no global version bump.
 const SOURCE_VERSION: &[u8] =
     b"source.v1:sws-bilinear-bitexact-accurate_rnd:rgba8:bt709-inv-oetf:rec709-to-acescg";
 
@@ -35,15 +37,23 @@ pub struct SourceNode {
 }
 
 impl SourceNode {
-    pub fn new(path: PathBuf, width: u32, height: u32) -> anyhow::Result<Self> {
+    pub fn new(path: PathBuf) -> anyhow::Result<Self> {
         let mut h = blake3::Hasher::new();
         let f =
             std::fs::File::open(&path).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
         h.update_reader(f)?;
-        let fps = crate::media::probe::probe(&path)
-            .ok()
-            .and_then(|i| i.fps)
-            .filter(|r| *r > Rational::ZERO);
+        let info = crate::media::probe::probe(&path)?;
+        let (width, height) = info
+            .width
+            .zip(info.height)
+            .filter(|(w, h)| *w > 0 && *h > 0)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{}: no video stream with a nonzero native size",
+                    path.display()
+                )
+            })?;
+        let fps = info.fps.filter(|r| *r > Rational::ZERO);
         Ok(SourceNode {
             path,
             file_hash: *h.finalize().as_bytes(),
@@ -92,6 +102,20 @@ impl DecoderPool {
 impl RenderNode for SourceNode {
     fn kind(&self) -> &'static str {
         "source"
+    }
+    fn gpu_requirements(&self) -> ferrocut_core::GpuRequirements {
+        // Native decoding may exceed the output canvas. Request enough space
+        // before creating the device; unsupported adapters then fail cleanly.
+        let mut limits = wgpu::Limits::default();
+        limits.max_texture_dimension_2d = limits
+            .max_texture_dimension_2d
+            .max(self.width)
+            .max(self.height);
+        let padded_row = (u64::from(self.width) * 4).div_ceil(256) * 256;
+        limits.max_buffer_size = limits
+            .max_buffer_size
+            .max(padded_row.saturating_mul(u64::from(self.height)));
+        ferrocut_core::GpuRequirements::none().with_limits(limits)
     }
     fn batches_gpu_work(&self) -> bool {
         true
@@ -272,8 +296,7 @@ impl RenderNode for ClipNode {
 pub struct TransformNode {
     pub start: RationalTime,
     pub spec: TransformSpec,
-    pub width: u32,
-    pub height: u32,
+    pub placement: Placement,
     /// The clip is a 3D layer seen through `camera` (default camera if `None`).
     pub three_d: bool,
     pub camera: Option<CameraSpec>,
@@ -300,14 +323,14 @@ struct PoseSample {
 
 impl TransformNode {
     pub fn at(&self, t: RationalTime) -> TransformAt {
-        self.spec.at(t - self.start, self.width, self.height)
+        self.placement.placed(&self.spec, t - self.start)
     }
 
     fn sample(&self, t: RationalTime) -> PoseSample {
         let local = t - self.start;
         PoseSample {
             t,
-            at: self.spec.at(local, self.width, self.height),
+            at: self.placement.placed(&self.spec, local),
             d3: self.three_d.then(|| self.spec.at_3d(local)),
         }
     }
@@ -337,8 +360,8 @@ impl TransformNode {
         let mut h = blake3::Hasher::new();
         h.update(LAYER3D_VERSION);
         h.update(&[u8::from(self.three_d)]);
-        h.update(&self.width.to_le_bytes());
-        h.update(&self.height.to_le_bytes());
+        h.update(&self.placement.output.0.to_le_bytes());
+        h.update(&self.placement.output.1.to_le_bytes());
         let cam_anim = self.three_d && self.camera.as_ref().is_some_and(CameraSpec::is_animated);
         if self.three_d
             && let Some(c) = &self.camera
@@ -371,8 +394,8 @@ impl TransformNode {
                         d3,
                         self.camera.as_ref(),
                         s.t,
-                        self.width,
-                        self.height,
+                        self.placement.output.0,
+                        self.placement.output.1,
                         par,
                     )
                     .0
@@ -397,6 +420,7 @@ impl RenderNode for TransformNode {
         let mut h = blake3::Hasher::new();
         h.update(&self.start.hash_bytes());
         self.spec.hash_into(&mut h);
+        h.update(&self.placement.hash_bytes());
         // New switches only add bytes when set, so 2D keys are unchanged.
         if self.three_d {
             h.update(b"three_d");
@@ -413,8 +437,8 @@ impl RenderNode for TransformNode {
             "transform",
             &[
                 h.finalize().as_bytes(),
-                &self.width.to_le_bytes(),
-                &self.height.to_le_bytes(),
+                &self.placement.output.0.to_le_bytes(),
+                &self.placement.output.1.to_le_bytes(),
             ],
         )
     }
@@ -422,8 +446,18 @@ impl RenderNode for TransformNode {
     /// pixel aspect), so a held or repeated pose reuses cached frames.
     fn content_hash_at(&self, t: RationalTime) -> NodeHash {
         match self.pose(t) {
-            Pose::Affine(a) if a.is_identity() => NodeHash::of("transform.identity", &[]),
-            Pose::Affine(a) => NodeHash::of("transform.at", &[TRANSFORM_VERSION, &a.hash_bytes()]),
+            Pose::Affine(a) if a.is_identity() && self.placement.is_trivial() => {
+                NodeHash::of("transform.identity", &[])
+            }
+            Pose::Affine(a) => {
+                let mut bytes = a.hash_bytes();
+                if !self.placement.is_trivial() {
+                    bytes.extend_from_slice(b"display");
+                    bytes.extend_from_slice(&self.placement.output.0.to_le_bytes());
+                    bytes.extend_from_slice(&self.placement.output.1.to_le_bytes());
+                }
+                NodeHash::of("transform.at", &[TRANSFORM_VERSION, &bytes])
+            }
             Pose::Multi(s) => NodeHash::of("transform.ms", &[&self.multi_key(&s)]),
         }
     }
@@ -439,14 +473,21 @@ impl RenderNode for TransformNode {
         let f = &inputs[0];
         let empty = ferrocut_core::PixelRect::new(0, 0, 1, 1);
         match self.pose(t) {
-            Pose::Affine(a) if a.is_identity() => Ok(inputs[0].clone()),
+            Pose::Affine(a) if a.is_identity() && self.placement.is_trivial() => {
+                Ok(inputs[0].clone())
+            }
             Pose::Affine(a) => {
                 let comp = compositor(ctx)?;
                 let fwd = a.affine(f.pixel_aspect.to_f64());
                 Ok(Arc::new(
-                    match crate::transform::plan(&fwd, f.data_window, f.width, f.height) {
+                    match crate::transform::plan(
+                        &fwd,
+                        f.data_window,
+                        self.placement.output.0,
+                        self.placement.output.1,
+                    ) {
                         Some(k) => comp.transform(ctx, f, &k)?,
-                        None => comp.clear_window(ctx, f, empty),
+                        None => comp.clear_display(ctx, f, empty, self.placement.output),
                     },
                 ))
             }
@@ -454,9 +495,14 @@ impl RenderNode for TransformNode {
                 let comp = compositor(ctx)?;
                 let mats = self.mats(&s, f.pixel_aspect.to_f64());
                 Ok(Arc::new(
-                    match plan_multi(&mats, f.data_window, f.width, f.height) {
+                    match plan_multi(
+                        &mats,
+                        f.data_window,
+                        self.placement.output.0,
+                        self.placement.output.1,
+                    ) {
                         Some(k) => comp.transform_multi(ctx, f, &k)?,
-                        None => comp.clear_window(ctx, f, empty),
+                        None => comp.clear_display(ctx, f, empty, self.placement.output),
                     },
                 ))
             }
@@ -470,7 +516,7 @@ pub struct StackClip {
     pub range: ClipRange,
     pub mode: BlendMode,
     /// `Some` for a 3D layer: its transform (clip-local keys) and start.
-    pub depth: Option<(TransformSpec, RationalTime)>,
+    pub depth: Option<(TransformSpec, RationalTime, Placement)>,
 }
 
 /// The timeline's layer stack when it has 3D layers: input `i` is layer `i`
@@ -509,15 +555,8 @@ impl StackNode {
                 continue;
             };
             match &c.depth {
-                Some((spec, start)) => {
-                    let d = layer_depth(
-                        spec,
-                        *start,
-                        self.camera.as_ref(),
-                        t,
-                        self.width,
-                        self.height,
-                    );
+                Some((spec, start, placement)) => {
+                    let d = layer_depth(spec, *start, self.camera.as_ref(), t, *placement);
                     run.push((i, c.mode, d));
                 }
                 None => {
@@ -556,8 +595,9 @@ impl RenderNode for StackNode {
                 h.update(&c.range.end.hash_bytes());
                 h.update(c.mode.name().as_bytes());
                 h.update(&[0]);
-                if let Some((spec, start)) = &c.depth {
+                if let Some((spec, start, placement)) = &c.depth {
                     h.update(b"3d");
+                    h.update(&placement.hash_bytes());
                     h.update(&start.hash_bytes());
                     spec.hash_into(&mut h);
                 }
@@ -878,7 +918,8 @@ mod tests {
 
     fn stub(json: &str) -> (Timeline, Compiled) {
         let tl = Timeline::from_json(json).unwrap();
-        let c = compile_with(&tl, |p, w, h| {
+        let c = compile_with(&tl, |p| {
+            let (w, h) = (tl.output.width, tl.output.height);
             Ok(SourceNode {
                 path: p.clone(),
                 file_hash: *blake3::hash(p.to_string_lossy().as_bytes()).as_bytes(),

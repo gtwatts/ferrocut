@@ -841,12 +841,15 @@ fn edit_apply(cx: &Ctx, a: EditArgs) -> anyhow::Result<Value> {
 
 fn plan_tool(cx: &Ctx, a: TimelineArgs) -> anyhow::Result<Value> {
     let (path, tl) = cx.root.load_timeline(&a.timeline)?;
-    let p = plan(&tl, &compile(&tl)?);
+    let c = compile(&tl)?;
+    let p = plan(&tl, &c);
     Ok(json!({
         "hash": timeline_hash(&read_timeline(&path)?),
         "total_frames": tl.frame_count(),
         "chunk_frames": tl.chunk_frames(),
         "chunks": p,
+        "placements": c.placements,
+        "warnings": c.warnings,
     }))
 }
 
@@ -1033,6 +1036,8 @@ pub fn summarize(report: &Value) -> Value {
         "min_jobs_in_flight": report["min_jobs_in_flight"],
         "loudness": audio.get("output").cloned().unwrap_or(Value::Null),
         "deliver": report.get("deliver").cloned().unwrap_or(Value::Null),
+        "placements": report.get("placements").cloned().unwrap_or_else(|| json!([])),
+        "warnings": report.get("warnings").cloned().unwrap_or_else(|| json!([])),
     });
     if let Some(p) = report.get("proxies") {
         s["draft"] = json!(true);
@@ -1157,7 +1162,7 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
     let cache_dir = cache_dir.unwrap_or_else(|| project::dir_of(&output).join(".ferrocut-cache"));
     let jobs = a.jobs.unwrap_or_else(|| {
         let info = &gpu.get().info;
-        ferrocut_engine::vram::default_jobs(info, tl.output.width, tl.output.height)
+        ferrocut_engine::vram::default_jobs(info, c.max_layer_size.0, c.max_layer_size.1)
             .0
             .min(MCP_MAX_DEFAULT_JOBS)
     });
@@ -1575,7 +1580,7 @@ impl ServerHandler for FerrocutServer {
         )
             .with_server_info(Implementation::new("ferrocut-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Ferrocut: agent-native video editing. Learn the timeline format with timeline_schema \
+                "Ferrocut: agent-native video editing. Media/comp clips use fit (default contain); anchor uses native source pixels, position output pixels, scale is relative to fit. Learn the timeline format with timeline_schema \
                  (or the docs:// resources), probe media with media_probe, inspect with timeline_get. \
                  Find spoken lines with transcript_search (source ranges, cut_in/cut_out) and shot \
                  boundaries with shots_list (index_media builds the cached index). \

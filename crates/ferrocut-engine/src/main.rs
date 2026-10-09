@@ -847,6 +847,10 @@ fn main() -> anyhow::Result<()> {
         Cmd::Plan { timeline } => {
             let tl = Timeline::load(&timeline)?;
             let c = compile(&tl)?;
+            println!("placements: {}", serde_json::to_string(&c.placements)?);
+            for warning in &c.warnings {
+                eprintln!("warning: {warning}");
+            }
             for p in plan(&tl, &c) {
                 println!(
                     "chunk {:>3}  frames {:>5}..{:<5}  key {}",
@@ -975,8 +979,8 @@ fn main() -> anyhow::Result<()> {
             let jobs = jobs.unwrap_or_else(|| {
                 let (j, why) = ferrocut_engine::vram::default_jobs(
                     &gpu.get().info,
-                    tl.output.width,
-                    tl.output.height,
+                    c.max_layer_size.0,
+                    c.max_layer_size.1,
                 );
                 println!("jobs:    {why}");
                 j

@@ -65,8 +65,8 @@ Start with `docs://agent/onboarding.md` for a complete native graphics workflow 
 
 - A clip whose `source` is a timeline file (`*.json`) shows that timeline (an AE precomp /
   Premiere nested sequence). `source_in` and the duration pick the part of the inner timeline;
-  speed, time remap, opacity, transform and blend mode work as for media. The inner frame size
-  must match; its fps may differ (nearest sampling snaps to the inner frame grid).
+  speed, time remap, opacity, transform and blend mode work as for media. The inner canvas
+  is fitted into the parent with the clip fit; its fps may differ (nearest sampling snaps to the inner frame grid).
 - Its linked audio is the inner mix (clip and bus gains, ducking, master gain; loudness
   normalization only on the outermost timeline).
 - Frame keys compose, so after editing the inner file only the outer chunks that show the
@@ -373,3 +373,49 @@ edit batch; it is far cheaper than a draft render and shows exactly what will be
 loudness, true peak, audio presence. `expect_audio` defaults to `auto`: a timeline with no audio
 isn't expected to have any. Checker flags go in `args`; a wrong flag returns the checker's
 `--help` in the error. The checker's report schema: `docs://perceive/check.schema.json`.
+
+
+## Placing media without distortion
+
+Media and nested compositions decode at their native dimensions. A clip's `fit`
+overrides `output.fit`; when both are absent the default is `contain`.
+
+| Fit | Placement before the user transform |
+| --- | --- |
+| `contain` | Uniform scale to show the entire picture, centered, with transparent bars |
+| `cover` | Uniform scale to fill the output, centered, cropping overflow |
+| `none` | Native pixels at 1:1, centered |
+| `stretch` | Independent horizontal/vertical scale to fill; warns on aspect distortion |
+
+`add_clip` accepts `fit`. Set it with `set_param` on a clip, or set `output.fit`
+on the timeline. `null` removes either override. Fit is not animatable and
+cannot be set on generators or adjustment layers.
+
+`transform.anchor` is in native source pixels (use `media_probe` dimensions),
+`transform.position` is in output pixels, and `transform.scale` multiplies the
+fit. Default anchor is source center; default position is output center. For a
+1280x534 source in a 1920x1080 sequence, contain uses exactly 3/2 on both axes,
+showing a 1920x801 picture at y=139.5. Cover uses 180/89 on both axes. A vertical
+cutdown can set `output.fit` to `cover` and then reframe individual clips with
+position/anchor/scale. Clip masks and pixel-unit clip effects run in source
+pixels before fit; track and adjustment effects run in output pixels.
+
+`plan` and render reports include base `placements` (native/output dimensions,
+effective fit and exact fit factors) and stretch `warnings`. These entries are
+before user transforms, not per-frame bounding boxes. Proxy decoding conforms
+to the original native dimensions so placement is identical in draft and final.
+
+Migration: earlier builds stretched media to output size before transforming.
+Mismatched sources now default to contain. `fit: stretch` restores framing,
+though resampling pixels differ. Convert old stretched-layer anchor/mask x
+coordinates by source_width/output_width and y coordinates by
+source_height/output_height. Remove compensating per-axis scales as appropriate.
+Equal-size source/output pictures preserve the old path and cache keys.
+
+This first placement slice does not add `punch_in`, contact-sheet badges,
+per-edit placement reports, or transformed-source tracking. Tracking continues
+to require an untransformed source and now maps displacement through its fit.
+For an unset media anchor, component edits need probing; with probing disabled,
+set both anchor components. Expressions referencing an unset media anchor must
+set it explicitly; anchor expressions need an explicit pre-expression `value`.
+No media probing occurs inside expression validation or MCP path pre-checks.

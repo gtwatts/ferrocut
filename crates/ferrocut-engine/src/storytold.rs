@@ -48,6 +48,10 @@ pub fn capabilities() -> Value {
         "schema":"ferrocut.capabilities/1",
         "repositories":repositories,
         "connected":{
+            "media_placement":{"timeline_path":"clips.fit / output.fit","modes":["contain","cover","none","stretch"],
+                "default":"contain","anchor_units":"native source pixels","position_units":"output pixels",
+                "scale":"relative to fit","diagnostics":"plan and render: base placement factors and stretch warnings",
+                "limitations":["square source pixels","no punch_in operation","transformed-source tracking unsupported","no preview badges","native anchor expressions need an explicit value"]},
             "effectcraft_effects":{"count":ec["connected_count"],"catalog":"effects_catalog",
                 "timeline_path":"clips/tracks.effects","execution":"upstream CPU kernels, GPU readback/upload when needed",
                 "working_space":"premultiplied linear ACEScg","time":"clip-local for clips, timeline for tracks"},

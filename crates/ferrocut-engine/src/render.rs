@@ -115,6 +115,8 @@ pub struct ChunkReport {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct RenderReport {
+    pub placements: Vec<crate::placement::PlacementReport>,
+    pub warnings: Vec<String>,
     pub engine: String,
     pub adapter: String,
     /// FFmpeg version + license of the libavcodec actually loaded.
@@ -907,6 +909,8 @@ pub fn render(
         0.0
     };
     Ok(RenderReport {
+        placements: c.placements.clone(),
+        warnings: c.warnings.clone(),
         engine: ENGINE_VERSION.to_string(),
         adapter: gpu_end.describe(),
         ffmpeg: {

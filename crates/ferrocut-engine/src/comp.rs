@@ -90,6 +90,7 @@ pub fn source_facts(path: &Path) -> anyhow::Result<crate::edit::MediaFacts> {
             duration: Some(tl.duration()),
             has_video: true,
             has_audio: has_audio(&tl, &mut stack)?,
+            size: Some((tl.output.width, tl.output.height)),
         })
     } else {
         let i = crate::media::probe(path)?;
@@ -97,6 +98,7 @@ pub fn source_facts(path: &Path) -> anyhow::Result<crate::edit::MediaFacts> {
             duration: i.duration,
             has_video: i.has_video,
             has_audio: i.has_audio,
+            size: i.width.zip(i.height),
         })
     }
 }
