@@ -251,7 +251,7 @@ fn build_tools() -> Vec<Tool> {
         tool(
             "preview_frames",
             "Preview frames (stills)",
-            "Render chosen output frames to PNG stills and a labeled contact sheet without encoding video: the same pixels a master render would hold at those frames (8-bit Rec.709), through the real graph and compositor. Choose frames by timeline time (`at`), index (`frames`) or `spread` (N evenly spaced over the whole timeline; default 12). Returns each frame's time, timecode and path, the sheet path, and (inline=true, default) the sheet or single frame as an image so you can look at it immediately. Use each=true and read the full-resolution PNGs to check small text. Look before and after every edit batch; it is much cheaper than a draft render.",
+            "Render chosen output frames to PNG stills and a labeled contact sheet without encoding video: the same pixels a master render would hold at those frames (8-bit Rec.709), through the real graph and compositor. Choose frames by timeline time (`at`), index (`frames`) or `spread` (N evenly spaced over the whole timeline; default 12). Returns each frame's time, timecode and path, the sheet path, and (inline=true, default) the sheet or single frame as an image so you can look at it immediately. Use each=true and read the full-resolution PNGs to check small text. Look before and after every edit batch; it is much cheaper than a draft render. Provenance: `hash` is the timeline as parsed once before rendering (the pixels come from that snapshot); `artifact.kind` is native_render (not an encoded file); each frame carries its render-graph `key` and `png_blake3`, and the sheet and inline image their blake3. Referenced media/fonts are read at render time, not frozen.",
             schema::preview_frames(),
             rw(false).idempotent(true),
         ),
@@ -923,7 +923,15 @@ pub fn base64(bytes: &[u8]) -> String {
 
 fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
     use ferrocut_engine::preview;
-    let (path, tl) = cx.root.load_timeline(&a.timeline)?;
+    // One snapshot of the document: parse it once, report that parse's hash
+    // (the same `hash` semantics as timeline_get), and render its resolved copy.
+    // Re-reading the file after rendering could label these pixels with a
+    // document edited meanwhile.
+    let path = cx.root.check(&a.timeline)?;
+    let raw = read_timeline(&path)?;
+    let snapshot_hash = timeline_hash(&raw);
+    let tl = project::resolved(&raw, &project::dir_of(&path));
+    cx.root.check_sources(&tl)?;
     let dir = match a.output_dir {
         Some(d) => cx.root.check(&d)?,
         None => project::dir_of(&path).join("stills"),
@@ -955,20 +963,41 @@ fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
     let stills = preview::render_stills(&tl, &c, &gpu, &frames, &cx.cancel)?;
     let sheet = a.sheet.then_some((a.cols, a.cell_width));
     let r = preview::write_stills(&tl, &stills, &dir, &prefix, a.each || !a.sheet, sheet)?;
+    let frame_key = |frame: i64| {
+        let k = c.graph.frame_key(
+            c.output,
+            ferrocut_core::RationalTime::from_frames(frame, tl.output.fps),
+        );
+        k.0.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let file_blake3 = |p: &std::path::Path| ferrocut_engine::index::blake3_file(p);
+    let mut frames_json = Vec::new();
+    for f in &r.frames {
+        frames_json.push(json!({
+            "frame": f.frame,
+            "time": f.time,
+            "timecode": f.timecode,
+            "path": f.path.as_deref().map(|p| rel(cx, p)),
+            // Render-graph key of this output frame (inputs + parameters).
+            "key": frame_key(f.frame),
+            "png_blake3": f.path.as_deref().map(file_blake3).transpose()?,
+        }));
+    }
     let mut out = json!({
-        "hash": timeline_hash(&read_timeline(&path)?),
+        "hash": snapshot_hash,
+        "artifact": {
+            "kind": "native_render",
+            "timeline_hash": snapshot_hash,
+            "snapshot": "timeline parsed once before rendering; media, fonts and other files it references are read when rendered, not frozen",
+        },
         "width": tl.output.width,
         "height": tl.output.height,
         "fps": tl.output.fps.to_string(),
         "total_frames": tl.frame_count(),
         "adapter": gpu.describe(),
-        "frames": r.frames.iter().map(|f| json!({
-            "frame": f.frame,
-            "time": f.time,
-            "timecode": f.timecode,
-            "path": f.path.as_deref().map(|p| rel(cx, p)),
-        })).collect::<Vec<_>>(),
+        "frames": frames_json,
         "sheet": r.sheet.as_deref().map(|p| rel(cx, p)),
+        "sheet_blake3": r.sheet.as_deref().map(file_blake3).transpose()?,
     });
     if a.inline {
         let single = stills.len() == 1;
@@ -988,6 +1017,7 @@ fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
             "width": w,
             "height": h,
             "png_bytes": png.len(),
+            "png_blake3": preview::blake3_hex(&png),
             "max_png_bytes": INLINE_PNG_MAX_BYTES,
         });
         out[INLINE_PNG_KEY] = Value::String(base64(&png));

@@ -202,6 +202,11 @@ pub fn render_stills(
 }
 
 /// Encode straight RGBA8 as PNG bytes.
+/// blake3 of bytes as lowercase hex (content identity of an inline image).
+pub fn blake3_hex(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
 pub fn png_bytes(width: u32, height: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>> {
     let size = tiny_skia::IntSize::from_wh(width, height).context("empty image")?;
     // Opaque pixels: straight == premultiplied, so no conversion is needed.
