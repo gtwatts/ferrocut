@@ -10,15 +10,15 @@ use std::sync::Arc;
 
 use effectcraft_geom::{Mat3, vec2};
 use ferrocut_core::{
-    Animatable, ColorSpace, CpuFrame, Frame, NodeError, NodeHash, Pull, Rational, RationalTime,
-    RenderCtx, RenderNode,
+    Animatable, CpuFrame, Frame, NodeError, NodeHash, Pull, Rational, RationalTime, RenderCtx,
+    RenderNode,
 };
-use half::f16;
 use serde::{Deserialize, Serialize};
 
-use crate::vector::{MAX_VECTOR_PIXELS, VectorGeometry, VectorNode, VectorSpec};
+use crate::vector::{VectorGeometry, VectorNode, VectorSpec, rasterize_prepared};
 
-pub const VECTOR_INSTANCES_VERSION: &[u8] = b"vector.instances.v1.effectcraft.6943872";
+pub const VECTOR_INSTANCES_VERSION: &[u8] =
+    b"vector.instances.v2.source-bounds.effectcraft.6943872";
 pub const MAX_GROUP_DEPTH: usize = 8;
 pub const MAX_GROUP_NODES: usize = 128;
 pub const MAX_VECTOR_INSTANCES: usize = 512;
@@ -621,57 +621,53 @@ impl VectorGroup {
         }
         Ok(draws)
     }
+    /// Rasterize the requested viewport, clipping outside the display.
     pub fn rasterize(&self, t: RationalTime, width: u32, height: u32) -> Result<CpuFrame, String> {
-        self.rasterize_checked(t, width, height, &|| Ok(()))
+        self.rasterize_checked(t, width, height, false, None, &|| Ok(()))
     }
+
+    /// Retain painted source bounds without changing the logical display size.
+    pub fn rasterize_source(
+        &self,
+        t: RationalTime,
+        width: u32,
+        height: u32,
+    ) -> Result<CpuFrame, String> {
+        self.rasterize_checked(t, width, height, true, None, &|| Ok(()))
+    }
+
     fn rasterize_checked(
         &self,
         t: RationalTime,
         width: u32,
         height: u32,
+        retain_bounds: bool,
+        max_dimension: Option<u32>,
         check: &dyn Fn() -> Result<(), String>,
     ) -> Result<CpuFrame, String> {
         check()?;
         let draws = self.instances_checked(t, check)?;
-        let count = (width as usize)
-            .checked_mul(height as usize)
-            .filter(|n| *n > 0 && *n <= MAX_VECTOR_PIXELS)
-            .ok_or("vector group output must be nonzero and at most 67108864 pixels")?;
-        count
-            .checked_mul(draws.len().max(1))
-            .filter(|n| *n <= MAX_INSTANCE_PIXEL_WORK)
-            .ok_or("vector instance pixel work exceeds 268435456 pixels per frame")?;
-        let mut pixels = Vec::new();
-        pixels
-            .try_reserve_exact(count)
-            .map_err(|e| format!("vector group allocation: {e}"))?;
-        pixels.resize(count, [0.0f32; 4]);
         let mut geometry_budget = MAX_INSTANCE_GEOMETRY;
-        for draw in draws {
-            check()?;
-            draw.shape.paint_transformed_checked(
-                t,
-                width,
-                height,
-                &draw.transform,
-                draw.opacity,
-                &mut pixels,
-                &mut geometry_budget,
-                check,
-            )?;
-        }
-        check()?;
-        let mut output = Vec::new();
-        output
-            .try_reserve_exact(count * 4)
-            .map_err(|e| format!("vector group output allocation: {e}"))?;
-        for (i, pixel) in pixels.into_iter().enumerate() {
-            if i % 65_536 == 0 {
-                check()?;
-            }
-            output.extend(pixel.map(f16::from_f32));
-        }
-        Ok(CpuFrame::new(width, height, ColorSpace::acescg(), output))
+        let prepared = draws
+            .iter()
+            .map(|draw| {
+                draw.shape.prepare_paint(
+                    t,
+                    Some(&draw.transform),
+                    draw.opacity,
+                    &mut geometry_budget,
+                    check,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        rasterize_prepared(
+            &prepared,
+            (width, height),
+            retain_bounds,
+            max_dimension,
+            MAX_INSTANCE_PIXEL_WORK,
+            check,
+        )
     }
 }
 
@@ -741,11 +737,14 @@ impl RenderNode for VectorGroupNode {
         _inputs: &[Arc<Frame>],
     ) -> Result<Arc<Frame>, NodeError> {
         ctx.check()?;
-        let frame = self
-            .group
-            .rasterize_checked(t, self.width, self.height, &|| {
-                ctx.check().map_err(|e| e.to_string())
-            });
+        let frame = self.group.rasterize_checked(
+            t,
+            self.width,
+            self.height,
+            true,
+            Some(ctx.gpu.device.limits().max_texture_dimension_2d),
+            &|| ctx.check().map_err(|e| e.to_string()),
+        );
         ctx.check()?;
         let frame = frame.map_err(NodeError::new)?;
         Ok(Arc::new(Frame::from_cpu(&frame).to_gpu(ctx.gpu)))

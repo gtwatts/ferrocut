@@ -1,6 +1,8 @@
 # Native vector source bounds and clip transforms
 
-Status: proposed contract for independent review, 2026-10-09. Base source:
+Status: contract accepted for implementation by the lead and independent reviewer
+at 13:51Z on 2026-10-09 (contract checkpoint `514a249`). Execution acceptance is
+pending; source/regression work is not a render verdict. Base source:
 `3ad837219d07d482f077b98889e710d7176c6c28`. No execution evidence yet.
 
 ## Defect and intended behavior
@@ -32,9 +34,10 @@ until baseline execution is granted; no private production asset is in the fixtu
   in-frame sources retain their current full-window storage and raster path.
 - Calculate painted bounds after shape operators, group/repeater transforms and
   actual stroke outlining. A centerline or geometric path bound alone is not a
-  stroke bound: caps, joins, miter limits and dashes matter. Include a one-pixel
-  antialias guard outside nonintegral/edge coverage as needed; this is not an
-  arbitrary blur/effect margin. Bound coordinates and allocation sizes before use.
+  stroke bound: caps, joins, miter limits and dashes matter. Include antialiased
+  coverage by flooring minima and ceiling maxima, so every touched pixel
+  is stored; this is not an arbitrary blur/effect margin. Bound coordinates and
+  allocation sizes before use.
 - Raster storage uses an integer offset from source coordinates. Paint/gradient
   samples must map back to the same source/local coordinates. Offset buffers do
   not change fill winding, stroke construction, compositing order or premultiplied
@@ -95,7 +98,7 @@ is proposed. MCP root containment must remain unchanged.
 5. Required CONTRIBUTING checks and unchanged `ci/render-check.sh`/references before
    verified push and feature PR. Independent code/output review precedes integration.
 
-Likely owned files: `src/vector.rs`, `src/vector_instances.rs`, their focused tests,
+Owned files: `src/vector.rs`, `src/vector_instances.rs`, their focused tests,
 this contract and the public fixture. Any need to change compilation or node wiring
 will be explained before extending this scope. No main/lib/index or MCP schema edit
 is currently needed; workflow owns its disjoint index recovery slice.

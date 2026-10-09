@@ -1,6 +1,8 @@
 //! Native vector geometry with animated fills and strokes.
 //!
-//! Coordinates are output pixels, +x right and +y down. All numeric properties
+//! Coordinates use the owning timeline's display pixels, +x right and +y down.
+//! Source data windows retain painted overscan without changing that display.
+//! All numeric properties
 //! use source-time Animatable values, like other generator parameters. Existing
 //! clip transforms provide placement, parenting, camera projection, and opacity.
 //! Open contours are implicitly closed for fill and remain open for stroke.
@@ -21,8 +23,8 @@ use std::sync::Arc;
 use effectcraft_path::{BezPath, PathEl, ops};
 use ferrocut_colorspace::{Transfer, named};
 use ferrocut_core::{
-    Animatable, ColorSpace, CpuFrame, Frame, NodeError, NodeHash, Pull, Rational, RationalTime,
-    RenderCtx, RenderNode,
+    AlphaMode, Animatable, ColorSpace, CpuFrame, CpuImage, Frame, NodeError, NodeHash, PixelRect,
+    Pull, Rational, RationalTime, RenderCtx, RenderNode,
 };
 use half::f16;
 use serde::{Deserialize, Serialize};
@@ -33,7 +35,7 @@ use tiny_skia::{
 
 use crate::generator::{Color, GradientSpace};
 
-pub const VECTOR_VERSION: &[u8] = b"vector.v2.effectcraft-path.6943872";
+pub const VECTOR_VERSION: &[u8] = b"vector.v3.source-bounds.effectcraft-path.6943872";
 /// Bounds temporary CPU raster storage to roughly 1.6 GiB at the upper limit.
 pub const MAX_VECTOR_PIXELS: usize = 64 * 1024 * 1024;
 /// Operator stacks and expanded paths have separate limits from legacy paths.
@@ -761,99 +763,110 @@ impl VectorSpec {
         serde_json::to_vec(&value).expect("sampled vector serializes")
     }
 
-    /// Render a full-window, premultiplied linear ACEScg CPU frame. No GPU or
-    /// external renderer is required. Geometry outside the frame is clipped.
+    /// Render a full-window, premultiplied linear ACEScg CPU viewport.
+    /// Geometry outside the requested display is clipped, for API compatibility.
     pub fn rasterize(&self, t: RationalTime, width: u32, height: u32) -> Result<CpuFrame, String> {
-        self.rasterize_checked(t, width, height, &|| Ok(()))
+        self.rasterize_checked(t, width, height, false, None, &|| Ok(()))
     }
 
-    /// Paint a native shape into a shared premultiplied ACEScg float buffer.
-    /// Used only by vector groups; the legacy single-shape renderer below is
-    /// unchanged. Curves and local stroke outlines are transformed before
-    /// antialiased coverage, and gradient samples are mapped back to local space.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn paint_transformed_checked(
+    /// Render a source image whose signed data window retains off-display paint.
+    /// Width and height still describe the logical display, not storage strides.
+    pub fn rasterize_source(
         &self,
         t: RationalTime,
         width: u32,
         height: u32,
-        transform: &effectcraft_geom::Mat3,
+    ) -> Result<CpuFrame, String> {
+        self.rasterize_checked(t, width, height, true, None, &|| Ok(()))
+    }
+
+    /// Prepare fill and actual local stroke outlines once, before choosing any
+    /// raster window. Group transforms act on outlines, not average stroke widths.
+    pub(crate) fn prepare_paint(
+        &self,
+        t: RationalTime,
+        transform: Option<&effectcraft_geom::Mat3>,
         opacity: f32,
-        pixels: &mut [[f32; 4]],
         geometry_budget: &mut usize,
         check: &dyn Fn() -> Result<(), String>,
-    ) -> Result<(), String> {
+    ) -> Result<PreparedVector, String> {
         check()?;
         self.validate()?;
-        let count = (width as usize)
-            .checked_mul(height as usize)
-            .filter(|n| *n > 0 && *n <= MAX_VECTOR_PIXELS)
-            .ok_or("invalid vector group buffer dimensions")?;
-        if pixels.len() != count || !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
-            return Err("invalid vector group buffer or opacity".into());
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return Err("invalid vector opacity".into());
         }
-        if !transform.is_affine()
-            || !transform
-                .0
-                .iter()
-                .flatten()
-                .all(|v| v.is_finite() && v.abs() <= 1e6)
-        {
-            return Err("invalid bounded affine vector group transform".into());
+        let mut prepared = PreparedVector {
+            paints: Vec::new(),
+            inverse: None,
+            opacity,
+        };
+        if let Some(transform) = transform {
+            if !transform.is_affine()
+                || !transform
+                    .0
+                    .iter()
+                    .flatten()
+                    .all(|v| v.is_finite() && v.abs() <= 1e6)
+            {
+                return Err("invalid bounded affine vector group transform".into());
+            }
+            if transform.determinant() == 0.0 {
+                return Ok(prepared);
+            }
+            let inverse = transform
+                .inverse()
+                .ok_or("vector group transform cannot be inverted")?;
+            if !inverse.0.iter().flatten().all(|v| v.is_finite()) {
+                return Err("vector group inverse transform is not finite".into());
+            }
+            prepared.inverse = Some(inverse);
         }
-        if opacity == 0.0 || transform.determinant() == 0.0 {
-            return Ok(());
-        }
-        let inverse = transform
-            .inverse()
-            .ok_or("vector group transform cannot be inverted")?;
-        if !inverse.0.iter().flatten().all(|v| v.is_finite()) {
-            return Err("vector group inverse transform is not finite".into());
+        if opacity == 0.0 {
+            return Ok(prepared);
         }
         let Some(path) = self.operated_path(t, check)? else {
-            return Ok(());
+            return Ok(prepared);
         };
-        let mut transformed = |path: &Path| -> Result<Option<Path>, String> {
-            let paths = native_paths(path);
-            validate_paths(&paths, MAX_OPERATOR_ELEMENTS)?;
-            let elements = paths.iter().map(|p| p.elements().len()).sum::<usize>();
-            *geometry_budget = geometry_budget
-                .checked_sub(elements)
-                .ok_or("vector instance transformed geometry exceeds complexity budget")?;
-            // Calling the retained EffectCraft implementation transforms actual
-            // Bezier control points, preserving curved geometry and winding.
-            let paths = effectcraft_path::transform(&paths, transform);
-            skia_paths(&paths)
+        let mut add = |path: Path, paint: &VectorPaint, rule: FillRule| -> Result<(), String> {
+            check()?;
+            let path = match transform {
+                None => Some(path),
+                Some(transform) => {
+                    let paths = native_paths(&path);
+                    validate_paths(&paths, MAX_OPERATOR_ELEMENTS)?;
+                    let elements = paths.iter().map(|p| p.elements().len()).sum::<usize>();
+                    *geometry_budget = geometry_budget
+                        .checked_sub(elements)
+                        .ok_or("vector instance transformed geometry exceeds complexity budget")?;
+                    skia_paths(&effectcraft_path::transform(&paths, transform))?
+                }
+            };
+            if let Some(path) = path {
+                prepared.paints.push(PreparedPaint {
+                    path,
+                    paint: PaintAt::new(paint, t)?,
+                    rule,
+                });
+            }
+            Ok(())
         };
         if let Some(fill) = &self.fill {
-            check()?;
-            if let Some(path) = transformed(&path)? {
-                let mut mask = Mask::new(width, height).ok_or("invalid vector mask dimensions")?;
-                let rule = match self.fill_rule {
-                    VectorFillRule::Nonzero => FillRule::Winding,
-                    VectorFillRule::EvenOdd => FillRule::EvenOdd,
-                };
-                mask.fill_path(&path, rule, true, Transform::identity());
-                shade_transformed(
-                    pixels,
-                    &mask,
-                    &PaintAt::new(fill, t)?,
-                    width,
-                    &inverse,
-                    opacity,
-                    check,
-                )?;
-            }
+            let rule = match self.fill_rule {
+                VectorFillRule::Nonzero => FillRule::Winding,
+                VectorFillRule::EvenOdd => FillRule::EvenOdd,
+            };
+            add(path.clone(), fill, rule)?;
         }
         if let Some(stroke) = &self.stroke {
             check()?;
-            let stroke_width = nonnegative(&stroke.width, t)?;
-            if stroke_width > 0.0 {
+            let width = nonnegative(&stroke.width, t)?;
+            if width > 0.0 {
                 let dashes: Vec<f32> = stroke
                     .dashes
                     .iter()
                     .map(|a| nonnegative(a, t))
                     .collect::<Result<_, _>>()?;
+                // All-zero animated dashes mean invisible, never a solid fallback.
                 if dashes.is_empty() || dashes.iter().any(|d| *d > 0.0) {
                     let dash = if dashes.is_empty() {
                         None
@@ -865,7 +878,7 @@ impl VectorSpec {
                         )
                     };
                     let style = Stroke {
-                        width: stroke_width,
+                        width,
                         miter_limit: nonnegative(&stroke.miter_limit, t)?.max(1.0),
                         line_cap: match stroke.cap {
                             VectorCap::Butt => LineCap::Butt,
@@ -881,39 +894,18 @@ impl VectorSpec {
                     };
                     let centerline = match &style.dash {
                         Some(dash) => path.dash(dash, 1.0),
-                        None => Some(path.clone()),
+                        None => Some(path),
                     };
                     if let Some(centerline) = centerline {
-                        // Outline in local space first: anisotropic scaling must
-                        // stretch the full stroke, including caps and joins.
                         let outline = centerline
                             .stroke(&style, 1.0)
                             .ok_or("stroke outline could not be constructed")?;
-                        if let Some(outline) = transformed(&outline)? {
-                            let mut mask =
-                                Mask::new(width, height).ok_or("invalid vector mask dimensions")?;
-                            mask.fill_path(
-                                &outline,
-                                FillRule::Winding,
-                                true,
-                                Transform::identity(),
-                            );
-                            shade_transformed(
-                                pixels,
-                                &mask,
-                                &PaintAt::new(&stroke.paint, t)?,
-                                width,
-                                &inverse,
-                                opacity,
-                                check,
-                            )?;
-                        }
+                        add(outline, &stroke.paint, FillRule::Winding)?;
                     }
                 }
             }
         }
-        check()?;
-        Ok(())
+        Ok(prepared)
     }
 
     fn rasterize_checked(
@@ -921,105 +913,20 @@ impl VectorSpec {
         t: RationalTime,
         width: u32,
         height: u32,
+        retain_bounds: bool,
+        max_dimension: Option<u32>,
         check: &dyn Fn() -> Result<(), String>,
     ) -> Result<CpuFrame, String> {
-        check()?;
-        self.validate()?;
-        // Build and validate the shape before allocating the frame buffers.
-        let path = self.operated_path(t, check)?;
-        let count = (width as usize)
-            .checked_mul(height as usize)
-            .filter(|n| *n > 0 && *n <= MAX_VECTOR_PIXELS)
-            .ok_or("vector output size must be nonzero and at most 67108864 pixels")?;
-        let mut pixels = Vec::<[f32; 4]>::new();
-        pixels
-            .try_reserve_exact(count)
-            .map_err(|e| format!("vector frame allocation: {e}"))?;
-        pixels.resize(count, [0.0; 4]);
-        if let Some(path) = path {
-            check()?;
-            if let Some(fill) = &self.fill {
-                let mut mask = Mask::new(width, height).ok_or("invalid vector mask dimensions")?;
-                let rule = match self.fill_rule {
-                    VectorFillRule::Nonzero => FillRule::Winding,
-                    VectorFillRule::EvenOdd => FillRule::EvenOdd,
-                };
-                mask.fill_path(&path, rule, true, Transform::identity());
-                shade(&mut pixels, &mask, &PaintAt::new(fill, t)?, width);
-            }
-            if let Some(stroke) = &self.stroke {
-                check()?;
-                let stroke_width = nonnegative(&stroke.width, t)?;
-                if stroke_width > 0.0 {
-                    let dashes: Vec<f32> = stroke
-                        .dashes
-                        .iter()
-                        .map(|a| nonnegative(a, t))
-                        .collect::<Result<_, _>>()?;
-                    // An easing overshoot may temporarily reduce every dash to
-                    // zero: this is an invisible stroke, not a solid fallback.
-                    if dashes.is_empty() || dashes.iter().any(|d| *d > 0.0) {
-                        let dash = if dashes.is_empty() {
-                            None
-                        } else {
-                            validate_dash_budget(&path, &dashes)?;
-                            Some(
-                                StrokeDash::new(dashes, scalar(&stroke.dash_offset, t)?)
-                                    .ok_or("stroke dashes cannot be represented")?,
-                            )
-                        };
-                        let style = Stroke {
-                            width: stroke_width,
-                            miter_limit: nonnegative(&stroke.miter_limit, t)?.max(1.0),
-                            line_cap: match stroke.cap {
-                                VectorCap::Butt => LineCap::Butt,
-                                VectorCap::Round => LineCap::Round,
-                                VectorCap::Square => LineCap::Square,
-                            },
-                            line_join: match stroke.join {
-                                VectorJoin::Miter => LineJoin::Miter,
-                                VectorJoin::Round => LineJoin::Round,
-                                VectorJoin::Bevel => LineJoin::Bevel,
-                            },
-                            dash,
-                        };
-                        // Path::stroke ignores Stroke::dash; apply dashing to the
-                        // centerline first, then construct the stroke outline.
-                        let centerline = if let Some(dash) = &style.dash {
-                            // An empty result also occurs when the entire path
-                            // falls in a gap. The resource budget is checked
-                            // above so that excessive patterns still fail.
-                            path.dash(dash, 1.0)
-                        } else {
-                            Some(path.clone())
-                        };
-                        if let Some(centerline) = centerline {
-                            let outline = centerline
-                                .stroke(&style, 1.0)
-                                .ok_or("stroke outline could not be constructed")?;
-                            let mut mask =
-                                Mask::new(width, height).ok_or("invalid vector mask dimensions")?;
-                            mask.fill_path(
-                                &outline,
-                                FillRule::Winding,
-                                true,
-                                Transform::identity(),
-                            );
-                            shade(&mut pixels, &mask, &PaintAt::new(&stroke.paint, t)?, width);
-                        }
-                    }
-                }
-            }
-        }
-        let mut output = Vec::new();
-        output
-            .try_reserve_exact(count * 4)
-            .map_err(|e| format!("vector output allocation: {e}"))?;
-        for p in pixels {
-            output.extend(p.map(f16::from_f32));
-        }
-        check()?;
-        Ok(CpuFrame::new(width, height, ColorSpace::acescg(), output))
+        let mut geometry_budget = usize::MAX;
+        let prepared = self.prepare_paint(t, None, 1.0, &mut geometry_budget, check)?;
+        rasterize_prepared(
+            &[prepared],
+            (width, height),
+            retain_bounds,
+            max_dimension,
+            MAX_VECTOR_PIXELS,
+            check,
+        )
     }
 
     fn operated_path(
@@ -1711,11 +1618,6 @@ impl PaintAt {
         })
     }
 
-    fn pixel(&self, x: u32, y: u32) -> [f32; 4] {
-        let p = [x as f32 + 0.5, y as f32 + 0.5];
-        self.pixel_at(p)
-    }
-
     fn pixel_at(&self, p: [f32; 2]) -> [f32; 4] {
         let position = match self.kind {
             PaintKind::Solid(c) => return c,
@@ -1758,12 +1660,134 @@ impl PaintAt {
     }
 }
 
-fn shade(pixels: &mut [[f32; 4]], mask: &Mask, paint: &PaintAt, width: u32) {
+struct PreparedPaint {
+    path: Path,
+    paint: PaintAt,
+    rule: FillRule,
+}
+
+/// Paint paths in source coordinates, plus the map back to local gradient space.
+/// Keeping these paths avoids evaluating operators/outlining strokes twice when
+/// bounds and raster coverage are needed for the same source sample.
+pub(crate) struct PreparedVector {
+    paints: Vec<PreparedPaint>,
+    inverse: Option<effectcraft_geom::Mat3>,
+    opacity: f32,
+}
+
+pub(crate) fn rasterize_prepared(
+    draws: &[PreparedVector],
+    display: (u32, u32),
+    retain_bounds: bool,
+    max_dimension: Option<u32>,
+    max_pixel_work: usize,
+    check: &dyn Fn() -> Result<(), String>,
+) -> Result<CpuFrame, String> {
+    check()?;
+    let (width, height) = display;
+    if width == 0 || height == 0 {
+        return Err("vector output dimensions must be nonzero".into());
+    }
+    let mut bounds = [0.0_f64, 0.0, f64::from(width), f64::from(height)];
+    if retain_bounds {
+        for draw in draws {
+            for paint in &draw.paints {
+                let rect = paint.path.bounds();
+                bounds[0] = bounds[0].min(f64::from(rect.left()));
+                bounds[1] = bounds[1].min(f64::from(rect.top()));
+                bounds[2] = bounds[2].max(f64::from(rect.right()));
+                bounds[3] = bounds[3].max(f64::from(rect.bottom()));
+            }
+        }
+    }
+    // A pixel touched by antialiased geometric coverage lies inside floor..ceil
+    // of the painted path, including its stroke outline. No effect fringe is
+    // inferred here. The union with display preserves ordinary viewport storage.
+    let [x0, y0, x1, y1] = [
+        bounds[0].floor(),
+        bounds[1].floor(),
+        bounds[2].ceil(),
+        bounds[3].ceil(),
+    ];
+    if [x0, y0, x1, y1]
+        .iter()
+        .any(|v| !v.is_finite() || *v < f64::from(i32::MIN) || *v > f64::from(i32::MAX))
+    {
+        return Err("vector painted bounds exceed signed pixel coordinates".into());
+    }
+    let window = PixelRect::new(x0 as i32, y0 as i32, (x1 - x0) as u32, (y1 - y0) as u32);
+    let count = (window.width as usize)
+        .checked_mul(window.height as usize)
+        .filter(|n| *n > 0 && *n <= MAX_VECTOR_PIXELS)
+        .ok_or("vector painted window must contain at most 67108864 pixels")?;
+    count
+        .checked_mul(draws.len().max(1))
+        .filter(|n| *n <= max_pixel_work)
+        .ok_or("vector instance pixel work exceeds its per-frame resource limit")?;
+    if let Some(limit) = max_dimension
+        && (window.width > limit || window.height > limit)
+    {
+        return Err(format!(
+            "vector painted window {}x{} exceeds GPU texture dimension limit {limit}",
+            window.width, window.height
+        ));
+    }
+    let mut pixels = Vec::new();
+    pixels
+        .try_reserve_exact(count)
+        .map_err(|e| format!("vector frame allocation: {e}"))?;
+    pixels.resize(count, [0.0_f32; 4]);
+    let offset = Transform::from_translate(-(window.x as f32), -(window.y as f32));
+    for draw in draws {
+        for paint in &draw.paints {
+            check()?;
+            let mut mask =
+                Mask::new(window.width, window.height).ok_or("invalid vector mask dimensions")?;
+            mask.fill_path(&paint.path, paint.rule, true, offset);
+            match &draw.inverse {
+                Some(inverse) => shade_transformed(
+                    &mut pixels,
+                    &mask,
+                    &paint.paint,
+                    window,
+                    inverse,
+                    draw.opacity,
+                    check,
+                )?,
+                None => shade(&mut pixels, &mask, &paint.paint, window),
+            }
+        }
+    }
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(count * 4)
+        .map_err(|e| format!("vector output allocation: {e}"))?;
+    for (i, pixel) in pixels.into_iter().enumerate() {
+        if i % 65_536 == 0 {
+            check()?;
+        }
+        output.extend(pixel.map(f16::from_f32));
+    }
+    check()?;
+    Ok(CpuFrame {
+        width,
+        height,
+        data_window: window,
+        pixel_aspect: Rational::ONE,
+        color_space: ColorSpace::acescg(),
+        alpha: AlphaMode::Premultiplied,
+        image: Arc::new(CpuImage { pixels: output }),
+    })
+}
+
+fn shade(pixels: &mut [[f32; 4]], mask: &Mask, paint: &PaintAt, window: PixelRect) {
     for (i, (&coverage, dst)) in mask.data().iter().zip(pixels).enumerate() {
         if coverage == 0 {
             continue;
         }
-        let c = paint.pixel(i as u32 % width, i as u32 / width);
+        let x = i64::from(window.x) + (i % window.width as usize) as i64;
+        let y = i64::from(window.y) + (i / window.width as usize) as i64;
+        let c = paint.pixel_at([x as f32 + 0.5, y as f32 + 0.5]);
         let alpha = coverage as f32 / 255.0;
         let src = c.map(|v| v * alpha);
         *dst = [0, 1, 2, 3].map(|k| src[k] + dst[k] * (1.0 - src[3]));
@@ -1775,7 +1799,7 @@ fn shade_transformed(
     pixels: &mut [[f32; 4]],
     mask: &Mask,
     paint: &PaintAt,
-    width: u32,
+    window: PixelRect,
     inverse: &effectcraft_geom::Mat3,
     opacity: f32,
     check: &dyn Fn() -> Result<(), String>,
@@ -1788,8 +1812,8 @@ fn shade_transformed(
             continue;
         }
         let local = inverse.apply(effectcraft_geom::vec2(
-            (i % width as usize) as f64 + 0.5,
-            (i / width as usize) as f64 + 0.5,
+            f64::from(window.x) + (i % window.width as usize) as f64 + 0.5,
+            f64::from(window.y) + (i / window.width as usize) as f64 + 0.5,
         ));
         if !local.x.is_finite()
             || !local.y.is_finite()
@@ -1853,11 +1877,14 @@ impl RenderNode for VectorNode {
         _inputs: &[Arc<Frame>],
     ) -> Result<Arc<Frame>, NodeError> {
         ctx.check()?;
-        let frame = self
-            .spec
-            .rasterize_checked(t, self.width, self.height, &|| {
-                ctx.check().map_err(|e| e.to_string())
-            });
+        let frame = self.spec.rasterize_checked(
+            t,
+            self.width,
+            self.height,
+            true,
+            Some(ctx.gpu.device.limits().max_texture_dimension_2d),
+            &|| ctx.check().map_err(|e| e.to_string()),
+        );
         // Retain cancellation/deadline classification across the CPU boundary.
         ctx.check()?;
         let frame = frame.map_err(NodeError::new)?;
