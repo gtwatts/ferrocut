@@ -122,7 +122,7 @@ pub(crate) fn tools() -> Vec<Tool> {
                 json!({
                     "timeline":{"type":"string","minLength":1},
                     "subtitles":{"type":"string","minLength":1,"description":".srt or .vtt"},
-                    "style":{"type":"object","description":"text generator spec (TextSpec): font, font_size, color, align, position..."},
+                    "style":{"type":"object","description":"text generator spec (TextSpec, the text object of add_clip's text generator). Required: content (a placeholder such as \"\"; each cue replaces it) and font. Optional: font_size, fill, stroke, align, vertical_align, position, box_size, wrap, opacity, ...; timeline_schema {part:\"timeline\"} lists all fields"},
                     "track":{"type":"string","minLength":1,"default":"Captions"},
                     "timing":object(json!({
                         "snap":{"type":"boolean","default":true},
