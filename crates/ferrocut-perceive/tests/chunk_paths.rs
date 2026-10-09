@@ -449,7 +449,7 @@ fn unusable_resolution_fails_before_the_analysis_cache() {
     )
     .unwrap();
     let cache = a.join("cache");
-    let err = analyze(Request {
+    let Err(err) = analyze(Request {
         timeline: &tl,
         render: &rr,
         cache_dir: &cache,
@@ -457,9 +457,9 @@ fn unusable_resolution_fails_before_the_analysis_cache() {
         audio: None,
         options: Options::default(),
         gpu: None,
-    })
-    .err()
-    .expect("unusable resolution");
+    }) else {
+        panic!("an unusable resolution must be refused");
+    };
     assert!(format!("{err:#}").contains("unresolved"), "{err:#}");
     assert!(!cache.exists(), "cache touched before the resolution check");
 }
