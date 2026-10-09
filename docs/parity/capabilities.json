@@ -2739,7 +2739,6 @@
           }
         ],
         "limitations": [
-          "Nested compositions currently must match parent frame geometry.",
           "A recorded shared-child revision production test is still required."
         ],
         "acceptance_checks": [],
@@ -2748,7 +2747,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Conservative code audit only; test-source references are not fresh execution or creative-review claims."
+          "Conservative code audit only; test-source references are not fresh execution or creative-review claims.",
+          "Children of another canvas size are fitted to the parent. Static source: crates/ferrocut-engine/tests/nest.rs cycles_fail_and_other_canvas_sizes_are_fitted. No new execution was performed for this row update; evidence is retained source/test text or an accepted public report."
         ],
         "needs_design": false
       }
@@ -5022,7 +5022,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "Frame-grid cue timing is implemented: frame snap on; close-gaps <= 1/10 s inclusive (up to 3 frames at 30 fps); minimum duration opt-in (crates/ferrocut-engine/src/captions.rs CaptionTiming). The <=1/10 s cue-gap blink is closed and retained as a regression: eval/creative/benchmark/regressions/caption-blink/README.md. Static/retained test identifiers: crates/ferrocut-engine/tests/captions.rs explainer_cue_gap_blinks_raw_and_is_closed_by_default, snapping_never_changes_a_displayed_frame, one_frame_gap_depends_on_rate_and_only_real_blinks_are_reported, export_quantization_is_explicit_and_cannot_collapse_cues. Transcript segmentation policy remains unimplemented and separate from cue-timing close-gaps. No new execution was performed for this row update; evidence is retained source/test text or an accepted public report."
         ],
         "needs_design": false
       }
@@ -5079,7 +5080,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "Word/character text selectors exist (crates/ferrocut-engine/src/text.rs) but there is no single-word cue generation or post-edit reflow operation. No new execution was performed for this row update; evidence is retained source/test text or an accepted public report."
         ],
         "needs_design": false
       }
@@ -5128,7 +5130,7 @@
           }
         ],
         "limitations": [
-          "No linked caption-track style object or restyle-all-cues operation exists."
+          "No linked caption-track style object or restyle-all-cues operation exists. External fonts and a sibling `--output` remain explicitly non-portable (reported through `nonportable_fonts` / an output-location warning); no automatic asset copy or package creation is implied."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -5136,7 +5138,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "Contained caption fonts are stored relative to the timeline and canonical containment is checked; text cache keys no longer depend on font paths. Accepted reports: docs/evaluations/2026-10-09-portable-fonts.md (combined 73935ba, installed 20261009T111917Z); docs/evaluations/2026-10-09-font-content-identity.md (engine cfc92ec, PR 5). Retained test identifiers: crates/ferrocut-engine/tests/captions.rs caption_cli_import_is_portable_journaled_and_survives_a_move, caption_cli_reports_fonts_of_an_output_in_another_directory, style_fonts_are_contained_by_their_real_path_not_a_lexical_prefix. This supersedes the cycle-1 absolute-font-path defect."
         ],
         "needs_design": false
       }
@@ -10308,7 +10311,7 @@
       ],
       "proposed_acceptance": "Export an exact frame or range to declared image formats with correct alpha.",
       "ferrocut": {
-        "status": "missing",
+        "status": "partial",
         "assessed_at": "2026-10-08",
         "acceptance_complete": false,
         "evidence": [
@@ -10332,8 +10335,7 @@
           }
         ],
         "limitations": [
-          "No supported model/handler/effect/provider adapter for the recorded capability was found in the audited source: Still frames and image sequences.",
-          "The complete recorded agent acceptance criterion has no executable implementation evidence."
+          "Image-sequence export (numbered range / alpha / bit depth) is not verified. Full-resolution PNG still-frame export exists (`ferrocut stills`, `--each`, contact sheet)."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -10341,7 +10343,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: explicit missing runtime capability at this checkpoint, not an estimate of engineering effort."
+          "Source audit 2026-10-08: explicit missing runtime capability at this checkpoint, not an estimate of engineering effort.",
+          "Still-frame export: crates/ferrocut-engine/tests/stills_cli.rs stills_command_writes_pngs_json_and_guards_inputs; crates/ferrocut-engine/src/main.rs (Stills); crates/ferrocut-engine/src/preview.rs. The recorded acceptance (exact frame or range to declared image formats with correct alpha) is not fully met. No new execution was performed for this row update; evidence is retained source/test text or an accepted public report."
         ],
         "needs_design": false
       }
@@ -10490,7 +10493,7 @@
       ],
       "proposed_acceptance": "Round-trip a supported XML fixture and report effect/audio/nesting losses.",
       "ferrocut": {
-        "status": "missing",
+        "status": "partial",
         "assessed_at": "2026-10-08",
         "acceptance_complete": false,
         "evidence": [
@@ -10520,8 +10523,7 @@
           }
         ],
         "limitations": [
-          "No supported model/handler/effect/provider adapter for the recorded capability was found in the audited source: Final Cut Pro XML export.",
-          "The complete recorded agent acceptance criterion has no executable implementation evidence."
+          "Full interchange compatibility is not verified. OTIO and FCP7 import/export exist with explicit loss reporting (masks, track/master mix, subframe rounding)."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -10530,7 +10532,8 @@
         "production_reviews": [],
         "notes": [
           "Source audit 2026-10-08: explicit missing runtime capability at this checkpoint, not an estimate of engineering effort.",
-          "Design decision: Define supported file/API/codec/hardware versions and licensing explicitly. Equivalent native behavior does not establish compatibility with Adobe applications, plugins or proprietary project formats."
+          "Design decision: Define supported file/API/codec/hardware versions and licensing explicitly. Equivalent native behavior does not establish compatibility with Adobe applications, plugins or proprietary project formats.",
+          "Retained test identifier: crates/ferrocut-engine/tests/interchange.rs original_otio_and_fcp7_roundtrip_preserves_gaps_tracks_paths_and_source_edits (plus loss-reporting tests). No new execution was performed for this row update; evidence is retained source/test text or an accepted public report."
         ],
         "needs_design": true
       }
@@ -11920,7 +11923,7 @@
       ],
       "proposed_acceptance": "Discover a versioned programmatic editing surface and run documented workflows headlessly.",
       "ferrocut": {
-        "status": "integrated",
+        "status": "partial",
         "assessed_at": "2026-10-08",
         "acceptance_complete": false,
         "evidence": [
@@ -11949,7 +11952,9 @@
             "claim": "MCP tool discovery, strict JSON schemas, an authoring guide and CLI help expose a headless programmatic editing workflow."
           }
         ],
-        "limitations": [],
+        "limitations": [
+          "The Adobe UXP/JavaScript project API is not provided (constraint: UXP stable from 25.6 with explicit method/version coverage); the MCP agent API is a different surface and does not establish UXP compatibility. The agent-native headless MCP API is discoverable/versioned and satisfies the generic headless editing acceptance, so the gap is partial."
+        ],
         "acceptance_checks": [],
         "output_review_required": true,
         "output_review_exemption": null,
@@ -11957,7 +11962,8 @@
         "production_reviews": [],
         "notes": [
           "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
-          "Design decision: The intended equivalent is the native agent API; Adobe UXP/JavaScript and keyboard command-map compatibility are not provided."
+          "Design decision: The intended equivalent is the native agent API; Adobe UXP/JavaScript and keyboard command-map compatibility are not provided.",
+          "Status choice is explicit for review: partial because the named Adobe UXP requirement is unmet while the documented agent-native equivalent (crates/ferrocut-mcp/src/lib.rs) covers only the generic headless acceptance. A rename alone does not clear the UXP requirement. No new execution was performed for this row update; evidence is retained source/test text or an accepted public report."
         ],
         "needs_design": true
       }
@@ -14817,7 +14823,6 @@
           }
         ],
         "limitations": [
-          "Child frame dimensions must currently match parent dimensions.",
           "Recorded shared-child revision acceptance is pending."
         ],
         "acceptance_checks": [],
@@ -14826,7 +14831,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Conservative code audit only; test-source references are not fresh execution or creative-review claims."
+          "Conservative code audit only; test-source references are not fresh execution or creative-review claims.",
+          "Children of another canvas size are fitted to the parent (`contain` default). Static source: crates/ferrocut-engine/tests/nest.rs cycles_fail_and_other_canvas_sizes_are_fitted; docs/design/2026-10-08-media-placement-fit.md. Accepted fit report: docs/evaluations/2026-10-09-production-cycle.md. No new execution was performed for this row update; evidence is retained source/test text or an accepted public report."
         ],
         "needs_design": false
       }
@@ -15684,14 +15690,17 @@
             "claim": "Native transforms/opacity, persistent markers and rational keyframes include temporal Bezier, independent speed/influence and Easy Ease through normal editing."
           }
         ],
-        "limitations": [],
+        "limitations": [
+          "Placement semantics are exact per source size: `anchor` is native source pixels, `scale` is relative to the fitted picture (`contain/cover/none/stretch`); defaults `anchor=[sw/2,sh/2]`, `position=[W/2,H/2]`. Full per-row execution remains unrecorded."
+        ],
         "acceptance_checks": [],
         "output_review_required": true,
         "output_review_exemption": null,
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "Placement contract: docs/design/2026-10-08-media-placement-fit.md; source crates/ferrocut-engine/src/params.rs, crates/ferrocut-engine/src/transform.rs. No new execution was performed for this row update; evidence is retained source/test text or an accepted public report."
         ],
         "needs_design": false
       }
@@ -19500,7 +19509,7 @@
           }
         ],
         "limitations": [
-          "A layer-attached multi-mask stack, mask modes, expansion, variable-width feather and per-effect attachments are missing."
+          "Variable-width feather (feather width varying around/along the contour) is not implemented; feather is isotropic signed-distance smoothstep (AE-102). Effect-specific mask attachments remain separate. Layer-attached multi-mask stacks, ordered combine modes, opacity and signed expansion are implemented (AE-101/AE-102)."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -19508,7 +19517,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "Mask stack/modes/expansion source: crates/ferrocut-engine/src/masks.rs; static test source crates/ferrocut-engine/tests/masks.rs feather_expansion_inversion_and_opacity_match_independent_pixel_math, horizontal_spans_preserve_large_feather_expansion_and_negative_roi_pixels; docs/integrations/NATIVE_MOTION.md. No new execution was performed for this row update; evidence is retained source/test text or an accepted public report."
         ],
         "needs_design": false
       }
