@@ -170,6 +170,13 @@ pub struct RenderReport {
     pub proxies: Vec<PathBuf>,
 }
 
+/// Lexical absolute path for a render-report field (`chunk_dir`, `output`).
+/// Resolved against the process current directory at render time.
+/// Does not canonicalize and does not require the path to exist.
+pub(crate) fn report_path(p: &Path) -> anyhow::Result<PathBuf> {
+    std::path::absolute(p).with_context(|| format!("making {} absolute", p.display()))
+}
+
 /// Output frames in flight per chunk worker in the readback ring.
 pub const READBACK_DEPTH: usize = 3;
 
@@ -724,10 +731,14 @@ pub fn render(
     opts: &RenderOptions,
 ) -> anyhow::Result<RenderReport> {
     let t0 = Instant::now();
-    let chunk_dir = opts
-        .cache_dir
-        .join("chunks")
-        .join(adapter_tag(&gpu.get().info));
+    // Recorded in the report as absolute (lexical). Chunk files still land in
+    // this same directory; only the path string stored for later checks changes.
+    let chunk_dir = report_path(
+        &opts
+            .cache_dir
+            .join("chunks")
+            .join(adapter_tag(&gpu.get().info)),
+    )?;
     std::fs::create_dir_all(&chunk_dir)
         .with_context(|| format!("creating {}", chunk_dir.display()))?;
     let plans = plan(tl, c);
@@ -917,7 +928,7 @@ pub fn render(
             let (v, l, _) = crate::media::ffmpeg_info();
             format!("{v} ({l})")
         },
-        output: out.to_path_buf(),
+        output: report_path(out)?,
         total_frames: tl.frame_count(),
         chunk_frames: tl.chunk_frames(),
         jobs: opts.jobs,
@@ -1078,6 +1089,33 @@ mod tests {
         let r = idx(&contiguous_runs(&all, 2));
         assert_eq!(r.concat(), vec![0, 1, 2, 3]);
         assert!(contiguous_runs(&[], 4).is_empty());
+    }
+
+    #[test]
+    fn report_path_is_lexical_absolute() {
+        let rel = Path::new("chunks/tag/out.mkv");
+        let got = report_path(rel).unwrap();
+        assert!(got.is_absolute());
+        assert_eq!(got, std::path::absolute(rel).unwrap());
+        assert_eq!(got, std::env::current_dir().unwrap().join(rel));
+
+        // `..` is folded lexically. The missing path still resolves, so this
+        // is not `canonicalize` (that would error when the path is absent).
+        let dotted = Path::new("no-such-ferrocut/../ferrocut-report-path-missing.mkv");
+        let got = report_path(dotted).unwrap();
+        assert_eq!(got, std::path::absolute(dotted).unwrap());
+        assert!(got.is_absolute());
+        assert!(got.ends_with("ferrocut-report-path-missing.mkv"));
+        assert!(!got.exists());
+
+        let abs = std::env::current_dir()
+            .unwrap()
+            .join("already-absolute.mkv");
+        assert_eq!(
+            report_path(&abs).unwrap(),
+            std::path::absolute(&abs).unwrap()
+        );
+        assert!(report_path(&abs).unwrap().is_absolute());
     }
 
     #[test]

@@ -39,7 +39,7 @@ pub mod root;
 pub mod schema;
 mod storytold_tools;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context as _, bail};
@@ -1514,6 +1514,57 @@ pub fn read_doc(uri: &str) -> Option<String> {
     })
 }
 
+/// Path-taking `ferrocut-perceive check` flags, in `--flag value` or `--flag=value` form.
+fn checker_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    let eq = format!("{flag}=");
+    let mut found = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == flag {
+            found = args.get(i + 1).map(String::as_str);
+            i += 2;
+            continue;
+        }
+        if let Some(v) = args[i].strip_prefix(&eq) {
+            found = Some(v);
+        }
+        i += 1;
+    }
+    found
+}
+
+fn check_checker_path(root: &Root, flag: &str, value: &str) -> anyhow::Result<PathBuf> {
+    root.check(Path::new(value))
+        .with_context(|| format!("{flag} {value} is outside the project root"))
+}
+
+/// A resolved chunk directory must stay inside the project root. An ambiguous
+/// or unresolved relative path is an error (the checker would guess). A missing
+/// report, or a report with no `chunk_dir`, is left for `quality_check` itself.
+fn enforce_chunk_dir(root: &Root, res: &perceive::ChunkDirResolution) -> anyhow::Result<()> {
+    use perceive::ChunkDirSource::{
+        Absent, Ambiguous, CacheDirOverride, ProcessCwd, Recorded, ReportLocation, Unresolved,
+    };
+    match res.resolved_by {
+        Absent => Ok(()),
+        Ambiguous | Unresolved => {
+            let tried = res
+                .tried
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("chunk directory {} (tried dirs: {tried})", res.resolved_by)
+        }
+        Recorded | ReportLocation | ProcessCwd | CacheDirOverride => {
+            if let Some(dir) = &res.dir {
+                root.check(dir)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Run one tool. `None`: no such tool.
 pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
     let with_timeline = |a: TimelineArgs| -> anyhow::Result<TimelineArgs> {
@@ -1545,6 +1596,31 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
         "proxy_generate" => args(name, a).and_then(|a| proxy_generate(cx, a)),
         "quality_check" => args::<CheckArgs>(name, a).and_then(|a| {
             let render = cx.root.check(&a.render)?;
+            for flag in [
+                "--cache-dir",
+                "--render-report",
+                "--out",
+                "--config",
+                "--brief-cuts",
+            ] {
+                if let Some(value) = checker_flag_value(&a.args, flag) {
+                    check_checker_path(&cx.root, flag, value)?;
+                }
+            }
+            let cache = checker_flag_value(&a.args, "--cache-dir")
+                .map(|p| cx.root.check(Path::new(p)))
+                .transpose()?;
+            let report = checker_flag_value(&a.args, "--render-report")
+                .map(|p| cx.root.check(Path::new(p)))
+                .transpose()?;
+            if let Ok(res) = perceive::report_chunk_dir(
+                &render,
+                cx.root.dir(),
+                report.as_deref(),
+                cache.as_deref(),
+            ) {
+                enforce_chunk_dir(&cx.root, &res)?;
+            }
             let (timeline, _) = cx.root.load_timeline(&a.timeline)?;
             Ok(serde_json::to_value(perceive::check(
                 &render,

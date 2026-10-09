@@ -59,6 +59,8 @@ pub const ENV: &str = "FERROCUT_PERCEIVE";
 /// The check report schema this engine reads.
 pub const SCHEMA_VERSION: &str = "ferrocut.perceive.check/1";
 
+pub use ferrocut_perceive::input::{ChunkDirResolution, ChunkDirSource};
+
 /// Problem reason codes; codes added later are kept as `Other`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -615,4 +617,24 @@ pub fn check(render: &Path, timeline: &Path, opts: &CheckOptions) -> CheckOutcom
     o.added_args = added;
     o.elapsed_ms = t0.elapsed().as_millis();
     o
+}
+
+/// Load the render report next to `render` (or `render` itself when it is
+/// JSON, unless `report` is set) and resolve its effective chunk directory.
+/// `cache_dir` is an explicit `--cache-dir` only.
+pub fn report_chunk_dir(
+    render: &Path,
+    cwd: &Path,
+    report: Option<&Path>,
+    cache_dir: Option<&Path>,
+) -> anyhow::Result<ChunkDirResolution> {
+    let report = match report {
+        Some(p) => p.to_path_buf(),
+        None if render.extension().is_some_and(|e| e == "json") => render.to_path_buf(),
+        None => render.with_extension("report.json"),
+    };
+    let rr = ferrocut_perceive::input::RenderReport::load(&report)?;
+    Ok(ferrocut_perceive::input::resolve_chunk_dir(
+        &rr, &report, cwd, cache_dir,
+    ))
 }
