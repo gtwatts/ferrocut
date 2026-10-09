@@ -101,7 +101,7 @@ class InstallLocalTest(unittest.TestCase):
         root = self.checkout.root.resolve()
         self.assertEqual(summary["whisper"], {"cli": str(root / CLI),
                                               "models": [str(root / MODELS / "ggml-small.bin")]})
-        self.assertEqual(self.whisper_entries(runtime), [str(CLI), str(MODELS / "ggml-small.bin")])
+        self.assertEqual(self.whisper_entries(runtime), sorted([str(CLI), str(MODELS / "ggml-small.bin")]))
         for rel in (CLI, MODELS / "ggml-small.bin"):
             path = runtime / rel
             self.assertTrue(path.is_symlink())
@@ -137,7 +137,7 @@ class InstallLocalTest(unittest.TestCase):
         time.sleep(1.1)  # the installer's backup directory is named by the second
         _, again = self.install()
         self.assertEqual(again, runtime)
-        self.assertEqual(self.whisper_entries(runtime), [str(CLI), str(MODELS / "ggml-small.bin")])
+        self.assertEqual(self.whisper_entries(runtime), sorted([str(CLI), str(MODELS / "ggml-small.bin")]))
         self.assertEqual((old / "keep").read_text(), "untouched")
 
 
