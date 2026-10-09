@@ -61,8 +61,10 @@ impl Fixture {
         let bytes = self.data(&format!("{name}-reference-{rate}.f32le"));
         assert!(!bytes.is_empty() && bytes.len().is_multiple_of(8));
         let samples: Vec<f32> = bytes
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
             .collect();
         assert!(samples.iter().all(|v| v.is_finite()));
         assert!(samples.iter().any(|v| v.abs() > 0.01));
