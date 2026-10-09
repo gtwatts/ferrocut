@@ -1,7 +1,7 @@
 //! Agent entry points for actual reused engines, with project-root checks.
 
 use ferrocut_core::RationalTime;
-use ferrocut_engine::{interchange_io, scopes, storytold, tracking, tracking_io};
+use ferrocut_engine::{captions, interchange_io, scopes, storytold, text, tracking, tracking_io};
 use rmcp::model::{Tool, ToolAnnotations};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -114,7 +114,78 @@ pub(crate) fn tools() -> Vec<Tool> {
             ),
             ro(),
         ),
+        crate::tool(
+            "captions_import",
+            "Import SRT/WebVTT cues as caption text clips",
+            "Add one native text clip per cue of a plain .srt/.vtt file (inside the project root) to a video track, through the same validated, journaled edit as edit_apply (undo works; dry_run writes nothing). style is a text generator object (as in add_clip: font paths relative to the timeline, inside the root); each cue replaces its content. Interchange times are milliseconds, so abutting speech cues often leave a gap holding one frame, which shows no caption (a blink). timing defaults: snap=true (each boundary moves to the first frame at or after it; no displayed frame changes), close_gaps=1/10 (a cue extends to the next cue's start when the gap is at most 0.1 s, inclusive; longer pauses stay), min_duration off (extend shorter cues into the following gap only, never past the next cue or the program end). Exact interchange times need all three off: {snap:false, close_gaps:0}. The result's caption_timing lists every changed cue (from, to, displayed frames, reasons), every kept uncaptioned gap with its frames, and warnings (a cue that showed no frame, an unreachable min_duration, a 1-2 frame gap left open). Overlapping cues need separate tracks. Plates or other clips authored separately are not retimed.",
+            object(
+                json!({
+                    "timeline":{"type":"string","minLength":1},
+                    "subtitles":{"type":"string","minLength":1,"description":".srt or .vtt"},
+                    "style":{"type":"object","description":"text generator spec (TextSpec): font, font_size, color, align, position..."},
+                    "track":{"type":"string","minLength":1,"default":"Captions"},
+                    "timing":object(json!({
+                        "snap":{"type":"boolean","default":true},
+                        "close_gaps":crate::schema::rational("seconds, 0..2, default 1/10; 0 disables"),
+                        "min_duration":crate::schema::rational("seconds, above 0 and at most 10; default off")
+                    }), &[]),
+                    "dry_run":{"type":"boolean","default":false},
+                    "output":{"type":"string","minLength":1},
+                    "return_timeline":{"type":"boolean","default":false}
+                }),
+                &["timeline", "subtitles", "style"],
+            ),
+            rw(),
+        ),
     ]
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptionsArgs {
+    timeline: PathBuf,
+    subtitles: PathBuf,
+    style: text::TextSpec,
+    #[serde(default = "caption_track")]
+    track: String,
+    #[serde(default)]
+    timing: captions::CaptionTiming,
+    #[serde(default)]
+    dry_run: bool,
+    output: Option<PathBuf>,
+    #[serde(default)]
+    return_timeline: bool,
+}
+fn caption_track() -> String {
+    "Captions".into()
+}
+
+/// Parse and retime the cues, then apply them as one ordinary edit_apply
+/// call, so the timeline, output and every font get the same root checks.
+fn captions_import(cx: &Ctx, a: CaptionsArgs) -> anyhow::Result<Value> {
+    let subtitles = cx.root.check(&a.subtitles)?;
+    let format = captions::CaptionFormat::from_path(&subtitles)?;
+    anyhow::ensure!(
+        std::fs::metadata(&subtitles)?.len() <= 16 * 1024 * 1024,
+        "caption file exceeds 16 MiB"
+    );
+    let cues = captions::parse(&std::fs::read_to_string(&subtitles)?, format)?;
+    let (_, tl) = cx.root.load_timeline(&a.timeline)?;
+    let (ops, report) = captions::import_ops_timed(&tl, &cues, &a.track, &a.style, &a.timing)?;
+    let mut v = crate::edit_apply(
+        cx,
+        crate::EditArgs {
+            timeline: a.timeline,
+            ops,
+            dry_run: a.dry_run,
+            output: a.output,
+            plan: false,
+            probe: false,
+            return_timeline: a.return_timeline,
+        },
+    )?;
+    v["caption_timing"] = serde_json::to_value(&report)?;
+    Ok(v)
 }
 
 #[derive(Deserialize)]
@@ -263,6 +334,9 @@ pub(crate) fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Valu
             }
             Ok(v)
         }),
+        "captions_import" => {
+            crate::args::<CaptionsArgs>(name, a).and_then(|a| captions_import(cx, a))
+        }
         "timeline_export" => crate::args::<ExportArgs>(name, a).and_then(|a| {
             interchange_io::export_file(
                 &a.timeline,

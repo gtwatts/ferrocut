@@ -321,6 +321,250 @@ pub fn write(cues: &[CaptionCue], format: CaptionFormat) -> anyhow::Result<Strin
     Ok(out)
 }
 
+/// How `captions import` fits cue times to the picture. Interchange times
+/// are milliseconds, so two cues that abut in speech often leave a gap of a
+/// few ms that happens to contain a frame time: that frame shows no caption
+/// (a one-frame blink). The defaults snap and close such gaps; deliberate
+/// pauses longer than `close_gaps` stay. [`CaptionTiming::exact`] keeps the
+/// interchange times unchanged.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CaptionTiming {
+    /// Move each boundary to the first frame time at or after it. A clip
+    /// shows on frame n when start <= n/fps < end, so this changes no
+    /// displayed frame; it makes boundaries and gaps whole frames.
+    pub snap: bool,
+    /// Extend a cue to the next cue's start when the gap between them is at
+    /// most this long (0 disables). At most 2 s.
+    pub close_gaps: RationalTime,
+    /// Extend shorter cues toward this duration, into the following gap only:
+    /// never over the next cue or past the current program end. Off by default.
+    pub min_duration: Option<RationalTime>,
+}
+
+impl Default for CaptionTiming {
+    fn default() -> Self {
+        CaptionTiming {
+            snap: true,
+            close_gaps: RationalTime::new(1, 10),
+            min_duration: None,
+        }
+    }
+}
+
+impl CaptionTiming {
+    /// The interchange times as they are: no snap, gap closing or extension.
+    pub fn exact() -> Self {
+        CaptionTiming {
+            snap: false,
+            close_gaps: RationalTime::ZERO,
+            min_duration: None,
+        }
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            self.close_gaps >= RationalTime::ZERO && self.close_gaps <= RationalTime::new(2, 1),
+            "close_gaps must be 0..=2 seconds"
+        );
+        ensure!(
+            self.min_duration
+                .is_none_or(|d| d > RationalTime::ZERO && d <= RationalTime::new(10, 1)),
+            "min_duration must be above 0 and at most 10 seconds"
+        );
+        Ok(())
+    }
+}
+
+/// One cue whose imported timing differs from its interchange timing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CueRetime {
+    pub cue: String,
+    pub from: [RationalTime; 2],
+    pub to: [RationalTime; 2],
+    /// Displayed frames after the change (first, last), inclusive.
+    pub frames: [i64; 2],
+    /// Any of `snapped`, `one_frame`, `closed_gap`, `extended`.
+    pub reasons: Vec<&'static str>,
+}
+
+/// A gap left between consecutive cues that shows frames without a caption.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CueGap {
+    pub after: String,
+    pub before: String,
+    pub duration: RationalTime,
+    /// Uncaptioned frames (first, last), inclusive.
+    pub frames: [i64; 2],
+}
+
+/// What [`retime`] did, for the agent to check rather than assume.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct TimingReport {
+    pub timing: CaptionTiming,
+    pub changed: Vec<CueRetime>,
+    pub gaps_kept: Vec<CueGap>,
+    pub warnings: Vec<String>,
+}
+
+/// Displayed frame range (first, last) of a half-open time range; first >
+/// last when it shows no frame.
+fn displayed(start: RationalTime, end: RationalTime, fps: ferrocut_core::FrameRate) -> [i64; 2] {
+    [start.frame_ceil(fps), end.frame_ceil(fps) - 1]
+}
+
+/// Fit cue times to the frame grid at `fps` as `timing` asks. `program_end`
+/// bounds extensions of the last cue (the program is not lengthened). The
+/// input cues are not modified; the result never overlaps and never drops a
+/// cue. A cue that shows no frame at all gets one when `snap` is on (warned)
+/// and is an error when there is no room for it.
+pub fn retime(
+    cues: &[CaptionCue],
+    fps: ferrocut_core::FrameRate,
+    program_end: RationalTime,
+    timing: &CaptionTiming,
+) -> anyhow::Result<(Vec<CaptionCue>, TimingReport)> {
+    validate(cues)?;
+    timing.validate()?;
+    for pair in cues.windows(2) {
+        ensure!(
+            pair[0].end <= pair[1].start,
+            "overlapping cues {} and {} need separate tracks",
+            pair[0].id,
+            pair[1].id
+        );
+    }
+    let frame = RationalTime::from_frames(1, fps);
+    let snap = |t: RationalTime| {
+        if timing.snap {
+            RationalTime::from_frames(t.frame_ceil(fps), fps)
+        } else {
+            t
+        }
+    };
+    let mut out: Vec<CaptionCue> = cues.to_vec();
+    let mut reasons: Vec<Vec<&'static str>> = vec![Vec::new(); cues.len()];
+    let mut warnings = Vec::new();
+    for (c, r) in out.iter_mut().zip(&mut reasons) {
+        let (s, e) = (snap(c.start), snap(c.end));
+        if (s, e) != (c.start, c.end) {
+            r.push("snapped");
+        }
+        c.start = s;
+        c.end = e;
+    }
+    for i in 0..out.len() {
+        let [first, last] = displayed(out[i].start, out[i].end, fps);
+        if first <= last {
+            continue;
+        }
+        let next = out.get(i + 1).map(|n| n.start);
+        if !timing.snap {
+            warnings.push(format!(
+                "cue {} [{}, {}) shows no frame at {} fps",
+                out[i].id, cues[i].start, cues[i].end, fps
+            ));
+            continue;
+        }
+        let end = out[i].start + frame;
+        ensure!(
+            next.is_none_or(|n| end <= n),
+            "cue {} [{}, {}) shows no frame at {} fps and the next cue starts on the same frame; merge or retime it, or import with exact timing",
+            out[i].id,
+            cues[i].start,
+            cues[i].end,
+            fps
+        );
+        out[i].end = end;
+        reasons[i].push("one_frame");
+        warnings.push(format!(
+            "cue {} [{}, {}) showed no frame at {} fps; it now shows frame {}",
+            out[i].id, cues[i].start, cues[i].end, fps, first
+        ));
+    }
+    if timing.close_gaps > RationalTime::ZERO {
+        for i in 0..out.len().saturating_sub(1) {
+            let gap = out[i + 1].start - out[i].end;
+            if gap > RationalTime::ZERO && gap <= timing.close_gaps {
+                out[i].end = out[i + 1].start;
+                reasons[i].push("closed_gap");
+            }
+        }
+    }
+    if let Some(min) = timing.min_duration {
+        for i in 0..out.len() {
+            if out[i].end - out[i].start >= min {
+                continue;
+            }
+            let limit = out
+                .get(i + 1)
+                .map_or(program_end.max(out[i].end), |n| n.start);
+            let end = snap(out[i].start + min).min(limit);
+            if end > out[i].end {
+                out[i].end = end;
+                reasons[i].push("extended");
+            }
+            if end - out[i].start < min {
+                warnings.push(format!(
+                    "cue {} lasts {} s, under min_duration {} s: the {} leaves no room",
+                    out[i].id,
+                    out[i].end - out[i].start,
+                    min,
+                    if i + 1 < out.len() {
+                        "next cue"
+                    } else {
+                        "program end"
+                    }
+                ));
+            }
+        }
+    }
+    let changed = out
+        .iter()
+        .zip(cues)
+        .zip(reasons)
+        .filter(|((o, c), _)| (o.start, o.end) != (c.start, c.end))
+        .map(|((o, c), reasons)| CueRetime {
+            cue: o.id.clone(),
+            from: [c.start, c.end],
+            to: [o.start, o.end],
+            frames: displayed(o.start, o.end, fps),
+            reasons,
+        })
+        .collect();
+    let mut gaps_kept = Vec::new();
+    for pair in out.windows(2) {
+        let [first, last] = displayed(pair[0].end, pair[1].start, fps);
+        if first > last {
+            continue;
+        }
+        if last - first < 2 {
+            warnings.push(format!(
+                "{} uncaptioned frame(s) {first}..={last} between cues {} and {} read as a blink; raise close_gaps to close it",
+                last - first + 1,
+                pair[0].id,
+                pair[1].id
+            ));
+        }
+        gaps_kept.push(CueGap {
+            after: pair[0].id.clone(),
+            before: pair[1].id.clone(),
+            duration: pair[1].start - pair[0].end,
+            frames: [first, last],
+        });
+    }
+    validate(&out)?;
+    Ok((
+        out,
+        TimingReport {
+            timing: timing.clone(),
+            changed,
+            gaps_kept,
+            warnings,
+        },
+    ))
+}
+
 /// Produce normal journalable edits; a supplied TextSpec defines the style.
 /// Each cue remains an editable native text clip, addressable by its stable id.
 pub fn import_ops(
@@ -368,6 +612,19 @@ pub fn import_ops(
         });
     }
     Ok(ops)
+}
+
+/// [`import_ops`] after [`retime`] at the timeline's output rate, bounded
+/// by its current program end; the report says what changed.
+pub fn import_ops_timed(
+    tl: &Timeline,
+    cues: &[CaptionCue],
+    track: &str,
+    style: &crate::text::TextSpec,
+    timing: &CaptionTiming,
+) -> anyhow::Result<(Vec<EditOp>, TimingReport)> {
+    let (cues, report) = retime(cues, tl.output.fps, tl.duration(), timing)?;
+    Ok((import_ops(tl, &cues, track, style)?, report))
 }
 
 /// Export the explicitly chosen track; refuse mixed picture/text tracks.
