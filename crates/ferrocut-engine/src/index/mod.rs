@@ -267,9 +267,20 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
     let path = index_path(media, &p.key);
     if !opts.force
         && let Ok(text) = std::fs::read_to_string(&path)
-        && let Ok(ix) = serde_json::from_str::<MediaIndex>(&text)
+        && let Ok(mut ix) = serde_json::from_str::<MediaIndex>(&text)
         && ix.key == p.key
     {
+        // This key means whisper or its model is missing now. Report why as
+        // of now (the CLI may have been fixed but not the model), never a
+        // reason saved by an earlier run.
+        if let Some(err) = &p.whisper_err
+            && ix.media.has_audio
+            && matches!(ix.transcript, Part::Unavailable { .. })
+        {
+            ix.transcript = Part::Unavailable {
+                reason: err.clone(),
+            };
+        }
         return Ok((
             ix,
             IndexInfo {
@@ -286,6 +297,7 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
         );
     }
     let info = crate::media::probe(media)?;
+    let mut transcribe_failed = false;
     let transcript = if !opts.transcribe {
         Part::Skipped
     } else if !info.has_audio {
@@ -295,9 +307,12 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
     } else if let Some((cli, model, mh)) = &p.whisper {
         match transcribe(media, cli, model, mh, &p.key, &opts.whisper) {
             Ok(t) => Part::Done(t),
-            Err(e) => Part::Unavailable {
-                reason: format!("{e:#}"),
-            },
+            Err(e) => {
+                transcribe_failed = true;
+                Part::Unavailable {
+                    reason: format!("{e:#}"),
+                }
+            }
         }
     } else {
         Part::Unavailable {
@@ -334,10 +349,12 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
         transcript,
         shots,
     };
-    // A failed transcription is not cached (it may be transient); everything
-    // else is.
-    let failed = matches!(&ix.transcript, Part::Unavailable { reason } if reason.starts_with("whisper-cli failed"));
-    if !failed {
+    // A failed transcription (whisper-cli exit, missing or unparsable
+    // output, audio decode) is not cached: it may be transient, and the key
+    // (model, flags, bytes) would otherwise pin it. A missing whisper/model
+    // is cached under its own key, but its reason is refreshed on read; a
+    // transcript, including an empty one (no speech), is cached.
+    if !transcribe_failed {
         let dir = path.parent().expect("index dir");
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
         let tmp = path.with_extension(format!("tmp{}", std::process::id()));
