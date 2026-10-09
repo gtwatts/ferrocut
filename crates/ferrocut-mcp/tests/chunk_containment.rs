@@ -26,7 +26,10 @@ fn quality_check_rejects_chunk_dir_outside_the_project_root() {
     let dir = tempfile::tempdir().unwrap();
     let base = std::fs::canonicalize(dir.path()).unwrap();
     let proj = base.join("proj");
-    let outside = base.join("outside");
+    // A unique sibling name, so a relative "../<name>" exists only next to the
+    // project, not relative to the test process's cwd (the checker's cwd).
+    let outside_name = format!("outside-{}", base.file_name().unwrap().to_string_lossy());
+    let outside = base.join(&outside_name);
     std::fs::create_dir_all(&proj).unwrap();
     std::fs::create_dir_all(&outside).unwrap();
     std::fs::write(proj.join("tl.json"), TL).unwrap();
@@ -52,12 +55,13 @@ fn quality_check_rejects_chunk_dir_outside_the_project_root() {
         "absolute chunk_dir: {msg}"
     );
 
-    // `../..` from the project root is an existing directory outside it.
+    // `../<sibling>` from the report location is an existing directory outside
+    // the root.
     let traversal = json!({
         "total_frames": 1,
         "chunk_frames": 1,
         "chunks": [],
-        "chunk_dir": "../..",
+        "chunk_dir": format!("../{outside_name}"),
         "output": "out.mkv",
     });
     std::fs::write(
