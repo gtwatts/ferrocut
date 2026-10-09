@@ -1,0 +1,330 @@
+{
+  "name": "One stencil, two moving panels",
+  "output": {
+    "width": 640,
+    "height": 240,
+    "fps": 24,
+    "gop": 24,
+    "duration": 6
+  },
+  "tracks": [
+    {
+      "name": "Background",
+      "clips": [
+        {
+          "id": "background",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "solid",
+            "color": [
+              "1/20",
+              "1/20",
+              "1/20",
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stencil",
+      "clips": [
+        {
+          "id": "stencil",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "rectangle",
+                "x": 12,
+                "y": 42,
+                "width": 612,
+                "height": 156,
+                "radius": 18
+              },
+              "fill": {
+                "type": "linear_gradient",
+                "start": [
+                  0,
+                  0
+                ],
+                "end": [
+                  640,
+                  0
+                ],
+                "interpolation": "linear",
+                "stops": [
+                  {
+                    "offset": 0,
+                    "color": [
+                      1,
+                      0,
+                      1,
+                      0
+                    ]
+                  },
+                  {
+                    "offset": "1/4",
+                    "color": [
+                      "3/4",
+                      "3/4",
+                      "3/4",
+                      1
+                    ]
+                  },
+                  {
+                    "offset": "1/2",
+                    "color": [
+                      0,
+                      0,
+                      0,
+                      1
+                    ]
+                  },
+                  {
+                    "offset": "3/4",
+                    "color": [
+                      1,
+                      1,
+                      1,
+                      "1/2"
+                    ]
+                  },
+                  {
+                    "offset": 1,
+                    "color": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "transform": {
+            "anchor": [
+              320,
+              120
+            ],
+            "position": [
+              {
+                "keyframes": [
+                  {
+                    "t": 0,
+                    "v": 312
+                  },
+                  {
+                    "t": 3,
+                    "v": 328
+                  },
+                  {
+                    "t": 6,
+                    "v": 312
+                  }
+                ]
+              },
+              120
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Backing",
+      "clips": [
+        {
+          "id": "backing",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "rectangle",
+                "x": 0,
+                "y": 0,
+                "width": 426,
+                "height": 240
+              },
+              "fill": {
+                "type": "solid",
+                "color": [
+                  "1/20",
+                  "1/20",
+                  "1/20",
+                  1
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PanelA",
+      "matte": {
+        "mode": "alpha",
+        "source": {
+          "track": "Stencil"
+        }
+      },
+      "clips": [
+        {
+          "id": "panel-a",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "rectangle",
+                "x": 0,
+                "y": 0,
+                "width": 160,
+                "height": 130,
+                "radius": 14
+              },
+              "fill": {
+                "type": "solid",
+                "color": [
+                  1,
+                  "1/5",
+                  "1/10",
+                  1
+                ]
+              }
+            }
+          },
+          "transform": {
+            "anchor": [
+              80,
+              65
+            ],
+            "position": [
+              {
+                "keyframes": [
+                  {
+                    "t": 0,
+                    "v": 112
+                  },
+                  {
+                    "t": 3,
+                    "v": 118
+                  },
+                  {
+                    "t": 6,
+                    "v": 112
+                  }
+                ]
+              },
+              120
+            ],
+            "rotation": {
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": -5
+                },
+                {
+                  "t": 3,
+                  "v": 5
+                },
+                {
+                  "t": 6,
+                  "v": -5
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PanelB",
+      "matte": {
+        "mode": "alpha",
+        "source": {
+          "track": "Stencil"
+        }
+      },
+      "clips": [
+        {
+          "id": "panel-b",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "ellipse",
+                "center": [
+                  0,
+                  0
+                ],
+                "radius": [
+                  76,
+                  58
+                ]
+              },
+              "fill": {
+                "type": "solid",
+                "color": [
+                  "1/10",
+                  "2/5",
+                  1,
+                  1
+                ]
+              }
+            }
+          },
+          "transform": {
+            "anchor": [
+              0,
+              0
+            ],
+            "position": [
+              312,
+              {
+                "keyframes": [
+                  {
+                    "t": 0,
+                    "v": 104
+                  },
+                  {
+                    "t": 3,
+                    "v": 136
+                  },
+                  {
+                    "t": 6,
+                    "v": 104
+                  }
+                ]
+              }
+            ],
+            "rotation": {
+              "keyframes": [
+                {
+                  "t": 0,
+                  "v": 0
+                },
+                {
+                  "t": 3,
+                  "v": 15
+                },
+                {
+                  "t": 6,
+                  "v": 0
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

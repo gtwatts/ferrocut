@@ -103,6 +103,7 @@ fn build(
     // nested comps are baked here too.
     let baked = crate::expr::bake(tl)?;
     let tl: &Timeline = &baked;
+    let mattes = crate::blend::matte_plan(&tl.tracks)?;
     let (w, h) = (tl.output.width, tl.output.height);
     info.include_size((w, h));
     // Painter's sort only when there are 3D layers (otherwise the plain
@@ -291,17 +292,39 @@ fn build(
         }
         track_outputs.push(TrackOut::Layer(layer, blend, stack_clips));
     }
-    // Stack bottom to top. A matted track takes the track above as its
-    // matte source (hook: other matte sources plug in here), and that track
-    // is consumed.
+    // Resolve each standalone picture once, sources before recipients. A
+    // named source may be above or below, hidden, or used by several tracks.
+    // MatteNode pulls both pictures at the same composition time; each
+    // track's own clips independently map that time to their sources.
+    let mut layers: Vec<Option<NodeId>> = track_outputs
+        .iter()
+        .map(|t| match t {
+            TrackOut::Layer(id, _, _) => Some(*id),
+            TrackOut::Adjust(_) => None,
+        })
+        .collect();
+    for &ti in &mattes.order {
+        if let (Some(layer), Some(si)) = (layers[ti], mattes.sources[ti]) {
+            let matte = layers[si].context("an adjustment track cannot be a matte source")?;
+            layers[ti] = Some(g.add(
+                Arc::new(MatteNode {
+                    mode: tl.tracks[ti].matte.as_ref().expect("matte dependency").mode,
+                }),
+                vec![layer, matte],
+            ));
+        }
+    }
+    // Stack bottom to top, preserving legacy adjacent-source consumption.
+    // Visibility does not affect matte availability or linked audio.
     let mut out: Option<NodeId> = None;
-    let mut ti = 0;
-    let mut outputs = track_outputs.into_iter();
     let mut stack_layers = Vec::new();
     let mut stack_inputs = Vec::new();
-    while let Some(next) = outputs.next() {
-        let (mut layer, blend, stack_clips) = match next {
-            TrackOut::Layer(l, b, s) => (l, b, s),
+    for (ti, next) in track_outputs.into_iter().enumerate() {
+        if mattes.consumed[ti] || !tl.tracks[ti].visible {
+            continue;
+        }
+        let (layer, blend, stack_clips) = match next {
+            TrackOut::Layer(_, b, s) => (layers[ti].expect("picture track"), b, s),
             TrackOut::Adjust(clips) => {
                 let bg = match out {
                     Some(bg) => bg,
@@ -309,36 +332,18 @@ fn build(
                 };
                 let mut inputs = vec![bg];
                 let mut matte = None;
-                if let Some(m) = &tl.tracks[ti].matte {
-                    let crate::blend::MatteSource::TrackAbove = m.source;
-                    match outputs.next().context("track matte needs a track above")? {
-                        TrackOut::Layer(l, _, _) => inputs.push(l),
-                        TrackOut::Adjust(_) => {
-                            anyhow::bail!("track {}: an adjustment track cannot be a matte", ti + 1)
-                        }
-                    }
-                    matte = Some(m.mode);
-                    ti += 1;
+                if let Some(si) = mattes.sources[ti] {
+                    inputs
+                        .push(layers[si].context("an adjustment track cannot be a matte source")?);
+                    matte = Some(tl.tracks[ti].matte.as_ref().expect("matte dependency").mode);
                 }
                 out = Some(g.add(Arc::new(AdjustNode { clips, matte }), inputs));
-                ti += 1;
                 continue;
             }
         };
-        if let Some(m) = &tl.tracks[ti].matte {
-            let crate::blend::MatteSource::TrackAbove = m.source;
-            let TrackOut::Layer(matte, _, _) =
-                outputs.next().context("track matte needs a track above")?
-            else {
-                anyhow::bail!("track {}: an adjustment track cannot be a matte", ti + 1);
-            };
-            layer = g.add(Arc::new(MatteNode { mode: m.mode }), vec![layer, matte]);
-            ti += 1;
-        }
         if any_3d {
             stack_layers.push(stack_clips);
             stack_inputs.push(layer);
-            ti += 1;
             continue;
         }
         out = Some(match out {
@@ -348,7 +353,6 @@ fn build(
             }
             Some(bg) => g.add(Arc::new(blend), vec![layer, bg]),
         });
-        ti += 1;
     }
     if any_3d {
         let node = StackNode {
@@ -359,7 +363,7 @@ fn build(
         };
         return Ok(g.add(Arc::new(node), stack_inputs));
     }
-    Ok(out.expect("at least one track"))
+    Ok(out.unwrap_or_else(|| g.add(Arc::new(empty_sequence(tl)), vec![])))
 }
 
 /// Compile for a draft render: video sources that have a proxy (see

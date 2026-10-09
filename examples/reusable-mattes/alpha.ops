@@ -1,0 +1,30 @@
+[
+  {
+    "op": "set_param",
+    "track": "PanelA",
+    "param": "matte",
+    "value": {
+      "mode": "alpha",
+      "source": {
+        "track": "Stencil"
+      }
+    }
+  },
+  {
+    "op": "set_param",
+    "track": "PanelB",
+    "param": "matte",
+    "value": {
+      "mode": "alpha",
+      "source": {
+        "track": "Stencil"
+      }
+    }
+  },
+  {
+    "op": "set_param",
+    "track": "Stencil",
+    "param": "visible",
+    "value": true
+  }
+]

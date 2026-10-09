@@ -1,0 +1,11 @@
+[
+  {
+    "op": "set_param",
+    "track": "Panel",
+    "param": "matte",
+    "value": {
+      "mode": "alpha_inverted",
+      "source": "track_above"
+    }
+  }
+]

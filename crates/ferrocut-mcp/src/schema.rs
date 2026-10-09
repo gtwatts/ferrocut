@@ -148,14 +148,24 @@ fn blend_mode() -> Value {
 
 fn matte() -> Value {
     json!({
-        "description": "Track matte: the track directly above is this track's matte source (and is not composited itself). alpha keeps this track where the matte is opaque, luma where it is bright (ACEScg luminance of the premultiplied matte, i.e. luminance times alpha); the _inverted variants keep the rest. The matte track's own linked audio still plays.",
+        "description": "Track matte: default track_above consumes the adjacent video track. source:{track:name} reuses a unique nonempty video track name in this composition, without consuming it. Its visible switch affects compositing, not matte availability or linked audio. Sources include their own effects/matte; cycles, self references and adjustment sources are rejected. Both pictures use the same composition time and independent clip retiming. alpha uses coverage; luma uses ACEScg luminance of premultiplied RGB (brightness times alpha); inverted variants keep the rest.",
         "anyOf": [
             { "type": "null" },
             {
                 "type": "object",
                 "properties": {
                     "mode": { "enum": ["alpha", "alpha_inverted", "luma", "luma_inverted"] },
-                    "source": { "const": "track_above", "description": "default; other matte sources (e.g. vector masks) are a planned hook" }
+                    "source": {
+                        "default": "track_above",
+                        "anyOf": [
+                            { "const": "track_above" },
+                            {
+                                "type": "object",
+                                "properties": { "track": { "type": "string", "minLength": 1 } },
+                                "required": ["track"], "additionalProperties": false
+                            }
+                        ]
+                    }
                 },
                 "required": ["mode"], "additionalProperties": false
             }
@@ -645,10 +655,10 @@ pub fn edit_op() -> Value {
         ),
         op(
             "set_param",
-            "Set one parameter by name on a clip (`clip`), a track's audio bus (`track`) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant, {keyframes} or {expression, value?} (see the guide's Expressions); objects take an object, or null to remove.",
+            "Set one parameter by name on a clip (`clip`), a track (`track`: visible, matte, effects or its audio bus) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant, {keyframes} or {expression, value?} (see the guide's Expressions); objects take an object, or null to remove. Reusable matte example: track:Panel, param:matte, value:{mode:alpha,source:{track:Stencil}}; hide only its source picture with track:Stencil, param:visible, value:false.",
             json!({
                 "clip": clip_id(),
-                "track": { "type": "string", "minLength": 1, "description": "track name (its audio bus)" },
+                "track": { "type": "string", "minLength": 1, "description": "track name (video picture controls or audio bus)" },
                 "param": { "type": "string", "minLength": 1, "description": "parameter name" },
                 "value": param_value()
             }),
@@ -1134,6 +1144,7 @@ pub fn timeline() -> Value {
                     "type": "object",
                     "properties": {
                         "name": { "type": "string", "description": "unique (edit ops and duck keys refer to it)" },
+                        "visible": { "type": "boolean", "default": true, "description": "join the final picture stack; false still permits matte use and linked audio; legacy track_above source consumption is unchanged" },
                         "audio": bus(),
                         "matte": matte(),
                         "effects": video_effects(),

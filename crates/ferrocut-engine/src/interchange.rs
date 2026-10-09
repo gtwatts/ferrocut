@@ -1496,6 +1496,13 @@ where
                     "track mattes and track effects omitted",
                 );
             }
+            if !track.visible {
+                self.report.loss(
+                    "track_visibility",
+                    &track.name,
+                    "hidden video track exported as visible; native visibility is omitted",
+                );
+            }
             for clip in &track.clips {
                 self.clip_count += 1;
                 ensure!(self.clip_count <= MAX_CLIPS, "clip limit exceeded");
@@ -2474,6 +2481,7 @@ impl Importer<'_> {
             }
             tracks.push(Track {
                 name: track.name.clone(),
+                visible: true,
                 clips,
                 audio: BusSpec::default(),
                 matte: None,
@@ -2483,6 +2491,7 @@ impl Importer<'_> {
         if tracks.is_empty() {
             tracks.push(Track {
                 name: "Video".into(),
+                visible: true,
                 clips: Vec::new(),
                 audio: BusSpec::default(),
                 matte: None,

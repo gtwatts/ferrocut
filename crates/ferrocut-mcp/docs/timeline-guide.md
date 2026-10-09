@@ -24,7 +24,7 @@ Start with `docs://agent/onboarding.md` for a complete native graphics workflow 
 - `output`: `width`, `height`, `fps`, optional `gop` (24), `gops_per_chunk` (1), `duration`
   (default: end of the last clip).
 - `tracks`: video tracks, **0 = bottom layer**. Each has a unique `name`, an audio bus `audio`, an
-  optional track `matte`, and `clips`.
+  optional track `matte`, `visible` (default true), and `clips`.
 - A **video clip**: `id` (unique), `source` (path relative to the timeline file), `start`
   (timeline), `source_in` (source time of its first frame), `duration`, `opacity`, `transform`,
   `transition_in`, `blend_mode`, `audio` (linked audio: gain, pan, mute, fades, J/L offsets). A clip shows source
@@ -152,12 +152,37 @@ Start with `docs://agent/onboarding.md` for a complete native graphics workflow 
   `saturation`, `color`, `luminosity`). Computed in linear light on premultiplied pixels with the
   W3C / After Effects formulas; modes defined on [0, 1] clamp their inputs (HDR values > 1 only
   survive `normal`, `add`, `multiply`, `darken`, `lighten`, `difference`).
-- `matte` on a video track: `{"mode": "alpha" | "alpha_inverted" | "luma" | "luma_inverted"}`.
-  The track directly above becomes the matte (it is not composited); `luma` uses the
-  ACEScg (AP1) luminance of the premultiplied matte, i.e. luminance times alpha. The top track can't have a matte, and a matte
-  source can't have its own matte.
+- `matte` on a video track takes `mode`: `alpha`, `alpha_inverted`, `luma` or
+  `luma_inverted`. Alpha uses source coverage; luma uses ACEScg (AP1) luminance of
+  premultiplied RGB, i.e. brightness times alpha. Inverted modes use one minus
+  that coverage. Outside the source's clips, its picture is transparent black.
+- Reuse one nonadjacent source on multiple tracks with
+  `{"mode":"alpha","source":{"track":"Stencil"}}`. The name must be an
+  existing unique nonempty **video** track in this composition; track insertion
+  and reordering do not retarget it. Source picture includes its own clips,
+  transforms, effects and matte. Acyclic chains are supported; self/cycles,
+  missing names and adjustment-layer sources are errors. Source and recipient
+  sample the same exact composition time, each with its own clip retiming.
+- Set `visible:false` on a video track to hide only its final stack picture.
+  It remains available as a named matte and its linked audio still plays
+  (`bus.mute` controls audio). Visibility is a fixed Boolean, not animation.
+  A source reference never crosses a nested-composition boundary. Hidden-source
+  assets still undergo the normal root/validity checks.
+- Legacy `{"mode":"alpha"}` (omitted source) or `"source":"track_above"`
+  consumes the directly adjacent track above it. That source cannot have a matte
+  itself and remains consumed regardless of either track's visibility. Old
+  adjacent projects retain this behavior. Use named sources throughout to control
+  source visibility independently.
 - Recipe: text through a picture: put the picture on V1, the title on V2 and
   `set_param` `matte` `{"mode": "alpha"}` on V1 (`track: "V1"`).
+- Reusable recipe: apply `set_param` on Panel A and Panel B with `param:"matte"`,
+  `value:{"mode":"alpha","source":{"track":"Stencil"}}`; then on Stencil
+  set `param:"visible",value:false`. Use `plan:true`, dry-run and undo normally.
+  Track rename/delete operations are not provided; dangling references fail
+  validation. `nest` / `unnest` reject hidden or matte relationships they would
+  discard; author an explicit nested project in those cases. The original
+  `examples/reusable-mattes/` demo and the reusable-matte design document record
+  the source contract and execution status.
 
 ## Video effects
 
@@ -238,7 +263,7 @@ pre-expression value, a constant or keyframes, available as `value` in the scrip
 - A clip with `"adjustment": true` (no source or generator) and `effects` applies its stack to
   everything composited below it while it is active (After Effects / Premiere adjustment
   layer); its `opacity` mixes the result with the untouched picture, and a track `matte` on its
-  track (the track above as alpha / luma matte) limits where it applies. An adjustment track
+  track (an adjacent or named alpha / luma source) limits where it applies. An adjustment track
   holds only adjustment clips; they take no transform, 3D, blend mode, speed or transition (use
   a `transform` effect, or a matte, instead).
 - Build one: `add_track` (video, above the tracks it should affect), `add_clip` `{"track":
@@ -295,7 +320,7 @@ pre-expression value, a constant or keyframes, available as `value` in the scrip
 | `add_track` | new empty video track (`index` 0 = bottom; default top) or audio track |
 | `add_clip` | clip from a media file (probed; defaults: `start` = end of track, `source_in` 0, `duration` = rest of the media, `id` = file stem) or a `generator` layer (`duration` required, `id` = its type) |
 | `add_transition` | dissolve into `clip` from the previous clip; `align` `center` (default) / `start` / `end` relative to the cut; uses handles, moves nothing else; adds a matching audio crossfade |
-| `set_param` | any parameter by name on a clip (`clip`), a track (`track`: its bus, or `matte`) or the timeline (neither); `null` removes an optional object |
+| `set_param` | any parameter by name on a clip (`clip`), a track (`track`: its bus, `visible`, `matte` or effects) or the timeline (neither); `null` removes an optional object |
 | `set_keyframes` | keyframes on an animatable parameter (`mode` replace / merge) |
 | `split`, `trim`, `roll`, `slip`, `slide`, `move` | NLE trims and moves (see each op's schema) |
 | `ripple_delete`, `ripple_insert` | remove / insert and close / open the gap (`all_tracks` = sync lock) |
@@ -322,7 +347,7 @@ Parameter names (`timeline_schema` part `params` lists unit, range, default and 
   `generator.start`, `generator.end`, `generator.center` (`.x`/`.y`), `generator.radius`,
   `generator.interpolation`
 - audio clip: the `audio.*` ones, `speed`, `time_remap`
-- track: `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.effects`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
+- track: `visible`, `matte` (video tracks), `bus.gain_db`, `bus.pan`, `bus.mute`, `bus.effects`, `bus.duck` (`{key: [...]}`), `bus.duck.threshold_db`,
   `bus.duck.ratio`, `bus.duck.attack_ms`, `bus.duck.release_ms`, `bus.duck.range_db`
 - timeline: `audio.master_gain_db`, `audio.loudness`, `audio.loudness.target_lufs`,
   `audio.loudness.true_peak_dbtp`, `output.duration`, `camera`, `camera.position`,

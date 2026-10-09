@@ -321,14 +321,21 @@ pub const AUDIO_CLIP: &[ParamSpec] = &[
     CA[0], CA[1], CA[2], CA[3], CA[4], CA[5], CA[6], CA[7], CA[8], CA[9],
 ];
 
-/// Parameters of a track's audio bus (video tracks' linked audio, or audio tracks).
+/// Track picture controls and audio bus (video linked audio, or audio tracks).
 pub const TRACK: &[ParamSpec] = &[
+    ParamSpec::fixed(
+        "visible",
+        Bool,
+        "",
+        "true",
+        "video tracks only: include the track in the final picture stack; false keeps it available as a matte source and leaves linked audio unchanged; legacy track_above sources are consumed regardless of visibility",
+    ),
     ParamSpec::fixed(
         "matte",
         Object,
         "",
         "null",
-        "video tracks only: {mode: alpha | alpha_inverted | luma | luma_inverted}; the track above becomes this track's matte and is not composited itself",
+        "video tracks only: {mode: alpha | alpha_inverted | luma | luma_inverted, source?: track_above | {track: unique nonempty video track name}}; default track_above consumes the adjacent source; a named source can be reused independently of its visibility; source and recipient use the same composition time",
     ),
     ParamSpec::fixed(
         "effects",
