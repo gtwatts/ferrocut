@@ -349,14 +349,10 @@ impl TextSpec {
 
     /// Per-asset identities for render-aware diffs, in primary/fallback order.
     /// Use the same bounded reads and font validation as a newly compiled node.
-    pub(crate) fn font_content_hashes(&self) -> Result<Vec<NodeHash>, NodeError> {
+    pub(crate) fn font_content_hashes(&self) -> Result<Vec<blake3::Hash>, NodeError> {
         let fonts = load_fonts(self)?;
         TextState::new(&fonts, self.font_index)?;
-        Ok(fonts
-            .data
-            .iter()
-            .map(|bytes| NodeHash(*blake3::hash(bytes).as_bytes()))
-            .collect())
+        Ok(fonts.data.iter().map(|bytes| blake3::hash(bytes)).collect())
     }
 }
 
