@@ -1621,6 +1621,49 @@ fn enforce_check_paths(root: &Root, paths: &perceive::CheckPaths) -> anyhow::Res
     Ok(())
 }
 
+/// Most entries [`enforce_tree`] inspects under one write root before refusing.
+const TREE_ENTRY_LIMIT: usize = 100_000;
+
+/// The checker writes and reads files below its output and cache directories
+/// (`perceive.json`, `sheets/`, `scopes/`, cached analysis JSON and thumbs,
+/// audio analysis). An existing symlink anywhere below them would redirect
+/// that IO, so every existing symlink is root-checked (resolved) before the
+/// checker runs. A symlinked directory that stays inside the root is walked
+/// too, through its canonical path, once (cycles end there). Bounded by
+/// [`TREE_ENTRY_LIMIT`]; the Root TOCTOU limits still apply.
+fn enforce_tree(root: &Root, what: &str, dir: &Path) -> anyhow::Result<()> {
+    let outside = |p: &Path| format!("{what} entry {} is outside the project root", p.display());
+    if std::fs::symlink_metadata(dir).is_err() {
+        return Ok(()); // created by the checker; its ancestors were checked
+    }
+    let start = root.check(dir).with_context(|| outside(dir))?;
+    let mut visited = std::collections::HashSet::new();
+    let mut stack = vec![start];
+    let mut seen = 0usize;
+    while let Some(d) = stack.pop() {
+        if !d.is_dir() || !visited.insert(d.clone()) {
+            continue;
+        }
+        for entry in std::fs::read_dir(&d).with_context(|| format!("reading {}", d.display()))? {
+            let path = entry?.path();
+            seen += 1;
+            anyhow::ensure!(
+                seen <= TREE_ENTRY_LIMIT,
+                "{what} {} has more than {TREE_ENTRY_LIMIT} entries; clear it or pass a fresh directory",
+                dir.display()
+            );
+            let m = std::fs::symlink_metadata(&path)?;
+            if m.file_type().is_symlink() {
+                let target = root.check(&path).with_context(|| outside(&path))?;
+                stack.push(target);
+            } else if m.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Run one tool. `None`: no such tool.
 pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
     let with_timeline = |a: TimelineArgs| -> anyhow::Result<TimelineArgs> {
@@ -1677,6 +1720,12 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
                 let (_, paths) =
                     perceive::check_paths(&render, report.as_deref(), cache.as_deref(), &cwd)?;
                 enforce_check_paths(&cx.root, &paths)?;
+                // Existing entries below the directories the checker writes into.
+                enforce_tree(&cx.root, "checker cache", &paths.cache_dir.join("perceive"))?;
+                enforce_tree(&cx.root, "checker cache", &paths.cache_dir.join("audio"))?;
+            }
+            if let Some(out) = checker_flag_value(&args, "--out") {
+                enforce_tree(&cx.root, "--out", Path::new(out))?;
             }
             let (timeline, _) = cx.root.load_timeline(&a.timeline)?;
             Ok(serde_json::to_value(perceive::check(

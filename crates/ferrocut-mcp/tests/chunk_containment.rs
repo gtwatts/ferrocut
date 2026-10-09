@@ -322,3 +322,48 @@ fn quality_check_refuses_each_escaping_checker_path() {
         "cache symlink: {msg}"
     );
 }
+
+/// P2 (re-review). Existing symlinks BELOW the directories the checker writes
+/// into are refused: `--out review` with `review/perceive.json` or
+/// `review/sheets` pointing outside, a cached analysis leaf under
+/// `perceive/v1`, and an in-root symlinked directory hiding an outside leaf.
+/// No checker is reached.
+#[cfg(unix)]
+#[test]
+fn quality_check_refuses_escaping_symlinks_below_write_dirs() {
+    use std::os::unix::fs::symlink;
+
+    let (_d, base, proj) = project_with_report(|_| {});
+    std::fs::create_dir_all(proj.join("review")).unwrap();
+    symlink(
+        base.join("outside/victim"),
+        proj.join("review/perceive.json"),
+    )
+    .unwrap();
+    let msg = refused(&proj, json!(["--out", "review"]), "out.mkv");
+    assert!(msg.contains("perceive.json"), "out leaf: {msg}");
+    assert!(msg.contains("outside the project root"), "out leaf: {msg}");
+
+    let (_d, base, proj) = project_with_report(|_| {});
+    std::fs::create_dir_all(proj.join("review")).unwrap();
+    symlink(base.join("outside"), proj.join("review/sheets")).unwrap();
+    let msg = refused(&proj, json!(["--out=review"]), "out.mkv");
+    assert!(msg.contains("sheets"), "out dir: {msg}");
+
+    // A cached analysis JSON in the derived cache.
+    let (_d, base, proj) = project_with_report(|_| {});
+    let v1 = proj.join(".ferrocut-cache/perceive/v1");
+    std::fs::create_dir_all(&v1).unwrap();
+    symlink(base.join("outside/a.json"), v1.join("0123.json")).unwrap();
+    let msg = refused(&proj, json!([]), "out.mkv");
+    assert!(msg.contains("0123.json"), "cache leaf: {msg}");
+
+    // An in-root symlinked directory is walked: its outside leaf is refused.
+    let (_d, base, proj) = project_with_report(|_| {});
+    std::fs::create_dir_all(proj.join("elsewhere")).unwrap();
+    symlink(base.join("outside/t.png"), proj.join("elsewhere/t.png")).unwrap();
+    std::fs::create_dir_all(proj.join("review")).unwrap();
+    symlink(proj.join("elsewhere"), proj.join("review/scopes")).unwrap();
+    let msg = refused(&proj, json!(["--out", "review"]), "out.mkv");
+    assert!(msg.contains("t.png"), "nested leaf: {msg}");
+}
