@@ -9732,7 +9732,7 @@
       "proposed_acceptance": "Render a selected range, reuse valid cache and invalidate changed dependencies only.",
       "ferrocut": {
         "status": "partial",
-        "assessed_at": "2026-10-08",
+        "assessed_at": "2026-10-09",
         "acceptance_complete": false,
         "evidence": [
           {
@@ -9758,10 +9758,28 @@
             "path": "crates/ferrocut-mcp/src/lib.rs",
             "locator": "",
             "claim": "Full-sequence render/chunk reuse/invalidation, cancellation and progress reporting exist."
+          },
+          {
+            "stage": "implemented",
+            "path": "crates/ferrocut-engine/src/render.rs",
+            "locator": "pub fn plan_range",
+            "claim": "Code-present on eng/selected-range-visual-loop (not compiled or tested yet): RenderOptions.range renders half-open timeline frames [start,end) at their original times into a master starting at 0; chunks follow the full grid cut at the ends (interior keys equal a full render's); audio is the same samples of the full program's mastered mix; report keeps range.source_frames/output_frames/source_time/source_samples/output_samples."
+          },
+          {
+            "stage": "implemented",
+            "path": "crates/ferrocut-engine/src/main.rs",
+            "locator": "range_frames",
+            "claim": "Code-present, not compiled: `ferrocut render --range-frames A..B | --range-time T0..T1` (refused with --check) and `captions export` with the same flags (cues clipped to the range and shifted to 0)."
+          },
+          {
+            "stage": "implemented",
+            "path": "crates/ferrocut-mcp/src/lib.rs",
+            "locator": "struct RangeArg",
+            "claim": "Code-present, not compiled: MCP render `range: {frames:[a,b]} | {time:[t0,t1]}`; summary gains `range`."
           }
         ],
         "limitations": [
-          "Selected time/frame range rendering/export is not exposed as a normal CLI/MCP job."
+          "Selected-range source is code-present only: not compiled, tested, rendered or installed; perceive refuses range reports rather than grading them."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -9769,7 +9787,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "2026-10-09 eng-workflow: selected-range implementation added on branch eng/selected-range-visual-loop; status stays partial until source tests, a render and inspection are recorded."
         ],
         "needs_design": false
       }
@@ -9971,7 +9990,7 @@
       "proposed_acceptance": "Export an exact frame range with matching audio duration and job status.",
       "ferrocut": {
         "status": "partial",
-        "assessed_at": "2026-10-08",
+        "assessed_at": "2026-10-09",
         "acceptance_complete": false,
         "evidence": [
           {
@@ -9997,10 +10016,28 @@
             "path": "crates/ferrocut-mcp/src/lib.rs",
             "locator": "",
             "claim": "Full-sequence render/chunk reuse/invalidation, cancellation and progress reporting exist."
+          },
+          {
+            "stage": "implemented",
+            "path": "crates/ferrocut-engine/src/render.rs",
+            "locator": "pub fn plan_range",
+            "claim": "Code-present on eng/selected-range-visual-loop (not compiled or tested yet): RenderOptions.range renders half-open timeline frames [start,end) at their original times into a master starting at 0; chunks follow the full grid cut at the ends (interior keys equal a full render's); audio is the same samples of the full program's mastered mix; report keeps range.source_frames/output_frames/source_time/source_samples/output_samples."
+          },
+          {
+            "stage": "implemented",
+            "path": "crates/ferrocut-engine/src/main.rs",
+            "locator": "range_frames",
+            "claim": "Code-present, not compiled: `ferrocut render --range-frames A..B | --range-time T0..T1` (refused with --check) and `captions export` with the same flags (cues clipped to the range and shifted to 0)."
+          },
+          {
+            "stage": "implemented",
+            "path": "crates/ferrocut-mcp/src/lib.rs",
+            "locator": "struct RangeArg",
+            "claim": "Code-present, not compiled: MCP render `range: {frames:[a,b]} | {time:[t0,t1]}`; summary gains `range`."
           }
         ],
         "limitations": [
-          "Selected time/frame range rendering/export is not exposed as a normal CLI/MCP job."
+          "Selected-range export source is code-present only: not compiled, tested, rendered or installed; quality checking refuses range masters (no range-aware grading yet)."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -10008,7 +10045,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "2026-10-09 eng-workflow: selected-range implementation added on branch eng/selected-range-visual-loop; status stays partial until source tests, a render and inspection are recorded."
         ],
         "needs_design": false
       }

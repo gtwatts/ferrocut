@@ -22,6 +22,7 @@ Start with the tools and schemas exposed by the running build. An agent should r
 | Plan render keys without decoding or GPU execution | `plan {"timeline":"project.json"}` |
 | See frames before encoding any video | `preview_frames {"timeline":"project.json","spread":12}` or `{"at":["5/2"],"each":true}` |
 | Look at what an encoded file actually holds | `artifact_frames {"path":"out/cut.mp4","frames":[0,47,-1]}`: decoded pixels with exact pts, not a re-render |
+| Export only part of the timeline | `render {"timeline":"project.json","output":"out/part.mkv","range":{"frames":[30,90]}}` (half-open; or `"time":["5/4","15/4"]`): frames at their original times, master starts at 0, audio = the same samples of the full mix; report `range` keeps source and output intervals. Captions sidecar: `ferrocut captions export ... --range-frames 30..90` |
 | Inspect edit history / restore the last journaled edit | `log` / `undo`, each with `timeline` |
 | Import/export an editable foreign timeline with explicit loss reports | `timeline_import` / `timeline_export`, `format:"otio"` or `"fcp7"`, start with `dry_run:true` |
 | Measure rendered picture with numeric video scopes | `scopes_read {"path":"renders/title-draft.mkv","at":"1/2"}` |

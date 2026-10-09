@@ -402,6 +402,27 @@ struct RenderArgs {
     deliver: Option<DeliverArg>,
     #[serde(default)]
     proxies: bool,
+    range: Option<RangeArg>,
+}
+
+/// `render.range`: exactly one of `frames` or `time`, half-open.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RangeArg {
+    frames: Option<[i64; 2]>,
+    time: Option<[ferrocut_core::RationalTime; 2]>,
+}
+
+impl RangeArg {
+    fn resolve(&self, tl: &Timeline) -> anyhow::Result<ferrocut_engine::render::FrameRange> {
+        use ferrocut_engine::render::FrameRange;
+        let r = match (self.frames, self.time) {
+            (Some([a, b]), None) => FrameRange::frames(a, b)?,
+            (None, Some([t0, t1])) => FrameRange::times(t0, t1, tl.output.fps)?,
+            _ => bail!("range: give exactly one of frames or time"),
+        };
+        r.check(tl.frame_count())
+    }
 }
 
 #[derive(Deserialize)]
@@ -1318,6 +1339,12 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
     let output = cx.root.check(&a.output)?;
     let cache_dir = cx.root.check_opt(a.cache_dir)?;
     let report = cx.root.check_opt(a.report)?;
+    let range = a.range.as_ref().map(|r| r.resolve(&tl)).transpose()?;
+    if range.is_some() && a.check {
+        bail!(
+            "check grades a master against its whole timeline; check the full render (a selected-range master is not graded yet)"
+        );
+    }
     let deliver = match a.deliver {
         Some(d) => {
             let mut o = d.opts();
@@ -1381,6 +1408,7 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
             deadline: a
                 .timeout_s
                 .map(|s| started + std::time::Duration::from_secs_f64(s)),
+            range,
             ..RenderOptions::new(cache_dir)
         },
     )?;
@@ -1392,6 +1420,9 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
         .with_context(|| format!("writing {}", report_path.display()))?;
     let mut s = summarize(&v);
     s["report_path"] = json!(report_path);
+    if let Some(r) = v.get("range") {
+        s["range"] = r.clone();
+    }
     if a.proxies && !draft {
         s["proxies"] = json!("ignored: deliver is a final render from the original media");
     } else if draft && r.proxies.is_empty() {

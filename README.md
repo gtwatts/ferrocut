@@ -56,6 +56,7 @@ cargo test --release
 ./target/release/ferrocut render examples/demo.json -o out/demo.mkv
 ./target/release/ferrocut render examples/demo-edit-opacity.json -o out/edit.mkv   # only chunks 8,9 re-render
 ./target/release/ferrocut render examples/demo-av.json -o out/av.mkv   # dialogue + ducked music, J/L cuts, animated overlay, -14 LUFS
+./target/release/ferrocut render examples/demo-av.json -o out/av-part.mkv --range-frames 30..90   # frames [30,90) only: master starts at 0, same pixels/PCM as those frames of the full master
 echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
 ./target/release/ferrocut edit examples/demo-av.json /tmp/ops.json -o out/av-slip.json --plan   # prints the chunks that will re-render
 ./target/release/ferrocut diff examples/demo-av.json out/av-slip.json --summary   # structured diff + chunks to re-render (JSON without --summary)

@@ -818,7 +818,16 @@ pub fn render() -> Value {
             "check_args": check_args(),
             "expect_audio": expect_audio(),
             "deliver": deliver(),
-            "proxies": { "type": "boolean", "default": false, "description": "draft render: read video from half-resolution proxies where they exist (proxy_generate); the summary gains draft=true and the proxies used. Ignored with deliver (a final render always uses the original media). Draft chunks are cached apart from full-resolution ones." }
+            "proxies": { "type": "boolean", "default": false, "description": "draft render: read video from half-resolution proxies where they exist (proxy_generate); the summary gains draft=true and the proxies used. Ignored with deliver (a final render always uses the original media). Draft chunks are cached apart from full-resolution ones." },
+            "range": {
+                "description": "render only a half-open interval of timeline frames into a master (and delivery) that starts at frame 0. Frames are evaluated at their original timeline times; audio is the same samples of the full program's mastered mix (not re-mastered). Interior chunks reuse a full render's cache. The summary and report gain `range` with source/output frames, times and samples. Not combinable with check (the checker grades whole-timeline masters).",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "frames": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 0 }, "description": "[start, end): 0-based timeline frames, end exclusive" },
+                    "time": { "type": "array", "minItems": 2, "maxItems": 2, "items": rational("timeline seconds"), "description": "[t0, t1): the frames whose start time t satisfies t0 <= t < t1" }
+                }
+            }
         }),
         &["timeline", "output"],
     )
