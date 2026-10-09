@@ -25,6 +25,7 @@ Start with the tools and schemas exposed by the running build. An agent should r
 | Import/export an editable foreign timeline with explicit loss reports | `timeline_import` / `timeline_export`, `format:"otio"` or `"fcp7"`, start with `dry_run:true` |
 | Measure rendered picture with numeric video scopes | `scopes_read {"path":"renders/title-draft.mkv","at":"1/2"}` |
 | Measure seeded point motion, confidence and failures | `tracking_analyze {"path":"media/shot.mkv","output":"shot.analysis.json","settings":{...}}` |
+| Import SRT/WebVTT cues as frame-snapped, gap-free caption clips | `captions_import {"timeline":"project.json","subtitles":"dialogue.srt","style":{...},"dry_run":true}`, then check `caption_timing` |
 | Generate ordinary attachment/stabilization edits for review | `tracking_keyframes {"analysis":"shot.analysis.json","timeline":"project.json","options":{...}}` then `edit_apply` |
 
 The same documentation is available through MCP resources: `docs://timeline/guide.md`, `docs://timeline/schema.json`, `docs://timeline/edit-ops.schema.json`, `docs://timeline/params.json`, and `docs://perceive/check.schema.json`. The MCP server's `--list-tools` option prints tool definitions, `--list-docs` the resources and `--doc <uri|name>` one resource (for example `ferrocut-mcp --doc timeline-guide`), without starting a client session.
@@ -214,6 +215,17 @@ The CLI imports plain-text SRT/WebVTT cues through the same atomic edits and jou
 ./target/debug/ferrocut captions import project.json dialogue.vtt --style caption-style.json --track Captions
 ./target/debug/ferrocut captions export project.json --track Captions -o dialogue-edited.srt
 ```
+
+Cue times are fitted to the output frame grid by default, because interchange times are milliseconds and a cue change often leaves a gap of a few ms that contains one frame time: that frame shows no caption, a one-frame blink. A clip shows on frame n when start <= n/fps < end, so:
+
+- `--snap frames` (default) moves each boundary to the first frame at or after it. No displayed frame changes; boundaries and gaps become whole frames. `--snap none` keeps the times.
+- `--close-gaps 1/10` (default) extends a cue to the next cue's start when the gap is at most 0.1 s (inclusive: a 3-frame gap at 30 fps closes, 4 frames stay). Longer pauses are kept as authored. `--close-gaps 0` disables it.
+- `--min-duration <s>` (off by default) extends shorter cues into the following gap only: never over the next cue and never adding an output frame (or audio sample). With snapping, the last cue may end at the end of the program's last frame, slightly past an off-grid program end: a 3.01 s program at 30 fps has 91 frames, so the bound is 91/30 s. A cue it cannot reach is a warning.
+- `--exact-timing` keeps the subtitle file's times exactly (all three off; the behavior before these options). `--snap none` alone still closes gaps.
+
+A cue that shows no frame at all (for example 1.010-1.020 s at 30 fps) gets one frame and a warning, or is an error when the next cue starts on that frame; cues are never dropped and never overlap. The command prints the edit outcome with a `caption_timing` report: every changed cue (`from`, `to`, displayed `frames`, `reasons`: `snapped`, `one_frame`, `closed_gap`, `extended`), every kept uncaptioned gap with its frames, and warnings (a 1-2 frame gap left open reads as a blink). `captions export` warns about such gaps in the track it exports. The source subtitle file is never changed. MCP `captions_import` does the same with a `timing` object (`{"snap":false,"close_gaps":0}` for exact times) and an inline `style` whose fonts are relative to the timeline.
+
+Only the caption clips are retimed. A plate, highlight or any clip authored separately from the cue times (for example one shape per cue on its own track) keeps its own times and blinks on its own; derive such clips from the imported caption clips (`timeline_get`), not from the subtitle file.
 
 Use `--ops-only` to inspect the generated operations without changing a project. The selected export track must contain text clips only. Rendering burns the text into picture; caption export writes a sidecar. Export rounds exact timings to milliseconds and rejects cues that would collapse to zero length. Existing output files are not overwritten.
 
