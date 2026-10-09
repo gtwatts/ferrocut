@@ -503,3 +503,139 @@ pub fn write_stills(
         height: tl.output.height,
     })
 }
+
+/// PNG of straight-alpha RGBA8 that keeps every pixel's RGB and alpha
+/// exactly. Fully opaque images use [`png_bytes`] (compressed); images with
+/// any alpha below 255 are written as an exact RGBA PNG with stored
+/// (uncompressed) deflate blocks, because the compressed encoder takes
+/// premultiplied pixels and would change the RGB of translucent ones.
+pub fn png_bytes_straight(width: u32, height: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>> {
+    ensure!(
+        rgba.len() == width as usize * height as usize * 4 && width > 0 && height > 0,
+        "pixel buffer size"
+    );
+    if rgba.chunks_exact(4).all(|p| p[3] == 255) {
+        return png_bytes(width, height, rgba);
+    }
+    fn crc32(bytes: &[u8]) -> u32 {
+        let mut c = 0xffff_ffffu32;
+        for &b in bytes {
+            c ^= b as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    0xedb8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+            }
+        }
+        !c
+    }
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let mut body = Vec::with_capacity(4 + data.len());
+        body.extend_from_slice(kind);
+        body.extend_from_slice(data);
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&crc32(&body).to_be_bytes());
+    }
+    let row = width as usize * 4;
+    let mut raw = Vec::with_capacity((row + 1) * height as usize);
+    for y in 0..height as usize {
+        raw.push(0); // filter: none
+        raw.extend_from_slice(&rgba[y * row..(y + 1) * row]);
+    }
+    let (mut a, mut b) = (1u32, 0u32);
+    for &v in &raw {
+        a = (a + v as u32) % 65521;
+        b = (b + a) % 65521;
+    }
+    let mut z = vec![0x78, 0x01];
+    let blocks: Vec<&[u8]> = raw.chunks(65_535).collect();
+    for (i, blk) in blocks.iter().enumerate() {
+        z.push(u8::from(i + 1 == blocks.len()));
+        let n = blk.len() as u16;
+        z.extend_from_slice(&n.to_le_bytes());
+        z.extend_from_slice(&(!n).to_le_bytes());
+        z.extend_from_slice(blk);
+    }
+    z.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = Vec::with_capacity(13);
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA, no interlace
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(&mut out, b"IDAT", &z);
+    chunk(&mut out, b"IEND", &[]);
+    Ok(out)
+}
+
+/// Display composite of straight-alpha RGBA over an 8-pixel checkerboard
+/// (grey 102 / 153), so translucency stays visible after resizing or in a
+/// contact sheet; the result is opaque. Opaque input is returned unchanged.
+pub fn over_checkerboard(rgba: &[u8], width: u32) -> Vec<u8> {
+    if rgba.chunks_exact(4).all(|p| p[3] == 255) {
+        return rgba.to_vec();
+    }
+    let mut out = rgba.to_vec();
+    for (i, px) in out.chunks_exact_mut(4).enumerate() {
+        let (x, y) = (i as u32 % width, i as u32 / width);
+        let bg: u32 = if ((x / 8) + (y / 8)) % 2 == 0 {
+            102
+        } else {
+            153
+        };
+        let a = px[3] as u32;
+        for c in &mut px[..3] {
+            *c = ((*c as u32 * a + bg * (255 - a) + 127) / 255) as u8;
+        }
+        px[3] = 255;
+    }
+    out
+}
+
+/// Write `bytes` at `path` without replacing anything: the file is created
+/// through a temporary and a hard link (atomic, fails if `path` exists). If
+/// `path` already holds exactly these bytes it is kept (an idempotent repeat
+/// observation); different existing content is an error, never overwritten.
+/// Returns whether a new file was created.
+pub fn publish_exclusive(path: &Path, bytes: &[u8]) -> anyhow::Result<bool> {
+    let dir = path.parent().context("output path has no directory")?;
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let name = path
+        .file_name()
+        .context("output path has no file name")?
+        .to_string_lossy();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = dir.join(format!(".{name}.{}.{nanos}.tmp", std::process::id()));
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .with_context(|| format!("creating {}", tmp.display()))?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+    }
+    let linked = std::fs::hard_link(&tmp, path);
+    let _ = std::fs::remove_file(&tmp);
+    match linked {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing =
+                std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+            ensure!(
+                existing == bytes,
+                "{} already exists with different content; it was not replaced",
+                path.display()
+            );
+            Ok(false)
+        }
+        Err(e) => Err(e).with_context(|| format!("publishing {}", path.display())),
+    }
+}

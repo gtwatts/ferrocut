@@ -9,8 +9,20 @@
 //! sequential from the start: cost grows with the largest index requested
 //! (or the whole stream for indices counted from the end), bounded by
 //! [`MAX_DECODE_FRAMES`].
+//!
+//! Containment: the file is opened once and read only through that handle
+//! (custom I/O). The demuxer may not open anything else: the protocol
+//! whitelist names no protocol, and only self-contained container demuxers
+//! ([`DEMUXERS`]) are allowed, so playlists (HLS), concat lists or external
+//! references fail instead of reading other files.
+//!
+//! Identity: the handle's bytes are hashed before decoding and again after;
+//! a difference is an error. That is an observed recheck of the same open
+//! file, not an immutable snapshot: a change that is undone between the two
+//! hashes is not detectable.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use anyhow::{Context as _, anyhow, bail, ensure};
@@ -18,7 +30,7 @@ use ferrocut_core::CancelToken;
 use ferrocut_core::{Rational, RationalTime};
 use ffmpeg_next::util::color;
 use ffmpeg_next::util::format::Pixel;
-use ffmpeg_next::{Error as FfError, codec, format, frame, media, software::scaling};
+use ffmpeg_next::{Dictionary, Error as FfError, Packet, codec, format, frame, software::scaling};
 use serde::Serialize;
 
 use super::{init, to_core};
@@ -27,10 +39,35 @@ use super::{init, to_core};
 pub const MAX_INSPECT_FRAMES: usize = 64;
 /// Most frames decoded for one request (about an hour at 24 fps).
 pub const MAX_DECODE_FRAMES: u64 = 100_000;
-/// Largest frame accepted (width x height).
+/// Largest frame accepted (width x height), checked on the stream's declared
+/// size and on every decoded frame before it is kept or converted.
 pub const MAX_FRAME_PIXELS: u64 = 1 << 26;
+/// Most bytes held at once for returned frames (RGBA) plus the frames kept
+/// for indices counted from the end (decoded planes).
+pub const MAX_RETAINED_BYTES: u64 = 1 << 30;
+/// Self-contained container demuxers this route opens (FFmpeg names).
+pub const DEMUXERS: &str = "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts,mpeg,ivf,flv,nut,ogg,mxf,h264,hevc,yuv4mpegpipe";
 
-/// One decoded frame, straight RGBA8 at the frame's own size.
+/// How a frame's code values became RGBA, and what was not converted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Conversion {
+    /// FFmpeg pixel format name of the decoded frame.
+    pub source_format: String,
+    /// The frame's own tags, as FFmpeg reports them.
+    pub source_matrix: String,
+    pub source_range: String,
+    pub source_primaries: String,
+    pub source_transfer: String,
+    /// What was applied: `rgb` (no matrix), `gray`, or the YUV matrix, with
+    /// why (`tagged`, or the fallback for an unspecified matrix).
+    pub applied_matrix: String,
+    /// `full` or `limited`, with why (`tagged`, `yuvj format`, or `assumed`).
+    pub applied_range: String,
+    pub output: &'static str,
+    pub not_converted: &'static str,
+}
+
+/// One decoded frame, straight-alpha RGBA8 at the frame's own size.
 #[derive(Clone, Debug)]
 pub struct EncodedFrame {
     /// Ordinal in presentation order (0-based).
@@ -44,15 +81,16 @@ pub struct EncodedFrame {
     pub corrupt: bool,
     pub width: u32,
     pub height: u32,
-    /// Source pixel format and the YUV matrix/range used to convert it.
-    pub source_format: String,
-    pub conversion: String,
+    /// The source format carries alpha (RGBA keeps it, straight).
+    pub alpha: bool,
+    pub conversion: Conversion,
     pub rgba: Vec<u8>,
 }
 
-/// What [`decode_frames`] read.
+/// What [`inspect_file`] read.
 #[derive(Clone, Debug, Serialize)]
 pub struct EncodedStream {
+    pub demuxer: String,
     pub stream_index: usize,
     pub codec: String,
     /// Stream time base (rational string).
@@ -62,19 +100,106 @@ pub struct EncodedStream {
     /// from timestamps.
     pub nominal_rate: Option<String>,
     pub frames_decoded: u64,
-    /// Total frames, when decoding reached the end of the stream.
+    /// Total frames, when decoding reached the end of the stream. A cleanly
+    /// truncated file (whole packets missing at the end) decodes as a shorter
+    /// stream; only an expected count can reveal that.
     pub frame_count: Option<u64>,
 }
 
-/// Decode the frames at `requested` ordinals (negative: from the end, -1 is
-/// the last frame) from the best video stream of `path`, in request order.
-/// Errors on an index past the end (naming the frame count), a frame larger
-/// than [`MAX_FRAME_PIXELS`], a decode error or cancellation.
+/// The file's bytes as observed (see the module docs).
+#[derive(Clone, Debug, Serialize)]
+pub struct FileIdentity {
+    pub blake3: String,
+    pub bytes: u64,
+    /// Always `observed_recheck`: hashed before and after decoding, equal.
+    pub kind: &'static str,
+}
+
+/// Resource limits of one inspection ([`Limits::default`] is the published
+/// [`MAX_FRAME_PIXELS`] / [`MAX_RETAINED_BYTES`]).
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    pub max_frame_pixels: u64,
+    pub max_retained_bytes: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            max_frame_pixels: MAX_FRAME_PIXELS,
+            max_retained_bytes: MAX_RETAINED_BYTES,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Inspection {
+    pub identity: FileIdentity,
+    pub stream: EncodedStream,
+    pub frames: Vec<EncodedFrame>,
+}
+
+/// [`inspect_file`] without the identity or a test hook.
 pub fn decode_frames(
     path: &Path,
     requested: &[i64],
     cancel: &CancelToken,
 ) -> anyhow::Result<(EncodedStream, Vec<EncodedFrame>)> {
+    let i = inspect_file(path, requested, cancel, None)?;
+    Ok((i.stream, i.frames))
+}
+
+/// blake3 and length of everything `file` holds, from its start; cancellable.
+fn hash_handle(file: &mut std::fs::File, cancel: &CancelToken) -> anyhow::Result<(String, u64)> {
+    file.seek(SeekFrom::Start(0))?;
+    let mut h = blake3::Hasher::new();
+    let mut buf = vec![0u8; 1 << 20];
+    let mut total = 0u64;
+    loop {
+        ensure!(!cancel.is_cancelled(), "cancelled");
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+        total += n as u64;
+    }
+    file.seek(SeekFrom::Start(0))?;
+    Ok((h.finalize().to_hex().to_string(), total))
+}
+
+/// Decode the frames at `requested` ordinals (negative: from the end, -1 is
+/// the last frame) from the best video stream of `path`, in request order,
+/// with the file's observed identity. Errors on an index past the end
+/// (naming the frame count), a frame or retained total over the limits, a
+/// read or decode error (a read error is never taken as the end of the
+/// file), an unsupported conversion, a changed file or cancellation.
+/// `after_first_frame` runs once after the first decoded frame (a test seam
+/// for changing the file mid-decode).
+pub fn inspect_file(
+    path: &Path,
+    requested: &[i64],
+    cancel: &CancelToken,
+    after_first_frame: Option<&mut dyn FnMut()>,
+) -> anyhow::Result<Inspection> {
+    inspect_with_limits(
+        path,
+        requested,
+        cancel,
+        after_first_frame,
+        Limits::default(),
+    )
+}
+
+/// [`inspect_file`] with explicit [`Limits`].
+pub fn inspect_with_limits(
+    path: &Path,
+    requested: &[i64],
+    cancel: &CancelToken,
+    mut after_first_frame: Option<&mut dyn FnMut()>,
+    limits: Limits,
+) -> anyhow::Result<Inspection> {
+    let (max_px, max_bytes) = (limits.max_frame_pixels, limits.max_retained_bytes);
     ensure!(!requested.is_empty(), "no frames requested");
     ensure!(
         requested.len() <= MAX_INSPECT_FRAMES,
@@ -99,11 +224,40 @@ pub fn decode_frames(
         );
     }
 
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    ensure!(
+        file.metadata()?.is_file(),
+        "{} is not a file",
+        path.display()
+    );
+    let (before, bytes) = hash_handle(&mut file, cancel)?;
+    let mut check = file.try_clone()?;
+
     init();
-    let mut ictx = format::input(path).with_context(|| format!("opening {}", path.display()))?;
+    let io = format::context::StreamIo::from_read_seek(file)
+        .map_err(|e| anyhow!("custom I/O for {}: {e}", path.display()))?;
+    let mut opts = Dictionary::new();
+    // No protocol may be opened for secondary input; only this handle is read.
+    opts.set("protocol_whitelist", "ferrocut-none");
+    opts.set("format_whitelist", DEMUXERS);
+    let interrupt = cancel.clone();
+    let name = path.file_name().and_then(|n| n.to_str()).map(str::to_owned);
+    let mut ictx = format::input_from_stream_with_interrupt(io, name.as_deref(), Some(opts), move || {
+        interrupt.is_cancelled()
+    })
+    .map_err(|e| match e {
+        FfError::Exit => anyhow!("cancelled"),
+        e => anyhow!(
+            "opening {}: {e} (only self-contained {} files are inspected; no secondary files are read)",
+            path.display(),
+            "video container"
+        ),
+    })?;
+    let demuxer = ictx.format().name().to_string();
     let stream = ictx
         .streams()
-        .best(media::Type::Video)
+        .best(ffmpeg_next::media::Type::Video)
         .ok_or_else(|| anyhow!("{} has no video stream", path.display()))?;
     let stream_index = stream.index();
     let time_base = to_core(stream.time_base());
@@ -120,9 +274,15 @@ pub fn decode_frames(
         .codec()
         .map(|c| c.name().to_string())
         .unwrap_or_default();
+    let (dw, dh) = (decoder.width() as u64, decoder.height() as u64);
+    ensure!(
+        dw * dh <= max_px,
+        "{} declares {dw}x{dh} video (max {max_px} pixels)",
+        path.display()
+    );
 
     // Positive ordinals wanted -> request positions; the last `tail` frames
-    // are kept (undecoded to RGBA) until the end is known.
+    // are kept (as decoded planes) until the end is known.
     let mut wanted: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
     for (pos, &i) in requested.iter().enumerate() {
         if i >= 0 {
@@ -130,20 +290,21 @@ pub fn decode_frames(
         }
     }
     let mut out: Vec<Option<EncodedFrame>> = vec![None; requested.len()];
-    let mut ring: VecDeque<(u64, frame::Video)> = VecDeque::new();
+    let mut ring: VecDeque<(u64, frame::Video, u64)> = VecDeque::new();
+    let mut retained: u64 = 0;
     let mut scaler: Option<Scaler> = None;
     let mut index: u64 = 0;
     let mut eof_sent = false;
     let mut reached_end = false;
     let need_end = tail > 0;
-    let convert = |f: &frame::Video, i: u64, scaler: &mut Option<Scaler>| {
-        to_encoded(f, i, time_base, start_pts, scaler)
+    let over_budget = |what: &str| {
+        format!(
+            "{what} would hold more than {max_bytes} bytes of frames; request fewer or smaller frames"
+        )
     };
 
     'decode: loop {
-        if cancel.is_cancelled() {
-            bail!("cancelled");
-        }
+        ensure!(!cancel.is_cancelled(), "cancelled");
         let mut f = frame::Video::empty();
         match decoder.receive_frame(&mut f) {
             Ok(()) => {
@@ -154,17 +315,40 @@ pub fn decode_frames(
                     "{} has more than {MAX_DECODE_FRAMES} frames; request frames from the start",
                     path.display()
                 );
+                let (w, h) = (f.width() as u64, f.height() as u64);
+                ensure!(
+                    w > 0 && h > 0 && w * h <= max_px,
+                    "frame {i} is {w}x{h} (max {max_px} pixels)"
+                );
+                if let Some(hook) = after_first_frame.take() {
+                    hook();
+                }
                 if let Some(positions) = wanted.remove(&i) {
-                    let e = convert(&f, i, &mut scaler)?;
+                    let add = w * h * 4;
+                    ensure!(
+                        retained + add <= max_bytes,
+                        "{}",
+                        over_budget("this request")
+                    );
+                    retained += add;
+                    let e = to_encoded(&f, i, time_base, start_pts, &mut scaler)?;
                     for p in positions {
                         out[p] = Some(e.clone());
                     }
                 }
                 if need_end {
-                    ring.push_back((i, f));
-                    if ring.len() as u64 > tail {
-                        ring.pop_front();
+                    let add: u64 = (0..f.planes()).map(|p| f.data(p).len() as u64).sum();
+                    while ring.len() as u64 >= tail {
+                        let (_, _, b) = ring.pop_front().expect("nonempty");
+                        retained -= b;
                     }
+                    ensure!(
+                        retained + add <= max_bytes,
+                        "{}",
+                        over_budget("the end window")
+                    );
+                    retained += add;
+                    ring.push_back((i, f, add));
                 } else if wanted.is_empty() {
                     break 'decode;
                 }
@@ -184,10 +368,13 @@ pub fn decode_frames(
             reached_end = true;
             break;
         }
-        match ictx.packets().next() {
-            Some((s, p)) => {
-                if s.index() == stream_index {
-                    decoder.send_packet(&p).with_context(|| {
+        // Read packets directly: only a true end of file ends the stream; a
+        // read error after valid frames is an error, not a shorter file.
+        let mut pkt = Packet::empty();
+        match pkt.read(&mut ictx) {
+            Ok(()) => {
+                if pkt.stream() == stream_index {
+                    decoder.send_packet(&pkt).with_context(|| {
                         format!(
                             "{}: corrupt or unsupported packet after frame {index}",
                             path.display()
@@ -195,10 +382,16 @@ pub fn decode_frames(
                     })?;
                 }
             }
-            None => {
+            Err(FfError::Eof) => {
                 decoder.send_eof()?;
                 eof_sent = true;
             }
+            Err(FfError::Exit) => bail!("cancelled"),
+            Err(FfError::Other { errno }) if errno == ffmpeg_next::util::error::EAGAIN => {}
+            Err(e) => bail!(
+                "reading {} after frame {index}: {e} (a read error is not taken as the end of the file)",
+                path.display()
+            ),
         }
     }
 
@@ -218,19 +411,42 @@ pub fn decode_frames(
                     path.display()
                 )
             })?;
-            let (_, f) = ring
+            let (_, f, _) = ring
                 .iter()
-                .find(|(j, _)| *j == want)
+                .find(|(j, _, _)| *j == want)
                 .expect("kept the last frames");
-            out[pos] = Some(convert(f, want, &mut scaler)?);
+            let add = f.width() as u64 * f.height() as u64 * 4;
+            ensure!(
+                retained + add <= max_bytes,
+                "{}",
+                over_budget("this request")
+            );
+            retained += add;
+            out[pos] = Some(to_encoded(f, want, time_base, start_pts, &mut scaler)?);
         }
     }
+    drop(ring);
+    drop(decoder);
+    drop(ictx); // releases the decode handle before the recheck
+
+    let (after, after_bytes) = hash_handle(&mut check, cancel)?;
+    ensure!(
+        before == after && bytes == after_bytes,
+        "{} changed while it was decoded (blake3 {before} -> {after}); inspect it again",
+        path.display()
+    );
     let frames = out
         .into_iter()
         .map(|f| f.expect("every request filled"))
         .collect();
-    Ok((
-        EncodedStream {
+    Ok(Inspection {
+        identity: FileIdentity {
+            blake3: before,
+            bytes,
+            kind: "observed_recheck",
+        },
+        stream: EncodedStream {
+            demuxer,
             stream_index,
             codec: codec_name,
             time_base: time_base.to_string(),
@@ -240,29 +456,110 @@ pub fn decode_frames(
             frame_count,
         },
         frames,
-    ))
+    })
 }
 
 struct Scaler {
     key: (Pixel, u32, u32, color::Space, color::Range),
     ctx: scaling::Context,
-    conversion: String,
+    conversion: Conversion,
+    alpha: bool,
 }
 
-/// libswscale coefficient table id for a tagged YUV matrix; `None` keeps the
-/// library default (BT.601), which is reported as untagged.
-fn sws_matrix(space: color::Space) -> Option<(i32, &'static str)> {
+/// Coefficient table of a supported YUV matrix. `Err` names a matrix that is
+/// tagged but not converted correctly here (refused rather than mislabelled).
+fn sws_matrix(space: color::Space) -> anyhow::Result<(i32, String)> {
     use ffmpeg_next::ffi::{
         SWS_CS_BT2020, SWS_CS_FCC, SWS_CS_ITU601, SWS_CS_ITU709, SWS_CS_SMPTE240M,
     };
-    Some(match space {
-        color::Space::BT709 => (SWS_CS_ITU709 as i32, "bt709"),
-        color::Space::BT470BG | color::Space::SMPTE170M => (SWS_CS_ITU601 as i32, "bt601"),
-        color::Space::BT2020NCL | color::Space::BT2020CL => (SWS_CS_BT2020 as i32, "bt2020"),
-        color::Space::FCC => (SWS_CS_FCC as i32, "fcc"),
-        color::Space::SMPTE240M => (SWS_CS_SMPTE240M as i32, "smpte240m"),
-        _ => return None,
+    Ok(match space {
+        color::Space::BT709 => (SWS_CS_ITU709 as i32, "bt709 (tagged)".into()),
+        color::Space::BT470BG | color::Space::SMPTE170M => {
+            (SWS_CS_ITU601 as i32, "bt601 (tagged)".into())
+        }
+        color::Space::BT2020NCL => (SWS_CS_BT2020 as i32, "bt2020 non-constant (tagged)".into()),
+        color::Space::FCC => (SWS_CS_FCC as i32, "fcc (tagged)".into()),
+        color::Space::SMPTE240M => (SWS_CS_SMPTE240M as i32, "smpte240m (tagged)".into()),
+        color::Space::Unspecified => (
+            SWS_CS_ITU601 as i32,
+            "bt601 (fallback: matrix unspecified)".into(),
+        ),
+        other => bail!(
+            "YUV matrix {other:?} is not supported by frame inspection (constant-luminance, ICtCp, YCgCo and chroma-derived matrices are refused)"
+        ),
     })
+}
+
+/// The conversion for a frame format, fixed per (format, size, tags).
+fn conversion_for(f: &frame::Video) -> anyhow::Result<(Option<(i32, bool)>, Conversion, bool)> {
+    use ffmpeg_next::ffi::{
+        AV_PIX_FMT_FLAG_ALPHA, AV_PIX_FMT_FLAG_BAYER, AV_PIX_FMT_FLAG_HWACCEL, AV_PIX_FMT_FLAG_PAL,
+        AV_PIX_FMT_FLAG_RGB,
+    };
+    let fmt = f.format();
+    let desc = fmt
+        .descriptor()
+        .ok_or_else(|| anyhow!("pixel format {fmt:?} has no descriptor"))?;
+    // SAFETY: a descriptor pointer from av_pix_fmt_desc_get is static data.
+    let flags = unsafe { (*desc.as_ptr()).flags };
+    let has = |bit: u32| flags & bit as u64 != 0;
+    ensure!(
+        !has(AV_PIX_FMT_FLAG_HWACCEL) && !has(AV_PIX_FMT_FLAG_BAYER),
+        "pixel format {} is not supported by frame inspection",
+        desc.name()
+    );
+    let alpha = has(AV_PIX_FMT_FLAG_ALPHA);
+    let name = desc.name().to_string();
+    let tag = |v: &dyn std::fmt::Debug| format!("{v:?}").to_ascii_lowercase();
+    let range = f.color_range();
+    let mut conv = Conversion {
+        source_format: name.clone(),
+        source_matrix: tag(&f.color_space()),
+        source_range: tag(&range),
+        source_primaries: tag(&f.color_primaries()),
+        source_transfer: tag(&f.color_transfer_characteristic()),
+        applied_matrix: String::new(),
+        applied_range: String::new(),
+        output: "rgba8, straight alpha, full-range code values",
+        not_converted: "transfer, primaries/gamut and tone mapping are not converted: output values are the decoded code values through the matrix only",
+    };
+    if has(AV_PIX_FMT_FLAG_RGB) || has(AV_PIX_FMT_FLAG_PAL) {
+        conv.applied_matrix = "rgb (no matrix)".into();
+        conv.applied_range = "full (rgb)".into();
+        return Ok((None, conv, alpha));
+    }
+    // Range, independent of the matrix: deprecated yuvj formats are full
+    // range by definition; otherwise the tag, else the limited default.
+    let full = if name.starts_with("yuvj") {
+        conv.applied_range = "full (yuvj format)".into();
+        true
+    } else {
+        match range {
+            color::Range::JPEG => {
+                conv.applied_range = "full (tagged)".into();
+                true
+            }
+            color::Range::MPEG => {
+                conv.applied_range = "limited (tagged)".into();
+                false
+            }
+            _ => {
+                conv.applied_range = "limited (assumed: range unspecified)".into();
+                false
+            }
+        }
+    };
+    let gray = desc.nb_components() <= 2;
+    let (table, matrix) = if gray {
+        (
+            ffmpeg_next::ffi::SWS_CS_DEFAULT as i32,
+            "gray (luma only)".to_string(),
+        )
+    } else {
+        sws_matrix(f.color_space())?
+    };
+    conv.applied_matrix = matrix;
+    Ok((Some((table, full)), conv, alpha))
 }
 
 fn to_encoded(
@@ -273,12 +570,9 @@ fn to_encoded(
     scaler: &mut Option<Scaler>,
 ) -> anyhow::Result<EncodedFrame> {
     let (w, h) = (f.width(), f.height());
-    ensure!(
-        w > 0 && h > 0 && (w as u64) * (h as u64) <= MAX_FRAME_PIXELS,
-        "frame {index} is {w}x{h} (max {MAX_FRAME_PIXELS} pixels)"
-    );
     let key = (f.format(), w, h, f.color_space(), f.color_range());
     if scaler.as_ref().map(|s| s.key) != Some(key) {
+        let (details, conversion, alpha) = conversion_for(f)?;
         let mut ctx = scaling::Context::get(
             key.0,
             w,
@@ -288,41 +582,39 @@ fn to_encoded(
             h,
             scaling::Flags::POINT | scaling::Flags::BITEXACT | scaling::Flags::ACCURATE_RND,
         )?;
-        let full = key.4 == color::Range::JPEG;
-        let range = if full { "full" } else { "limited" };
-        let is_yuv = format!("{:?}", key.0)
-            .to_ascii_uppercase()
-            .starts_with("YUV")
-            || format!("{:?}", key.0)
-                .to_ascii_uppercase()
-                .starts_with("NV");
-        let conversion = match (is_yuv, sws_matrix(key.3)) {
-            (false, _) => "rgb source".to_string(),
-            (true, Some((cs, name))) => {
-                // SAFETY: the context is valid and exclusively owned here; the
-                // coefficient tables are static libswscale data.
-                let rc = unsafe {
-                    let table = ffmpeg_next::ffi::sws_getCoefficients(cs);
-                    ffmpeg_next::ffi::sws_setColorspaceDetails(
-                        ctx.as_mut_ptr(),
-                        table,
-                        full as i32,
-                        table,
-                        1,
-                        0,
-                        1 << 16,
-                        1 << 16,
-                    )
-                };
-                ensure!(rc >= 0, "setting the {name} matrix failed ({rc})");
-                format!("{name} {range}")
-            }
-            (true, None) => format!("untagged matrix (libswscale default bt601) {range}"),
-        };
+        if let Some((cs, full)) = details {
+            // Always applied for YUV/gray, so the reported matrix and range
+            // are the ones libswscale uses (not its defaults).
+            // SAFETY: the context is valid and exclusively owned here; the
+            // coefficient tables are static libswscale data.
+            let rc = unsafe {
+                let src = ffmpeg_next::ffi::sws_getCoefficients(cs);
+                let dst =
+                    ffmpeg_next::ffi::sws_getCoefficients(ffmpeg_next::ffi::SWS_CS_DEFAULT as i32);
+                ffmpeg_next::ffi::sws_setColorspaceDetails(
+                    ctx.as_mut_ptr(),
+                    src,
+                    full as i32,
+                    dst,
+                    1,
+                    0,
+                    1 << 16,
+                    1 << 16,
+                )
+            };
+            ensure!(
+                rc >= 0,
+                "libswscale refused {} / {} for {} ({rc})",
+                conversion.applied_matrix,
+                conversion.applied_range,
+                conversion.source_format
+            );
+        }
         *scaler = Some(Scaler {
             key,
             ctx,
             conversion,
+            alpha,
         });
     }
     let s = scaler.as_mut().expect("scaler");
@@ -335,6 +627,12 @@ fn to_encoded(
     for y in 0..h as usize {
         rgba.extend_from_slice(&data[y * stride..y * stride + row]);
     }
+    if !s.alpha {
+        // Formats without alpha are opaque, whatever the scaler left there.
+        for px in rgba.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+    }
     let pts = f.timestamp().or(f.pts());
     let time =
         pts.map(|p| RationalTime(Rational::from_int(p - start_pts.unwrap_or(0)) * time_base));
@@ -346,7 +644,7 @@ fn to_encoded(
         corrupt: f.is_corrupt(),
         width: w,
         height: h,
-        source_format: format!("{:?}", key.0).to_ascii_lowercase(),
+        alpha: s.alpha,
         conversion: s.conversion.clone(),
         rgba,
     })

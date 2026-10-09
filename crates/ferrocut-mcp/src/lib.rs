@@ -258,7 +258,7 @@ fn build_tools() -> Vec<Tool> {
         tool(
             "artifact_frames",
             "Inspect encoded frames",
-            "Decode exact frames from an encoded video file (a delivery, an excerpt or a master) and look at them: what was actually written, not a re-render (preview_frames renders the timeline instead). Frames are ordinals in presentation order from the stream start (0 = first, -1 = last); each comes back with its own pts, the stream time_base and its exact time from the timestamp (never from nominal fps, so variable-rate files stay exact), key/corrupt flags, the source pixel format and the YUV matrix/range used to convert it, a full-resolution PNG path and png_blake3. artifact.kind is encoded_file, with the file's blake3 taken before decoding and checked again after (a file changed meanwhile is an error). Returns a labeled contact sheet and, inline=true (default), the sheet or single frame as an image. Decoding is sequential from the start, at most 100000 frames.",
+            "Decode exact frames from a self-contained encoded video file (a delivery, an excerpt or a master; Matroska/MP4/MOV/AVI/TS and similar, never playlists or files that reference others) and look at them: what was actually written, not a re-render (preview_frames renders the timeline instead). Frames are ordinals in presentation order from the stream start (0 = first, -1 = last); each comes back with its own pts, the stream time_base and its exact time from the timestamp (never from nominal fps), key/corrupt/alpha flags, and the conversion applied (source tags, the YUV matrix and range actually used, and that transfer/gamut/tone mapping are not converted; unsupported matrices are refused). Full-resolution PNGs keep straight alpha exactly and are named by content, so repeat observations never overwrite earlier ones. artifact.blake3 is the file as observed before decoding and rechecked after (identity: observed_recheck; a change is an error). Returns a labeled sheet and, inline=true (default), the sheet or single frame as an image (translucent frames over a checkerboard). Sequential decode, at most 100000 frames, 64 returned, 1 GiB held; cancellable.",
             schema::artifact_frames(),
             rw(false).idempotent(true),
         ),
@@ -950,6 +950,27 @@ pub fn base64(bytes: &[u8]) -> String {
 }
 
 fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
+    preview_frames_captured(cx, a, None)
+}
+
+/// `preview_frames` with `after_capture` run right after the timeline
+/// snapshot is parsed and hashed (a test seam: changing the file there must
+/// not change the returned hash or pixels). `args` are the tool's arguments.
+#[doc(hidden)]
+pub fn preview_frames_after_capture(
+    cx: &Ctx,
+    args: Value,
+    after_capture: &mut dyn FnMut(),
+) -> anyhow::Result<Value> {
+    let a: PreviewArgs = serde_json::from_value(args)?;
+    preview_frames_captured(cx, a, Some(after_capture))
+}
+
+fn preview_frames_captured(
+    cx: &Ctx,
+    a: PreviewArgs,
+    after_capture: Option<&mut dyn FnMut()>,
+) -> anyhow::Result<Value> {
     use ferrocut_engine::preview;
     // One snapshot of the document: parse it once, report that parse's hash
     // (the same `hash` semantics as timeline_get), and render its resolved copy.
@@ -958,6 +979,9 @@ fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
     let path = cx.root.check(&a.timeline)?;
     let raw = read_timeline(&path)?;
     let snapshot_hash = timeline_hash(&raw);
+    if let Some(hook) = after_capture {
+        hook();
+    }
     let tl = project::resolved(&raw, &project::dir_of(&path));
     cx.root.check_sources(&tl)?;
     let dir = match a.output_dir {
@@ -1113,32 +1137,42 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
         Some(d) => cx.root.check(&d)?,
         None => project::dir_of(&path).join("inspect"),
     };
-    // Pin the content identity, decode, and confirm it did not change while
-    // decoding: the pixels returned belong to exactly this hash.
-    let before = ferrocut_engine::index::blake3_file(&path)?;
-    let bytes = std::fs::metadata(&path)?.len();
-    let (stream, frames) = {
-        let _one_at_a_time = RENDER_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        inspect::decode_frames(&path, &a.frames, &cx.cancel)?
+    // One decode at a time; waiting for the lock is cancellable.
+    let started = std::time::Instant::now();
+    let _one_at_a_time = loop {
+        match RENDER_LOCK.try_lock() {
+            Ok(g) => break g,
+            Err(std::sync::TryLockError::Poisoned(p)) => break p.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                anyhow::ensure!(!cx.cancel.is_cancelled(), "cancelled");
+                anyhow::ensure!(
+                    started.elapsed() < std::time::Duration::from_secs(600),
+                    "another render or decode held the server for 10 minutes; try again"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
     };
-    let after = ferrocut_engine::index::blake3_file(&path)?;
-    anyhow::ensure!(
-        before == after,
-        "{} changed while it was decoded (blake3 {before} -> {after}); inspect it again",
-        a.path.display()
-    );
-    let tag = &before[..12.min(before.len())];
-    let file_blake3 = |p: &std::path::Path| ferrocut_engine::index::blake3_file(p);
+    // The file is read only through one handle (no secondary files), hashed
+    // before and after decoding; the pixels belong to that observed content.
+    let ins = inspect::inspect_file(&path, &a.frames, &cx.cancel, None)?;
+    drop(_one_at_a_time);
+    let art = &ins.identity.blake3[..16];
     let mut frames_json = Vec::new();
-    for f in &frames {
+    for f in &ins.frames {
         let png = if a.each {
-            // Named by content hash and ordinal: one name always holds the
-            // same pixels, so rewriting it never replaces another file's frame.
-            let p = cx
-                .root
-                .check(&dir.join(format!("{prefix}-{tag}-i{:06}.png", f.index)))?;
-            preview::write_png(&p, f.width, f.height, &f.rgba)?;
-            Some(p)
+            // Exact straight-alpha PNG, named by artifact, ordinal and the PNG's
+            // own content: a repeat observation reuses the identical file, and
+            // an existing different file is never replaced.
+            let bytes = preview::png_bytes_straight(f.width, f.height, &f.rgba)?;
+            let h = preview::blake3_hex(&bytes);
+            let p = cx.root.check(&dir.join(format!(
+                "{prefix}-{art}-i{:06}-{}.png",
+                f.index,
+                &h[..16]
+            )))?;
+            preview::publish_exclusive(&p, &bytes)?;
+            Some((p, h))
         } else {
             None
         };
@@ -1150,23 +1184,33 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
             "corrupt": f.corrupt,
             "width": f.width,
             "height": f.height,
-            "source_format": f.source_format,
+            "alpha": f.alpha,
             "conversion": f.conversion,
-            "path": png.as_deref().map(|p| rel(cx, p)),
-            "png_blake3": png.as_deref().map(file_blake3).transpose()?,
+            "path": png.as_ref().map(|(p, _)| rel(cx, p)),
+            "png_blake3": png.as_ref().map(|(_, h)| h.clone()),
         }));
     }
-    let single = frames.len() == 1;
+    // Sheets and the inline image are display composites: translucent
+    // frames are shown over a checkerboard (the full PNGs keep exact alpha).
+    let shown: Vec<Vec<u8>> = ins
+        .frames
+        .iter()
+        .map(|f| preview::over_checkerboard(&f.rgba, f.width))
+        .collect();
+    let single = ins.frames.len() == 1;
     let sheet_img = if single {
         None
     } else {
-        let labels: Vec<String> = frames
+        let labels: Vec<String> = ins
+            .frames
             .iter()
             .map(|f| ordinal_label(f.index, f.time))
             .collect();
-        let cells: Vec<(u32, u32, &[u8])> = frames
+        let cells: Vec<(u32, u32, &[u8])> = ins
+            .frames
             .iter()
-            .map(|f| (f.width, f.height, f.rgba.as_slice()))
+            .zip(&shown)
+            .map(|(f, px)| (f.width, f.height, px.as_slice()))
             .collect();
         Some(preview::labeled_sheet(
             &cells,
@@ -1175,13 +1219,17 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
             a.cell_width,
         )?)
     };
-    let sheet_path = match (&sheet_img, a.sheet) {
+    let sheet = match (&sheet_img, a.sheet) {
         (Some((w, h, img)), true) => {
+            // Named by the sheet's own content: other selections or layouts
+            // of the same artifact get their own file.
+            let bytes = preview::png_bytes(*w, *h, img)?;
+            let hash = preview::blake3_hex(&bytes);
             let p = cx
                 .root
-                .check(&dir.join(format!("{prefix}-{tag}-sheet.png")))?;
-            preview::write_png(&p, *w, *h, img)?;
-            Some(p)
+                .check(&dir.join(format!("{prefix}-{art}-sheet-{}.png", &hash[..16])))?;
+            preview::publish_exclusive(&p, &bytes)?;
+            Some((p, hash))
         }
         _ => None,
     };
@@ -1189,19 +1237,20 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
         "artifact": {
             "kind": "encoded_file",
             "path": rel(cx, &path),
-            "blake3": before,
-            "bytes": bytes,
-            "unchanged_after_decode": true,
+            "blake3": ins.identity.blake3,
+            "bytes": ins.identity.bytes,
+            "identity": ins.identity.kind,
         },
-        "stream": stream,
+        "stream": ins.stream,
         "frames": frames_json,
-        "sheet": sheet_path.as_deref().map(|p| rel(cx, p)),
-        "sheet_blake3": sheet_path.as_deref().map(file_blake3).transpose()?,
+        "display": "sheet and inline images composite translucent frames over a grey checkerboard; full-resolution PNGs keep straight alpha exactly",
+        "sheet": sheet.as_ref().map(|(p, _)| rel(cx, p)),
+        "sheet_blake3": sheet.as_ref().map(|(_, h)| h.clone()),
     });
     if a.inline {
         let (w, h, img) = match sheet_img {
             Some(s) => s,
-            None => (frames[0].width, frames[0].height, frames[0].rgba.clone()),
+            None => (ins.frames[0].width, ins.frames[0].height, shown[0].clone()),
         };
         let (w, h, img) = preview::fit_within(&img, w, h, a.inline_max);
         let (w, h, png) = preview::png_within(w, h, &img, INLINE_PNG_MAX_BYTES)?;
