@@ -373,3 +373,32 @@ exit 2"#,
         "{m}"
     );
 }
+
+#[test]
+fn loudness_target_and_its_sources_are_kept_from_the_report() {
+    // The checker names where each audio threshold came from; the outcome
+    // keeps it and the CLI prints one line.
+    let report = r#"{"schema_version":"ferrocut.perceive.check/1","pass":true,"problems":[],
+      "warnings":[{"reason":"loudness_target_mismatch","range":["0","2"],"measured":-16.0,"threshold":-12.0,
+                   "severity":"warning","unit":"LUFS","timecode":["00:00:00:00","00:00:02:00"],"frames":[0,48],
+                   "message":"stale","threshold_sources":{"loudness_target_lufs":"render"}}],
+      "loudness_target":{"target_lufs":{"value":-16.0,"source":"render"},
+                         "tolerance_lu":{"value":1.0,"source":"default"},
+                         "true_peak_max_dbtp":{"value":-1.5,"source":"render"}}}"#;
+    let o = interpret(Some(0), report, "");
+    assert_eq!(o.status, CheckStatus::Pass);
+    assert_eq!(o.warnings[0].reason, Reason::LoudnessTargetMismatch);
+    assert_eq!(
+        o.loudness_target.as_ref().unwrap()["target_lufs"]["source"],
+        "render"
+    );
+    assert_eq!(
+        o.loudness_line().as_deref(),
+        Some("loudness target -16 LUFS (render) ±1 LU (default), true peak ≤ -1.5 dBTP (render)")
+    );
+    // An older checker reports no sources: nothing is invented.
+    let old =
+        r#"{"schema_version":"ferrocut.perceive.check/1","pass":true,"problems":[],"warnings":[]}"#;
+    let o = interpret(Some(0), old, "");
+    assert!(o.loudness_target.is_none() && o.loudness_line().is_none());
+}

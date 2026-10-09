@@ -377,8 +377,10 @@ binary over stdio.
     `true_peak_over`, `missing_audio`, `audio_join_mismatch`. Codes added later are kept as-is.
   - Other fields (`severity`, `unit`, `tolerance`, `timecode`, `frames`, `message`, ...) are additive. They're
     passed through verbatim in each problem. The raw report is always kept.
-  - Checker defaults: -14 LUFS ±1 LU, true peak ≤ -1 dBTP, and audio required (a render with no audio fails
-    `missing_audio`). Other thresholds go through as flags or a `--config` JSON, passed verbatim.
+  - Loudness target and true-peak ceiling: a flag, else a `--config` key, else what the render was normalized and
+    limited to, else the timeline's `audio.loudness`, else -14 LUFS / -1 dBTP (tolerance ±1 LU). The outcome's
+    `loudness_target` names each value's source. Audio is required (a render with no audio fails `missing_audio`).
+    Other thresholds go through as flags or a `--config` JSON, passed verbatim.
 - **Binary lookup:** explicit path, then `FERROCUT_PERCEIVE`, then next to `ferrocut`, then `PATH`.
 - **Errors:** these all give `status: "error"`:
   - a different `schema_version`, a missing or mistyped field, or a pass flag that contradicts the problems or

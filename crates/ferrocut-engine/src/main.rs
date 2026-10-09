@@ -105,7 +105,10 @@ enum Cmd {
         /// checker supports it, else as --allow-no-audio when it resolves to no.
         #[arg(long, default_value = "auto")]
         expect_audio: ferrocut_engine::perceive::ExpectAudio,
-        /// Passed to the checker verbatim (after `--`), e.g. threshold flags or a config file.
+        /// Passed to the checker verbatim (after `--`), e.g. threshold flags or a config file
+        /// (`ferrocut-perceive check --help` lists them). Loudness target and true-peak ceiling:
+        /// a flag, else a config key, else what the render was normalized to, else the timeline's
+        /// audio.loudness, else -14 LUFS / -1 dBTP; the output's loudness_target names each source.
         #[arg(last = true)]
         args: Vec<String>,
     },
@@ -1375,6 +1378,10 @@ fn check_line(o: &ferrocut_engine::perceive::CheckOutcome) -> String {
             o.warnings.len(),
             CheckOutcome::codes(&o.warnings).join(", ")
         )
+    };
+    let warnings = match o.loudness_line() {
+        Some(l) => format!("{warnings}\n  {l}"),
+        None => warnings,
     };
     match o.status {
         CheckStatus::Pass => format!("quality check: PASS{warnings}"),
