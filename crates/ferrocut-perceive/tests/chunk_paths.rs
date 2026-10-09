@@ -97,7 +97,9 @@ fn missing_candidates_are_unresolved() {
     assert_eq!(res.resolved_by, ChunkDirSource::Unresolved);
     assert!(res.dir.is_none());
     // The two rule-2 candidates, then the default cache next to the report.
-    assert_eq!(res.tried.len(), 4);
+    // Its tagged dir (<report dir>/.ferrocut-cache/chunks/t) is the same path
+    // as the report-location candidate, so it is listed once.
+    assert_eq!(res.tried.len(), 3);
     assert!(
         res.tried[..2]
             .iter()
@@ -105,13 +107,8 @@ fn missing_candidates_are_unresolved() {
     );
     assert!(res.tried[..2].iter().any(|p| p.starts_with(&a)));
     assert!(res.tried[..2].iter().any(|p| p.starts_with(&b)));
-    assert_eq!(
-        res.tried[2..],
-        [
-            a.join("sub/.ferrocut-cache/chunks/t"),
-            a.join("sub/.ferrocut-cache/chunks")
-        ]
-    );
+    assert!(res.tried[..2].contains(&a.join("sub/.ferrocut-cache/chunks/t")));
+    assert_eq!(res.tried[2..], [a.join("sub/.ferrocut-cache/chunks")]);
 }
 
 /// E. A copied report whose name is not `<output stem>.report.json`.
