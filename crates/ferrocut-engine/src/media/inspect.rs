@@ -42,6 +42,14 @@ pub const MAX_DECODE_FRAMES: u64 = 100_000;
 /// Largest frame accepted (width x height), checked on the stream's declared
 /// size and on every decoded frame before it is kept or converted.
 pub const MAX_FRAME_PIXELS: u64 = 1 << 26;
+/// Tallest frame accepted (rows), checked with the pixel limit on every
+/// declared and decoded frame. It bounds the decoder's alignment headroom
+/// (see `decoder_pixel_cap`).
+pub const MAX_FRAME_HEIGHT: u64 = 16_384;
+/// Widest row alignment the decoder allocation cap covers. FFmpeg checks
+/// `max_pixels` against `FFALIGN(width, STRIDE_ALIGN) * height`, and
+/// STRIDE_ALIGN is 64 in the LGPL build used here (at most 64 on x86-64).
+const STRIDE_ALIGN_BOUND: u64 = 64;
 /// Most bytes held at once for returned frames (RGBA) plus the frames kept
 /// for indices counted from the end (decoded planes).
 pub const MAX_RETAINED_BYTES: u64 = 1 << 30;
@@ -120,13 +128,19 @@ pub struct FileIdentity {
     pub kind: &'static str,
 }
 
-/// Decoder-side allocation cap for a frame limit of `max_px` pixels:
-/// FFmpeg's `max_pixels` check applies to the decoder's aligned buffer size
-/// (e.g. 64x16 for a 32x16 FFV1 frame), so the cap gets 4x headroom (up to
-/// 2x alignment per dimension). It only stops runaway allocations; the exact
-/// `max_px` limit is enforced on every declared and decoded frame size.
+/// Decoder-side allocation cap for a frame limit of `max_px` pixels.
+/// FFmpeg checks `max_pixels` against the decoder's row-aligned size,
+/// `FFALIGN(w, 64) * h` (an 8x16 frame counts as 64x16 = 1024). For any
+/// frame within the exact limits (`w * h <= max_px`, `h <= MAX_FRAME_HEIGHT`)
+/// `FFALIGN(w, 64) * h <= (w + 63) * h <= max_px + 63 * MAX_FRAME_HEIGHT`, so
+/// this cap admits every valid frame however narrow, while bounding what a
+/// decoder may allocate before the exact checks to that plus about 1 Mi
+/// pixels. The exact `max_px` and height limits are still enforced on every
+/// declared and decoded frame.
 fn decoder_pixel_cap(max_px: u64) -> i64 {
-    max_px.saturating_mul(4).min(i64::MAX as u64) as i64
+    max_px
+        .saturating_add(STRIDE_ALIGN_BOUND * MAX_FRAME_HEIGHT)
+        .min(i64::MAX as u64) as i64
 }
 
 /// Resource limits of one inspection ([`Limits::default`] is the published
@@ -290,8 +304,8 @@ pub fn inspect_with_limits(
         .unwrap_or_default();
     let (dw, dh) = (decoder.width() as u64, decoder.height() as u64);
     ensure!(
-        dw * dh <= max_px,
-        "{} declares {dw}x{dh} video (max {max_px} pixels)",
+        dw * dh <= max_px && dh <= MAX_FRAME_HEIGHT,
+        "{} declares {dw}x{dh} video (max {max_px} pixels, {MAX_FRAME_HEIGHT} rows)",
         path.display()
     );
 
@@ -331,8 +345,8 @@ pub fn inspect_with_limits(
                 );
                 let (w, h) = (f.width() as u64, f.height() as u64);
                 ensure!(
-                    w > 0 && h > 0 && w * h <= max_px,
-                    "frame {i} is {w}x{h} (max {max_px} pixels)"
+                    w > 0 && h > 0 && w * h <= max_px && h <= MAX_FRAME_HEIGHT,
+                    "frame {i} is {w}x{h} (max {max_px} pixels, {MAX_FRAME_HEIGHT} rows)"
                 );
                 if let Some(hook) = after_first_frame.take() {
                     hook();
@@ -568,9 +582,11 @@ fn open_contained(
             let par = (*(*(*ps).streams.add(i))).codecpar;
             if (*par).codec_type == ffi::AVMediaType::AVMEDIA_TYPE_VIDEO {
                 let (w, h) = ((*par).width.max(0) as u64, (*par).height.max(0) as u64);
-                if w * h > max_px {
+                if w * h > max_px || h > MAX_FRAME_HEIGHT {
                     ffi::avformat_close_input(&mut ps);
-                    bail!("a stream declares {w}x{h} video (max {max_px} pixels)");
+                    bail!(
+                        "a stream declares {w}x{h} video (max {max_px} pixels, {MAX_FRAME_HEIGHT} rows)"
+                    );
                 }
             }
         }

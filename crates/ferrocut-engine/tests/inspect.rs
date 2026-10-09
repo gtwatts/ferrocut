@@ -182,6 +182,32 @@ fn frame_size_and_retained_budget_are_enforced() {
     );
     assert!(e.contains("would hold more than"), "{e}");
     assert!(inspect_with_limits(&file, &[0], &c, None, Limits::default()).is_ok());
+
+    // A narrow frame exactly at the limit decodes: 8x16 = 128 pixels with
+    // max_frame_pixels 128, although FFmpeg counts its row-aligned buffer as
+    // 64x16 = 1024 (the decoder cap must allow for that); 127 is refused by
+    // the exact check, not by a decoder error.
+    let narrow = dir.path().join("narrow.mkv");
+    let s = EncodeSettings {
+        width: 8,
+        height: 16,
+        fps: Rational::from_int(24),
+        gop: 6,
+    };
+    let mut enc = ChunkEncoder::create(&narrow, &s).unwrap();
+    enc.push_bgra(&[40u8, 80, 120, 255].repeat(8 * 16)).unwrap();
+    enc.finish().unwrap();
+    let exact = |max_frame_pixels| Limits {
+        max_frame_pixels,
+        max_retained_bytes: 1 << 20,
+    };
+    let ok = inspect_with_limits(&narrow, &[0], &c, None, exact(128)).unwrap();
+    assert_eq!((ok.frames[0].width, ok.frames[0].height), (8, 16));
+    let e = format!(
+        "{:#}",
+        inspect_with_limits(&narrow, &[0], &c, None, exact(127)).unwrap_err()
+    );
+    assert!(e.contains("max 127 pixels"), "{e}");
 }
 
 #[test]
