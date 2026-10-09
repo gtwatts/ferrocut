@@ -76,7 +76,14 @@ fn relocated_fonts_preserve_node_and_planned_chunk_identity_and_pixels() {
         assert_eq!(na.content_hash_at(t), nb.content_hash_at(t));
         let a = na.rasterize(t).unwrap();
         let b = nb.rasterize(t).unwrap();
-        assert!(a.image.pixels.chunks_exact(4).any(|p| p[3].to_f32() > 0.0));
+        assert!(
+            a.image
+                .pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|p| p[3].to_f32() > 0.0)
+        );
         assert_eq!(a.image.pixels, b.image.pixels);
     }
 }
