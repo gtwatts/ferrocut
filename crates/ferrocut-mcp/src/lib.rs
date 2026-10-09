@@ -1533,34 +1533,92 @@ fn checker_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
     found
 }
 
+/// Checker flags that take a path. Their values are root-checked and forwarded
+/// as the checked absolute paths.
+const CHECKER_PATH_FLAGS: [&str; 5] = [
+    "--cache-dir",
+    "--render-report",
+    "--out",
+    "--config",
+    "--brief-cuts",
+];
+
+/// Root-check every path-taking checker flag in `args` (`--flag value` and
+/// `--flag=value`) and return the arguments with those values replaced by the
+/// checked absolute paths. The checker child resolves relative paths against
+/// this server's process cwd, which `--root` need not equal; forwarding the
+/// checked absolute path makes the child read and write exactly what was
+/// checked.
+pub fn normalize_checker_args(root: &Root, args: &[String]) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if let Some(flag) = CHECKER_PATH_FLAGS.iter().find(|f| a == *f) {
+            let value = args
+                .get(i + 1)
+                .with_context(|| format!("{flag} needs a value"))?;
+            out.push(a.clone());
+            out.push(path_arg(&check_checker_path(root, flag, value)?)?);
+            i += 2;
+            continue;
+        }
+        if let Some((flag, value)) = CHECKER_PATH_FLAGS
+            .iter()
+            .find_map(|f| a.strip_prefix(&format!("{f}=")).map(|v| (*f, v)))
+        {
+            out.push(format!(
+                "{flag}={}",
+                path_arg(&check_checker_path(root, flag, value)?)?
+            ));
+            i += 1;
+            continue;
+        }
+        out.push(a.clone());
+        i += 1;
+    }
+    Ok(out)
+}
+
+fn path_arg(p: &Path) -> anyhow::Result<String> {
+    p.to_str()
+        .map(str::to_owned)
+        .with_context(|| format!("{} is not valid UTF-8", p.display()))
+}
+
 fn check_checker_path(root: &Root, flag: &str, value: &str) -> anyhow::Result<PathBuf> {
     root.check(Path::new(value))
         .with_context(|| format!("{flag} {value} is outside the project root"))
 }
 
-/// A resolved chunk directory must stay inside the project root. An ambiguous
-/// or unresolved relative path is an error (the checker would guess). A missing
-/// report, or a report with no `chunk_dir`, is left for `quality_check` itself.
-fn enforce_chunk_dir(root: &Root, res: &perceive::ChunkDirResolution) -> anyhow::Result<()> {
-    use perceive::ChunkDirSource::{Ambiguous, Unresolved};
-    match res.resolved_by {
-        Ambiguous | Unresolved => {
-            let tried = res
-                .tried
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            bail!("chunk directory {} (tried dirs: {tried})", res.resolved_by)
-        }
-        // Any effective directory, including an Absent report's cache fallback.
-        _ => {
-            if let Some(dir) = &res.dir {
-                root.check(dir)?;
-            }
-            Ok(())
-        }
+/// Every path the checker child will read or write for this render must stay
+/// inside the project root: the render report, each chunk master it opens
+/// (the leaf, so a symlinked `<key>.mkv` is caught), every existing chunk
+/// search directory, the master whose audio it measures, and the engine cache
+/// it writes analysis into. `paths` is the checker's own decision
+/// ([`perceive::check_paths`]) for the same arguments and cwd, so these are
+/// the paths it uses, not a parallel guess.
+fn enforce_check_paths(root: &Root, paths: &perceive::CheckPaths) -> anyhow::Result<()> {
+    let inside = |what: &str, p: &Path| -> anyhow::Result<()> {
+        root.check(p)
+            .map(drop)
+            .with_context(|| format!("{what} {} is outside the project root", p.display()))
+    };
+    inside("render report", &paths.report)?;
+    for (_, dir) in paths.resolution.search.iter().filter(|(_, d)| d.exists()) {
+        inside("chunk directory", dir)?;
     }
+    for f in &paths.chunk_files {
+        inside("chunk file", f)?;
+    }
+    if let Some(a) = &paths.audio {
+        inside("audio master", a)?;
+    }
+    inside("checker cache", &paths.cache_dir)?;
+    for w in &paths.writes {
+        inside("checker cache", w)?;
+    }
+    Ok(())
 }
 
 /// Run one tool. `None`: no such tool.
@@ -1594,31 +1652,31 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
         "proxy_generate" => args(name, a).and_then(|a| proxy_generate(cx, a)),
         "quality_check" => args::<CheckArgs>(name, a).and_then(|a| {
             let render = cx.root.check(&a.render)?;
-            for flag in [
-                "--cache-dir",
-                "--render-report",
-                "--out",
-                "--config",
-                "--brief-cuts",
-            ] {
-                if let Some(value) = checker_flag_value(&a.args, flag) {
-                    check_checker_path(&cx.root, flag, value)?;
-                }
-            }
-            let cache = checker_flag_value(&a.args, "--cache-dir")
-                .map(|p| cx.root.check(Path::new(p)))
-                .transpose()?;
-            let report = checker_flag_value(&a.args, "--render-report")
-                .map(|p| cx.root.check(Path::new(p)))
-                .transpose()?;
+            // What the child receives: path values checked and made absolute.
+            let args = normalize_checker_args(&cx.root, &a.args)?;
+            let cache = checker_flag_value(&args, "--cache-dir").map(PathBuf::from);
+            let report = checker_flag_value(&args, "--render-report").map(PathBuf::from);
             // The checker runs as a child of this server and resolves relative
             // paths against this process's cwd (which --root need not equal), so
-            // resolve with the same cwd to check exactly what it will read.
+            // decide its paths with the same function and cwd, and check each.
             let cwd = std::env::current_dir().context("current directory")?;
-            if let Ok(res) =
-                perceive::report_chunk_dir(&render, &cwd, report.as_deref(), cache.as_deref())
-            {
-                enforce_chunk_dir(&cx.root, &res)?;
+            let report_path = match &report {
+                Some(p) => p.clone(),
+                None if render.extension().is_some_and(|e| e == "json") => render.clone(),
+                None => render.with_extension("report.json"),
+            };
+            // A symlinked report pointing outside is refused before it is read.
+            cx.root.check(&report_path).with_context(|| {
+                format!(
+                    "render report {} is outside the project root",
+                    report_path.display()
+                )
+            })?;
+            // A missing report is left for the checker to report as usual.
+            if report_path.exists() {
+                let (_, paths) =
+                    perceive::check_paths(&render, report.as_deref(), cache.as_deref(), &cwd)?;
+                enforce_check_paths(&cx.root, &paths)?;
             }
             let (timeline, _) = cx.root.load_timeline(&a.timeline)?;
             Ok(serde_json::to_value(perceive::check(
@@ -1626,7 +1684,7 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
                 &timeline,
                 &perceive::CheckOptions {
                     binary: None,
-                    extra_args: a.args,
+                    extra_args: args,
                     timeout: a.timeout_s.map(std::time::Duration::from_secs_f64),
                     expect_audio: a.expect_audio,
                 },
