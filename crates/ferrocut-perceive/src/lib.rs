@@ -37,11 +37,13 @@ pub mod media;
 pub mod report;
 pub mod scopes;
 pub mod shots;
+pub mod targets;
 
 pub use analyze::{AudioInput, Options, Request, Stats, analyze};
-pub use check::{CHECK_SCHEMA_VERSION, CheckReport, CheckThresholds, grade};
+pub use check::{CHECK_SCHEMA_VERSION, CheckReport, CheckThresholds, grade, grade_resolved};
 pub use diff::{Diff, diff};
 pub use report::{Report, SCHEMA_VERSION};
+pub use targets::{LoudnessTarget, Resolved, ThresholdSource};
 
 /// The JSON Schema (draft 2020-12) of [`Report`].
 pub const REPORT_SCHEMA: &str = include_str!("../schema/perceive-report.schema.json");

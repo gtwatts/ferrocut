@@ -61,7 +61,7 @@ For eval harnesses and the engine's hook (`ferrocut check`, `ferrocut render
 
 ```sh
 ferrocut-perceive check <render> --timeline <timeline> [--brief-cuts <file>] [--json] \
-    [--config thresholds.json] [--loudness-target -14] [--loudness-tolerance 1] \
+    [--config thresholds.json] [--loudness-target LUFS] [--loudness-tolerance 1] \
     [--true-peak-max -1] [--cut-tolerance-frames 1] [--max-black-frames 0] \
     [--max-edge-black-s 2] [--max-frozen-s 2] [--max-flash-frames 0] \
     [--allow-no-audio] [--no-cut-check] [--render-report F] [--cache-dir D] [--out D] [--cpu]
@@ -125,10 +125,18 @@ The contract, matching the engine hook (60b5652):
 | `true_peak_over` | true peak > `true_peak_max_dbtp` | dBTP / dBTP | first to last chunk over |
 | `missing_audio` (additive) | no audio and `require_audio` | null / null | whole program |
 | `audio_join_mismatch` (additive) | a chunk's decoded master PCM differs from the engine's `audio_blake3` | null / null | the chunk |
+| `loudness_target_mismatch` (additive, warning) | the render's recorded loudness target or ceiling differs from the timeline's current `audio.loudness` | render value / timeline value | whole program |
 
-Defaults: -14 LUFS ±1 LU, true peak ≤ -1 dBTP, cut tolerance ±1 frame, no
-mid-program black, ≤ 2 s black at the edges (fades), frozen ≤ 2 s, no flash
-frames, audio required. Library: `check::grade(&report, &timeline, brief, &thresholds)`.
+Loudness target and true-peak ceiling, per key: a flag, else a key present in `--config`, else what the render was
+normalized and limited to (the render report's `audio.analysis.target_lufs` / `true_peak_ceiling_dbtp`; an explicit
+`null` there means no target and falls through to the default), else the timeline's `audio.loudness` (only when the
+render report lacks those keys), else -14 LUFS / -1 dBTP. The tolerance is ±1 LU unless a flag or config sets it.
+`threshold_sources` and `loudness_target` (`{value, source}` per key) record where each came from; loudness and
+true-peak problems carry their `threshold_sources`. An existing audio stream measured silent still fails
+`loudness_off_target`; a render without audio is `missing_audio` (no loudness target is used). Other defaults: cut
+tolerance ±1 frame, no mid-program black, ≤ 2 s black at the edges (fades), frozen ≤ 2 s, no flash frames, audio
+required. Library: `check::grade(&report, &timeline, brief, &thresholds)` (all `default`), or
+`check::grade_resolved(.., &targets::Resolved::resolve(&Authored::new(&render_report, &timeline), config, flags)?)`.
 
 ## Library
 

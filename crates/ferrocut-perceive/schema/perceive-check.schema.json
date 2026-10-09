@@ -36,7 +36,7 @@
       ],
       "properties": {
         "reason": {
-          "description": "Stable code. Contract: missed_cut, extra_cut, black_frames, frozen_frames, flash, loudness_off_target, true_peak_over. Additive: missing_audio, audio_join_mismatch.",
+          "description": "Stable code. Contract: missed_cut, extra_cut, black_frames, frozen_frames, flash, loudness_off_target, true_peak_over. Additive: missing_audio, audio_join_mismatch, loudness_target_mismatch (warning: the render's recorded loudness target or ceiling differs from the timeline's current audio.loudness).",
           "type": "string",
           "enum": [
             "missed_cut",
@@ -47,7 +47,8 @@
             "loudness_off_target",
             "true_peak_over",
             "missing_audio",
-            "audio_join_mismatch"
+            "audio_join_mismatch",
+            "loudness_target_mismatch"
           ]
         },
         "range": {
@@ -110,6 +111,10 @@
         },
         "message": {
           "type": "string"
+        },
+        "threshold_sources": {
+          "description": "Sources of the thresholds a loudness_off_target, true_peak_over or loudness_target_mismatch was held to.",
+          "$ref": "#/$defs/threshold_sources"
         }
       }
     },
@@ -252,6 +257,70 @@
         },
         "perceive_schema_version": {
           "type": "string"
+        },
+        "threshold_sources": {
+          "description": "Source of every threshold.",
+          "$ref": "#/$defs/threshold_sources"
+        },
+        "loudness_target": {
+          "description": "The audio thresholds used, each with its source.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target_lufs",
+            "tolerance_lu",
+            "true_peak_max_dbtp"
+          ],
+          "properties": {
+            "target_lufs": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "value",
+                "source"
+              ],
+              "properties": {
+                "value": {
+                  "type": "number"
+                },
+                "source": {
+                  "$ref": "#/$defs/threshold_source"
+                }
+              }
+            },
+            "tolerance_lu": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "value",
+                "source"
+              ],
+              "properties": {
+                "value": {
+                  "type": "number"
+                },
+                "source": {
+                  "$ref": "#/$defs/threshold_source"
+                }
+              }
+            },
+            "true_peak_max_dbtp": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "value",
+                "source"
+              ],
+              "properties": {
+                "value": {
+                  "type": "number"
+                },
+                "source": {
+                  "$ref": "#/$defs/threshold_source"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -278,6 +347,22 @@
         "error": {
           "type": "string"
         }
+      }
+    },
+    "threshold_source": {
+      "description": "Where a threshold came from: flag, a key in the config file, the render's recorded loudness target/ceiling, the timeline's audio.loudness (when the render report lacks them), or the default.",
+      "enum": [
+        "flag",
+        "config",
+        "render",
+        "timeline",
+        "default"
+      ]
+    },
+    "threshold_sources": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/threshold_source"
       }
     }
   }
