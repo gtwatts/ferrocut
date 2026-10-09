@@ -625,8 +625,51 @@ fn caption_cli_imports_frame_snapped_cues_and_reports_changes() {
         v["caption_timing"]["changed"][0]["reasons"],
         json!(["snapped", "closed_gap"])
     );
-    let tl = Timeline::load(dir.path().join("t.json")).unwrap();
+    let tl = Timeline::load(&dir.path().join("t.json")).unwrap();
     let cues = captions::from_track(&tl, "Captions").unwrap();
     assert!(blank_frames(&cues, tl.output.fps).is_empty());
     assert_eq!(cues[0].end, t(73, 30));
+}
+
+#[test]
+fn nothing_adds_a_frame_past_the_program_end() {
+    // Review of c0877f0: a last cue [0.991, 0.999) shows no frame at 30 fps
+    // and was given frame 30, past a 1 s program (frames 0..=29).
+    let fps = Rational::from_int(30);
+    let lone = vec![cue("a", t(991, 1000), t(999, 1000))];
+    for program_end in [t(1, 1), RationalTime::ZERO] {
+        // Explicit output.duration = 1 s, and an empty timeline whose
+        // implicit end would be the cue's own end (30 frames either way).
+        let err = captions::retime(&lone, fps, program_end, &Default::default())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("program ends before frame 30"), "{err}");
+    }
+    // With a frame left in the program it gets that frame.
+    let (out, _) = captions::retime(&lone, fps, t(2, 1), &Default::default()).unwrap();
+    assert_eq!((out[0].start, out[0].end), (t(1, 1), t(31, 30)));
+
+    // min_duration: an off-grid program end (3.01 s: frames 0..=90) bounds
+    // the last cue at the end of frame 90, on the grid, not at 3.01 s.
+    let timing = captions::CaptionTiming {
+        min_duration: Some(t(2, 1)),
+        ..Default::default()
+    };
+    let short = vec![cue("a", t(2, 1), t(5, 2))];
+    let (out, r) = captions::retime(&short, fps, t(301, 100), &timing).unwrap();
+    assert_eq!(out[0].end, t(91, 30));
+    assert_eq!(r.changed[0].frames, [60, 90]);
+    assert_eq!(t(301, 100).frame_ceil(fps), 91);
+    // Implicit end: the last cue's own end bounds it; no frame is added.
+    let (out, r) = captions::retime(&short, fps, RationalTime::ZERO, &timing).unwrap();
+    assert_eq!(out[0].end, t(5, 2));
+    assert!(r.changed.is_empty());
+    assert!(r.warnings[0].contains("program end"), "{:?}", r.warnings);
+    // Without snapping the bound is the exact program end.
+    let exactish = captions::CaptionTiming {
+        snap: false,
+        ..timing
+    };
+    let (out, _) = captions::retime(&short, fps, t(301, 100), &exactish).unwrap();
+    assert_eq!(out[0].end, t(301, 100));
 }
