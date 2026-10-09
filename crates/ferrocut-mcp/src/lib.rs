@@ -1542,11 +1542,8 @@ fn check_checker_path(root: &Root, flag: &str, value: &str) -> anyhow::Result<Pa
 /// or unresolved relative path is an error (the checker would guess). A missing
 /// report, or a report with no `chunk_dir`, is left for `quality_check` itself.
 fn enforce_chunk_dir(root: &Root, res: &perceive::ChunkDirResolution) -> anyhow::Result<()> {
-    use perceive::ChunkDirSource::{
-        Absent, Ambiguous, CacheDirOverride, ProcessCwd, Recorded, ReportLocation, Unresolved,
-    };
+    use perceive::ChunkDirSource::{Ambiguous, Unresolved};
     match res.resolved_by {
-        Absent => Ok(()),
         Ambiguous | Unresolved => {
             let tried = res
                 .tried
@@ -1556,7 +1553,8 @@ fn enforce_chunk_dir(root: &Root, res: &perceive::ChunkDirResolution) -> anyhow:
                 .join(", ");
             bail!("chunk directory {} (tried dirs: {tried})", res.resolved_by)
         }
-        Recorded | ReportLocation | ProcessCwd | CacheDirOverride => {
+        // Any effective directory, including an Absent report's cache fallback.
+        _ => {
             if let Some(dir) = &res.dir {
                 root.check(dir)?;
             }
@@ -1613,12 +1611,13 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
             let report = checker_flag_value(&a.args, "--render-report")
                 .map(|p| cx.root.check(Path::new(p)))
                 .transpose()?;
-            if let Ok(res) = perceive::report_chunk_dir(
-                &render,
-                cx.root.dir(),
-                report.as_deref(),
-                cache.as_deref(),
-            ) {
+            // The checker runs as a child of this server and resolves relative
+            // paths against this process's cwd (which --root need not equal), so
+            // resolve with the same cwd to check exactly what it will read.
+            let cwd = std::env::current_dir().context("current directory")?;
+            if let Ok(res) =
+                perceive::report_chunk_dir(&render, &cwd, report.as_deref(), cache.as_deref())
+            {
                 enforce_chunk_dir(&cx.root, &res)?;
             }
             let (timeline, _) = cx.root.load_timeline(&a.timeline)?;
