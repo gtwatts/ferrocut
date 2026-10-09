@@ -18,7 +18,7 @@ fn range_reports_are_not_graded_against_the_whole_timeline() {
     )
     .unwrap();
     let cache = dir.path().join("cache");
-    let err = analyze(Request {
+    let Err(err) = analyze(Request {
         timeline: &tl,
         render: &rr,
         cache_dir: &cache,
@@ -26,9 +26,9 @@ fn range_reports_are_not_graded_against_the_whole_timeline() {
         audio: None,
         options: Options::default(),
         gpu: None,
-    })
-    .err()
-    .expect("refused");
+    }) else {
+        panic!("a selected-range report must be refused");
+    };
     assert!(
         format!("{err:#}").contains("selected-range master"),
         "{err:#}"
