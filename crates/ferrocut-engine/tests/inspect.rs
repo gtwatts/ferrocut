@@ -285,3 +285,194 @@ fn corrupt_and_truncated_inputs_error_instead_of_inventing_frames() {
         ),
     }
 }
+
+/// A one-frame file with `codec` in `container`: pixel format `pix`, plane
+/// bytes from `fill(plane, x, y)` (per byte of each row), and optional range
+/// and matrix tags. Test-only encoder over the LGPL FFmpeg.
+fn encode_one(
+    path: &Path,
+    container: &str,
+    codec_name: &str,
+    pix: ffmpeg_next::format::Pixel,
+    tags: Option<(
+        ffmpeg_next::ffi::AVColorRange,
+        ffmpeg_next::ffi::AVColorSpace,
+    )>,
+    fill: impl Fn(usize, usize, usize) -> u8,
+) {
+    use ffmpeg_next::{Packet, codec, encoder, format, frame};
+    ffmpeg_next::init().unwrap();
+    let mut octx = format::output_as(path, container).unwrap();
+    let c = encoder::find_by_name(codec_name).expect("encoder");
+    let mut enc = codec::context::Context::new_with_codec(c)
+        .encoder()
+        .video()
+        .unwrap();
+    let tb = ffmpeg_next::Rational::new(1, 24);
+    enc.set_width(W);
+    enc.set_height(H);
+    enc.set_format(pix);
+    enc.set_time_base(tb);
+    if let Some((range, space)) = tags {
+        // SAFETY: plain field writes on an owned, unopened encoder context.
+        unsafe {
+            (*enc.as_mut_ptr()).color_range = range;
+            (*enc.as_mut_ptr()).colorspace = space;
+        }
+    }
+    let mut enc = enc.open().unwrap();
+    let mut ost = octx.add_stream(c).unwrap();
+    ost.set_parameters(&enc);
+    ost.set_time_base(tb);
+    octx.write_header().unwrap();
+    let ost_tb = octx.stream(0).unwrap().time_base();
+    let mut f = frame::Video::new(pix, W, H);
+    for p in 0..f.planes() {
+        let (stride, rows) = (f.stride(p), f.plane_height(p) as usize);
+        let data = f.data_mut(p);
+        for y in 0..rows {
+            for x in 0..stride {
+                data[y * stride + x] = fill(p, x, y);
+            }
+        }
+    }
+    if let Some((range, space)) = tags {
+        // SAFETY: plain field writes on an owned frame.
+        unsafe {
+            (*f.as_mut_ptr()).color_range = range;
+            (*f.as_mut_ptr()).colorspace = space;
+        }
+    }
+    f.set_pts(Some(0));
+    enc.send_frame(&f).unwrap();
+    enc.send_eof().unwrap();
+    let mut pkt = Packet::empty();
+    while enc.receive_packet(&mut pkt).is_ok() {
+        pkt.set_stream(0);
+        pkt.rescale_ts(tb, ost_tb);
+        pkt.write_interleaved(&mut octx).unwrap();
+    }
+    octx.write_trailer().unwrap();
+}
+
+fn near(got: &[u8], want: [u8; 3]) -> bool {
+    got[..3]
+        .iter()
+        .zip(want)
+        .all(|(&g, w)| (g as i32 - w as i32).abs() <= 1)
+}
+
+/// VF1: an encoded straight-alpha source (FFV1 bgra) comes back with its
+/// exact RGB and alpha, including a fully transparent pixel.
+#[test]
+fn encoded_alpha_is_returned_straight_and_exact() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("alpha.mkv");
+    // BGRA bytes: x even -> semi-transparent [B16 G32 R64 A128]; odd -> A0.
+    encode_one(
+        &file,
+        "matroska",
+        "ffv1",
+        ffmpeg_next::format::Pixel::BGRA,
+        None,
+        |_, x, _| {
+            let px = x / 4;
+            let c = x % 4;
+            if px % 2 == 0 {
+                [16, 32, 64, 128][c]
+            } else {
+                [50, 100, 200, 0][c]
+            }
+        },
+    );
+    let (_, f) = decode_frames(&file, &[0], &CancelToken::new()).unwrap();
+    let f = &f[0];
+    assert!(f.alpha, "bgra carries alpha");
+    assert_eq!(
+        &f.rgba[..4],
+        &[64, 32, 16, 128],
+        "straight RGBA, not premultiplied"
+    );
+    assert_eq!(&f.rgba[4..8], &[200, 100, 50, 0], "alpha 0 keeps its RGB");
+    assert_eq!(f.conversion.applied_matrix, "rgb (no matrix)");
+}
+
+/// VF2: YUV conversion uses the stated matrix and range, checked against
+/// values computed by hand from the standard equations (±1 code value).
+/// Source Y=100, Cb=90, Cr=200 everywhere.
+#[test]
+fn yuv_matrix_and_range_match_the_reported_conversion() {
+    use ffmpeg_next::ffi::{AVColorRange, AVColorSpace};
+    use ffmpeg_next::format::Pixel;
+    let dir = tempfile::tempdir().unwrap();
+    let ycc = |p: usize, _: usize, _: usize| [100u8, 90, 200][p];
+    let c = CancelToken::new();
+
+    // Full range, matrix unspecified -> bt601 fallback:
+    // R = Y + 1.402 (Cr-128), G = Y - 0.344136 (Cb-128) - 0.714136 (Cr-128),
+    // B = Y + 1.772 (Cb-128)  ->  [201, 62, 33].
+    let a = dir.path().join("full601.mkv");
+    encode_one(
+        &a,
+        "matroska",
+        "ffv1",
+        Pixel::YUV444P,
+        Some((
+            AVColorRange::AVCOL_RANGE_JPEG,
+            AVColorSpace::AVCOL_SPC_UNSPECIFIED,
+        )),
+        ycc,
+    );
+    let (_, f) = decode_frames(&a, &[0], &c).unwrap();
+    assert_eq!(f[0].conversion.applied_range, "full (tagged)");
+    assert!(f[0].conversion.applied_matrix.contains("fallback"));
+    assert!(near(&f[0].rgba, [201, 62, 33]), "{:?}", &f[0].rgba[..4]);
+
+    // Limited range, bt709 tagged: Y' = (Y-16)*255/219, C' = (C-128)*255/224;
+    // R = Y' + 1.5748 Cr', G = Y' - 0.1873 Cb' - 0.4681 Cr', B = Y' + 1.8556 Cb'
+    // -> [227, 68, 18].
+    let b = dir.path().join("lim709.mkv");
+    encode_one(
+        &b,
+        "matroska",
+        "ffv1",
+        Pixel::YUV444P,
+        Some((
+            AVColorRange::AVCOL_RANGE_MPEG,
+            AVColorSpace::AVCOL_SPC_BT709,
+        )),
+        ycc,
+    );
+    let (_, f) = decode_frames(&b, &[0], &c).unwrap();
+    assert_eq!(f[0].conversion.applied_range, "limited (tagged)");
+    assert_eq!(f[0].conversion.applied_matrix, "bt709 (tagged)");
+    assert!(near(&f[0].rgba, [227, 68, 18]), "{:?}", &f[0].rgba[..4]);
+
+    // Packed YUYV in AVI (no tags): treated as YUV, limited assumed, bt601
+    // fallback -> [213, 54, 21]. (Bytes Y0 U Y1 V per pixel pair.)
+    let p = dir.path().join("yuyv.avi");
+    encode_one(&p, "avi", "rawvideo", Pixel::YUYV422, None, |_, x, _| {
+        [100u8, 90, 100, 200][x % 4]
+    });
+    let (_, f) = decode_frames(&p, &[0], &c).unwrap();
+    assert_eq!(f[0].conversion.source_format, "yuyv422");
+    assert!(f[0].conversion.applied_range.starts_with("limited"));
+    assert!(f[0].conversion.applied_matrix.contains("bt601"));
+    assert!(near(&f[0].rgba, [213, 54, 21]), "{:?}", &f[0].rgba[..4]);
+
+    // A tagged matrix that is not converted correctly here is refused.
+    let r = dir.path().join("cl.mkv");
+    encode_one(
+        &r,
+        "matroska",
+        "ffv1",
+        Pixel::YUV444P,
+        Some((
+            AVColorRange::AVCOL_RANGE_MPEG,
+            AVColorSpace::AVCOL_SPC_BT2020_CL,
+        )),
+        ycc,
+    );
+    let e = decode_frames(&r, &[0], &c).unwrap_err();
+    assert!(format!("{e:#}").contains("not supported"), "{e:#}");
+}

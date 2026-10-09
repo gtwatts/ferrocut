@@ -238,24 +238,16 @@ pub fn inspect_with_limits(
     let mut check = file.try_clone()?;
 
     init();
-    let io = format::context::StreamIo::from_read_seek(file)
-        .map_err(|e| anyhow!("custom I/O for {}: {e}", path.display()))?;
-    let mut opts = Dictionary::new();
-    // No protocol may be opened for secondary input; only this handle is read.
-    opts.set("protocol_whitelist", "ferrocut-none");
-    opts.set("format_whitelist", DEMUXERS);
-    let interrupt = cancel.clone();
-    let name = path.file_name().and_then(|n| n.to_str()).map(str::to_owned);
-    let mut ictx = format::input_from_stream_with_interrupt(io, name.as_deref(), Some(opts), move || {
-        interrupt.is_cancelled()
-    })
-    .map_err(|e| match e {
-        FfError::Exit => anyhow!("cancelled"),
-        e => anyhow!(
-            "opening {}: {e} (only self-contained {} files are inspected; no secondary files are read)",
-            path.display(),
-            "video container"
-        ),
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let mut ictx = open_contained(file, name, cancel, max_px).map_err(|e| {
+        if cancel.is_cancelled() {
+            anyhow!("cancelled")
+        } else {
+            e.context(format!(
+                "opening {} (only self-contained video container files are inspected; no secondary files are read)",
+                path.display()
+            ))
+        }
     })?;
     let demuxer = ictx.format().name().to_string();
     let stream = ictx
@@ -480,6 +472,115 @@ type ScalerKey = (
     color::TransferCharacteristic,
 );
 
+/// The file, read only through this handle; every read and seek fails once
+/// `cancel` fires (the custom I/O path does not poll the interrupt itself).
+struct CancelRead {
+    file: std::fs::File,
+    cancel: CancelToken,
+}
+
+impl Read for CancelRead {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.cancel.is_cancelled() {
+            return Err(std::io::Error::other("cancelled"));
+        }
+        self.file.read(buf)
+    }
+}
+
+impl Seek for CancelRead {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        if self.cancel.is_cancelled() {
+            return Err(std::io::Error::other("cancelled"));
+        }
+        self.file.seek(pos)
+    }
+}
+
+/// Open `file` as a demuxer input without letting it read anything else,
+/// and without decoding oversized frames while probing:
+/// - custom I/O over the handle; the protocol whitelist names no protocol
+///   and only [`DEMUXERS`] may open, so no secondary file is opened;
+/// - after the container header, every video stream's declared size is
+///   checked against `max_px` BEFORE stream probing;
+/// - stream probing (`avformat_find_stream_info`, which may decode frames)
+///   runs with `max_pixels = max_px` and one thread for every probe decoder;
+/// - the interrupt callback and the reader stop on `cancel`.
+fn open_contained(
+    file: std::fs::File,
+    name: &str,
+    cancel: &CancelToken,
+    max_px: u64,
+) -> anyhow::Result<format::context::Input> {
+    use ffmpeg_next::ffi;
+    use std::ffi::CString;
+    let mut io = format::context::StreamIo::from_read_seek(CancelRead {
+        file,
+        cancel: cancel.clone(),
+    })
+    .map_err(|e| anyhow!("custom I/O: {e}"))?;
+    let token = cancel.clone();
+    let interrupt = ffmpeg_next::util::interrupt::new(Box::new(move || token.is_cancelled()));
+    let mut opts = Dictionary::new();
+    opts.set("protocol_whitelist", "ferrocut-none");
+    opts.set("format_whitelist", DEMUXERS);
+    let fname = CString::new(name).unwrap_or_default();
+    let px = CString::new(max_px.min(i64::MAX as u64).to_string()).expect("digits");
+    // SAFETY: standard libavformat open sequence on a context we allocate and
+    // own: on open failure FFmpeg frees it (and not our custom pb); after open
+    // we close it on every early return, or hand it to Input, which then owns
+    // it together with the StreamIo and the interrupt guard.
+    unsafe {
+        let mut ps = ffi::avformat_alloc_context();
+        ensure!(!ps.is_null(), "out of memory");
+        (*ps).interrupt_callback = interrupt.interrupt;
+        (*ps).pb = io.as_mut_ptr();
+        (*ps).flags |= ffi::AVFMT_FLAG_CUSTOM_IO;
+        let mut raw = opts.disown();
+        let r = ffi::avformat_open_input(&mut ps, fname.as_ptr(), std::ptr::null(), &mut raw);
+        Dictionary::own(raw);
+        if r < 0 {
+            bail!("{}", FfError::from(r));
+        }
+        let n = (*ps).nb_streams as usize;
+        for i in 0..n {
+            let par = (*(*(*ps).streams.add(i))).codecpar;
+            if (*par).codec_type == ffi::AVMediaType::AVMEDIA_TYPE_VIDEO {
+                let (w, h) = ((*par).width.max(0) as u64, (*par).height.max(0) as u64);
+                if w * h > max_px {
+                    ffi::avformat_close_input(&mut ps);
+                    bail!("a stream declares {w}x{h} video (max {max_px} pixels)");
+                }
+            }
+        }
+        let mut dicts: Vec<*mut ffi::AVDictionary> = vec![std::ptr::null_mut(); n];
+        for d in &mut dicts {
+            ffi::av_dict_set(d, c"max_pixels".as_ptr(), px.as_ptr(), 0);
+            ffi::av_dict_set(d, c"threads".as_ptr(), c"1".as_ptr(), 0);
+        }
+        let r = ffi::avformat_find_stream_info(
+            ps,
+            if n == 0 {
+                std::ptr::null_mut()
+            } else {
+                dicts.as_mut_ptr()
+            },
+        );
+        for d in &mut dicts {
+            ffi::av_dict_free(d);
+        }
+        if r < 0 {
+            ffi::avformat_close_input(&mut ps);
+            bail!("{}", FfError::from(r));
+        }
+        Ok(format::context::Input::wrap_with_custom_io_and_interrupt(
+            ps,
+            io,
+            interrupt.guard,
+        ))
+    }
+}
+
 struct Scaler {
     /// Everything the conversion and its reported metadata depend on.
     key: ScalerKey,
@@ -495,17 +596,12 @@ fn sws_matrix(space: color::Space) -> anyhow::Result<(i32, String)> {
         SWS_CS_BT2020, SWS_CS_FCC, SWS_CS_ITU601, SWS_CS_ITU709, SWS_CS_SMPTE240M,
     };
     Ok(match space {
-        color::Space::BT709 => (SWS_CS_ITU709 as i32, "bt709 (tagged)".into()),
-        color::Space::BT470BG | color::Space::SMPTE170M => {
-            (SWS_CS_ITU601 as i32, "bt601 (tagged)".into())
-        }
-        color::Space::BT2020NCL => (SWS_CS_BT2020 as i32, "bt2020 non-constant (tagged)".into()),
-        color::Space::FCC => (SWS_CS_FCC as i32, "fcc (tagged)".into()),
-        color::Space::SMPTE240M => (SWS_CS_SMPTE240M as i32, "smpte240m (tagged)".into()),
-        color::Space::Unspecified => (
-            SWS_CS_ITU601 as i32,
-            "bt601 (fallback: matrix unspecified)".into(),
-        ),
+        color::Space::BT709 => (SWS_CS_ITU709, "bt709 (tagged)".into()),
+        color::Space::BT470BG | color::Space::SMPTE170M => (SWS_CS_ITU601, "bt601 (tagged)".into()),
+        color::Space::BT2020NCL => (SWS_CS_BT2020, "bt2020 non-constant (tagged)".into()),
+        color::Space::FCC => (SWS_CS_FCC, "fcc (tagged)".into()),
+        color::Space::SMPTE240M => (SWS_CS_SMPTE240M, "smpte240m (tagged)".into()),
+        color::Space::Unspecified => (SWS_CS_ITU601, "bt601 (fallback: matrix unspecified)".into()),
         other => bail!(
             "YUV matrix {other:?} is not supported by frame inspection (constant-luminance, ICtCp, YCgCo and chroma-derived matrices are refused)"
         ),
@@ -524,7 +620,7 @@ fn conversion_for(f: &frame::Video) -> anyhow::Result<(Option<(i32, bool)>, Conv
         .ok_or_else(|| anyhow!("pixel format {fmt:?} has no descriptor"))?;
     // SAFETY: a descriptor pointer from av_pix_fmt_desc_get is static data.
     let flags = unsafe { (*desc.as_ptr()).flags };
-    let has = |bit: u32| flags & bit as u64 != 0;
+    let has = |bit: i32| flags & bit as u64 != 0;
     ensure!(
         !has(AV_PIX_FMT_FLAG_HWACCEL) && !has(AV_PIX_FMT_FLAG_BAYER),
         "pixel format {} is not supported by frame inspection",
@@ -574,7 +670,7 @@ fn conversion_for(f: &frame::Video) -> anyhow::Result<(Option<(i32, bool)>, Conv
     let gray = desc.nb_components() <= 2;
     let (table, matrix) = if gray {
         (
-            ffmpeg_next::ffi::SWS_CS_DEFAULT as i32,
+            ffmpeg_next::ffi::SWS_CS_DEFAULT,
             "gray (luma only)".to_string(),
         )
     } else {
@@ -619,8 +715,7 @@ fn to_encoded(
             // coefficient tables are static libswscale data.
             let rc = unsafe {
                 let src = ffmpeg_next::ffi::sws_getCoefficients(cs);
-                let dst =
-                    ffmpeg_next::ffi::sws_getCoefficients(ffmpeg_next::ffi::SWS_CS_DEFAULT as i32);
+                let dst = ffmpeg_next::ffi::sws_getCoefficients(ffmpeg_next::ffi::SWS_CS_DEFAULT);
                 ffmpeg_next::ffi::sws_setColorspaceDetails(
                     ctx.as_mut_ptr(),
                     src,

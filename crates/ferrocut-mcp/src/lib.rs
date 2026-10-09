@@ -1156,10 +1156,42 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
     // The file is read only through one handle (no secondary files), hashed
     // before and after decoding; the pixels belong to that observed content.
     let ins = inspect::inspect_file(&path, &a.frames, &cx.cancel, None)?;
-    drop(_one_at_a_time);
+    // Output memory counts against the same budget as the decoded frames and
+    // is checked before any of it is allocated (upper bounds): one frame's
+    // PNG scratch at a time (raw rows + deflate + file bytes), translucent
+    // display composites, and the sheet with its PNG and inline copies.
+    let single = ins.frames.len() == 1;
+    let largest = ins
+        .frames
+        .iter()
+        .map(|f| f.rgba.len() as u64)
+        .max()
+        .unwrap_or(0);
+    let scratch = if a.each { largest * 3 } else { 0 };
+    let translucent: u64 = ins
+        .frames
+        .iter()
+        .filter(|f| f.rgba.chunks_exact(4).any(|p| p[3] != 255))
+        .map(|f| f.rgba.len() as u64)
+        .sum();
+    let picture: u64 = if single {
+        largest * 3
+    } else {
+        let f0 = &ins.frames[0];
+        let (w, h, ..) =
+            preview::sheet_layout(f0.width, f0.height, ins.frames.len(), a.cols, a.cell_width);
+        w * h * 4 * 4
+    };
+    let budget = inspect::MAX_RETAINED_BYTES;
+    anyhow::ensure!(
+        ins.held_bytes + scratch.max(translucent + picture) <= budget,
+        "frames plus their PNG/sheet/inline output would hold more than {budget} bytes; request fewer or smaller frames, or a smaller cell_width"
+    );
+    // The lock stays held through output: one inspection's memory at a time.
     let art = &ins.identity.blake3[..16];
     let mut frames_json = Vec::new();
     for f in &ins.frames {
+        anyhow::ensure!(!cx.cancel.is_cancelled(), "cancelled");
         let png = if a.each {
             // Exact straight-alpha PNG, named by artifact, ordinal and the PNG's
             // own content: a repeat observation reuses the identical file, and
@@ -1190,30 +1222,6 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
             "png_blake3": png.as_ref().map(|(_, h)| h.clone()),
         }));
     }
-    // Display memory (translucent composites, the sheet and the inline
-    // copy) counts against the same budget as the decoded frames, before any
-    // of it is allocated.
-    let single = ins.frames.len() == 1;
-    let translucent: u64 = ins
-        .frames
-        .iter()
-        .filter(|f| f.rgba.chunks_exact(4).any(|p| p[3] != 255))
-        .map(|f| f.rgba.len() as u64)
-        .sum();
-    let picture: u64 = if single {
-        ins.frames[0].rgba.len() as u64
-    } else {
-        let f0 = &ins.frames[0];
-        let (w, h, ..) =
-            preview::sheet_layout(f0.width, f0.height, ins.frames.len(), a.cols, a.cell_width);
-        // The sheet, and the inline copy made from it.
-        w * h * 4 * 2
-    };
-    let budget = inspect::MAX_RETAINED_BYTES;
-    anyhow::ensure!(
-        ins.held_bytes + translucent + picture <= budget,
-        "frames plus their sheet/inline display would hold more than {budget} bytes; request fewer or smaller frames, or a smaller cell_width"
-    );
     // Sheets and the inline image are display composites: translucent
     // frames are shown over a checkerboard (the full PNGs keep exact alpha).
     let shown: Vec<std::borrow::Cow<'_, [u8]>> = ins
@@ -1221,6 +1229,7 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
         .iter()
         .map(|f| preview::over_checkerboard(&f.rgba, f.width))
         .collect();
+    anyhow::ensure!(!cx.cancel.is_cancelled(), "cancelled");
     let sheet_img = if single {
         None
     } else {
@@ -1271,6 +1280,7 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
         "sheet_blake3": sheet.as_ref().map(|(_, h)| h.clone()),
     });
     if a.inline {
+        anyhow::ensure!(!cx.cancel.is_cancelled(), "cancelled");
         let (w, h, img) = match sheet_img {
             Some(s) => s,
             None => (ins.frames[0].width, ins.frames[0].height, shown[0].to_vec()),
