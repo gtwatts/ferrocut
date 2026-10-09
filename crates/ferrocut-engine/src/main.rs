@@ -344,7 +344,9 @@ enum CaptionCmd {
     /// resolved relative to the style JSON file and stored relative to the
     /// timeline when their real (symlink-resolved) file is inside its
     /// directory; others are stored absolute and reported as not portable
-    /// (`nonportable_fonts`). A missing font is an error.
+    /// (`nonportable_fonts`). With `--output` in another directory every
+    /// relative path is written absolute, so all fonts are reported. A
+    /// missing font is an error.
     /// Overlaps need separate tracks.
     Import {
         timeline: PathBuf,
@@ -622,7 +624,27 @@ fn main() -> anyhow::Result<()> {
                         )?;
                         let mut v = serde_json::to_value(&outcome)?;
                         v["caption_timing"] = serde_json::to_value(&report)?;
-                        v["nonportable_fonts"] = serde_json::to_value(&outside)?;
+                        // Portability of the file actually written: an output
+                        // in another directory gets every relative path
+                        // absolutized (sources_absolutized), fonts included.
+                        let nonportable = if outcome.sources_absolutized {
+                            let base = std::fs::canonicalize(project::dir_of(&timeline))?;
+                            let mut all: Vec<std::path::PathBuf> = Vec::new();
+                            for f in spec.font_paths() {
+                                let f = base.join(f);
+                                if !all.contains(&f) {
+                                    all.push(f);
+                                }
+                            }
+                            eprintln!(
+                                "note: the output is in another directory than the timeline, so every relative path (these {} font(s) included) is written absolute and the output project is not portable; write it next to its assets instead",
+                                all.len()
+                            );
+                            all
+                        } else {
+                            outside
+                        };
+                        v["nonportable_fonts"] = serde_json::to_value(&nonportable)?;
                         println!("{}", serde_json::to_string_pretty(&v)?);
                     }
                 }

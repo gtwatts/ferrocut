@@ -981,3 +981,72 @@ fn caption_cli_import_is_portable_journaled_and_survives_a_move() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("none.ttf not found"));
     assert_eq!(std::fs::read(root.join("project.json")).unwrap(), before);
 }
+
+#[test]
+fn caption_cli_reports_fonts_of_an_output_in_another_directory() {
+    // Review of 6573736: `--output` in a sibling directory writes every
+    // relative path absolute, but nonportable_fonts said [].
+    let tree = font_tree();
+    let root = &tree.root;
+    std::fs::write(
+        root.join("project.json"),
+        serde_json::to_vec_pretty(&empty()).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("authoring/captions.srt"),
+        "1\n00:00:00,000 --> 00:00:01,000\nHello\n",
+    )
+    .unwrap();
+    std::fs::copy(font(), root.join("assets/fonts/G.ttf")).unwrap();
+    std::fs::write(
+        root.join("authoring/style.json"),
+        json!({"content":"","font":"../assets/fonts/F.ttf","fallback_fonts":["../assets/fonts/G.ttf"],"font_size":"24"}).to_string(),
+    )
+    .unwrap();
+    let dest = tree.outside.join("destination");
+    std::fs::create_dir_all(&dest).unwrap();
+    let want = json!([
+        root.join("assets/fonts/F.ttf"),
+        root.join("assets/fonts/G.ttf")
+    ]);
+    for extra in [&["--dry-run"][..], &[][..]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_ferrocut"))
+            .current_dir(root.join("authoring"))
+            .args([
+                "captions",
+                "import",
+                "../project.json",
+                "captions.srt",
+                "--style",
+                "style.json",
+                "--output",
+            ])
+            .arg(dest.join("project.json"))
+            .args(extra)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["sources_absolutized"], json!(true));
+        assert_eq!(v["nonportable_fonts"], want, "{extra:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("not portable"));
+    }
+    // What was written agrees: both fonts absolute.
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dest.join("project.json")).unwrap()).unwrap();
+    let text = &saved["tracks"][1]["clips"][0]["generator"]["text"];
+    assert_eq!(json!([text["font"], text["fallback_fonts"][0]]), want);
+    // The input timeline was not written, and in place stays portable.
+    assert_eq!(
+        Timeline::load(&root.join("project.json"))
+            .unwrap()
+            .tracks
+            .len(),
+        1
+    );
+}
