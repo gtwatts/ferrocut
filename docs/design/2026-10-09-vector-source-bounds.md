@@ -1,9 +1,10 @@
 # Native vector source bounds and clip transforms
 
 Status: contract accepted for implementation by the lead and independent reviewer
-at 13:51Z on 2026-10-09 (contract checkpoint `514a249`). Execution acceptance is
-pending; source/regression work is not a render verdict. Base source:
-`3ad837219d07d482f077b98889e710d7176c6c28`. No execution evidence yet.
+at 13:51Z on 2026-10-09 (contract checkpoint `514a249`). Source and bounded
+execution checks passed at `f82eb428467b5599e4c7dc3255312d621744098c`; see the
+[evaluation](../evaluations/2026-10-09-vector-source-bounds.md) for actual outputs,
+review scope and limits. Base source: `3ad837219d07d482f077b98889e710d7176c6c28`.
 
 ## Defect and intended behavior
 
@@ -16,8 +17,9 @@ An explicit anchor in that source region does not recover it either.
 `examples/vector-source-bounds.json` is original synthetic material: a small
 off-canvas L shape, first translated and then rotated around an explicit anchor.
 Its expected transformed geometry lies entirely inside a 128 by 96 display.
-The existing code predicts a missing L in both shots. This is a static prediction
-until baseline execution is granted; no private production asset is in the fixture.
+The installed baseline at `73935ba` loses the L in every rendered frame; the
+repair retains the expected translated and rotated geometry. All 48 frames were
+decoded and compared. No private production asset is in the fixture.
 
 ## Coordinate and allocation contract
 
@@ -81,22 +83,28 @@ stay unchanged. Geometry/group/transform edits continue through existing typed
 parameters, journal, plan/diff and undo. No schema or serialized transform change
 is proposed. MCP root containment must remain unchanged.
 
-## Planned evidence, all unexecuted
+## Executed evidence
 
-1. Source tests for negative/right/bottom bounds, default versus explicit anchor,
+1. Nine focused regressions pass, covering negative/right/bottom bounds,
+   default versus explicit anchor,
    stroke cap/join fringe, gradients with nonzero origins, group/repeater bounds,
    empty/transparent geometry, resource rejection and in-frame pixel equality.
 2. Full graph tests for the translated and rotated synthetic L, including
    premultiplied half-alpha and an adjacent matte; a differently sized nested comp
    verifies native size, fit and anchor behavior. Exact rational sample times and
    held-pose keys remain stable.
-3. Existing CLI and MCP edit/plan/undo routes: retain initial bytes, change geometry
-   and transform, prove affected keys change, undo to the original document/keys.
-4. During an explicit lease, retain old-fail/new-pass native masters and inspected
-   frames from the same public fixture, plus binary/source/output hashes and
-   different-job determinism. Do not substitute test source for actual renders.
-5. Required CONTRIBUTING checks and unchanged `ci/render-check.sh`/references before
-   verified push and feature PR. Independent code/output review precedes integration.
+3. Exact release CLI and MCP edit/plan/undo routes retain canonical initial bytes,
+   change whole geometry and transform, invalidate only the first shot, and undo
+   to the original document/keys. The whole-geometry operation uses the existing
+   typed parameter; individual path-point set_param leaves are not introduced.
+4. Retained old-fail/new-pass native masters and inspected frames from the same
+   public fixture have exact binary/source/output hashes. All 48 repaired frames
+   have the expected geometry; one/two-worker and warm-cache masters are identical.
+   The ordinary in-frame control is pixel-identical before and after.
+5. Required CONTRIBUTING checks pass: 619 workspace tests, 8 delivery unit tests,
+   formatting, Clippy and release build. Two documentation examples remain ignored.
+   Unchanged `ci/render-check.sh` passes with exact reference audio/video and
+   different-job determinism. Review and installed integration remain separate gates.
 
 Owned files: `src/vector.rs`, `src/vector_instances.rs`, their focused tests,
 this contract and the public fixture. Any need to change compilation or node wiring
