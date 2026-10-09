@@ -1,9 +1,14 @@
 """scripts/install-local.py against a temporary HOME and a fake checkout.
 
 Run: python3 -m unittest discover -s scripts/tests
-Nothing here touches the real ~/.local, Codex settings or whisper models: the
-release binaries, FFmpeg library, whisper-cli and models are small fakes.
+The installer runs in-process with Path.home() mocked to a temporary
+directory (the shell's HOME is not changed), so nothing here touches the real
+~/.local, Codex settings or whisper models: the release binaries, FFmpeg
+library, whisper-cli and models are small fakes.
 """
+import contextlib
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -12,8 +17,12 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 INSTALLER = Path(__file__).resolve().parents[1] / "install-local.py"
+_spec = importlib.util.spec_from_file_location("install_local", INSTALLER)
+install_local = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(install_local)
 NAMES = ["ferrocut", "ferrocut-mcp", "ferrocut-perceive", "ferrocut-deliver"]
 CLI = Path("third_party/whisper.cpp/build/bin/whisper-cli")
 MODELS = Path("third_party/whisper-models")
@@ -61,11 +70,15 @@ class InstallLocalTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def install(self, *args):
-        env = dict(os.environ, HOME=str(self.home))
-        out = subprocess.run([sys.executable, str(INSTALLER), "--root", str(self.checkout.root), *args],
-                             env=env, capture_output=True, text=True)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        summary = json.loads(out.stdout[:out.stdout.rindex("}") + 1])
+        stdout = io.StringIO()
+        argv = [str(INSTALLER), "--root", str(self.checkout.root), *args]
+        with mock.patch.object(Path, "home", return_value=self.home), \
+                mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(stdout):
+            install_local.main()
+        out = stdout.getvalue()
+        summary = json.loads(out[:out.rindex("}") + 1])
+        # Everything it wrote is under the temporary home.
+        self.assertTrue(Path(summary["runtime"]).is_relative_to(self.home))
         return summary, Path(summary["runtime"])
 
     def whisper_entries(self, runtime):
