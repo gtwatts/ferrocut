@@ -100,6 +100,10 @@ pub enum ChunkDirSource {
     /// Explicit `--cache-dir` (`cache_dir/chunks/<tag>`, else `cache_dir/chunks`)
     /// when the rule-2 directory is missing.
     CacheDirOverride,
+    /// The engine's default cache next to the report (`<report dir>/.ferrocut-cache`,
+    /// `chunks/<tag>` then `chunks`) when nothing earlier exists: a tree moved
+    /// together with its report, or a report without `chunk_dir`.
+    ReportDefaultCache,
     Ambiguous,
     Unresolved,
     Absent,
@@ -112,6 +116,7 @@ impl std::fmt::Display for ChunkDirSource {
             Self::ReportLocation => "report_location",
             Self::ProcessCwd => "process_cwd",
             Self::CacheDirOverride => "cache_dir_override",
+            Self::ReportDefaultCache => "report_default_cache",
             Self::Ambiguous => "ambiguous",
             Self::Unresolved => "unresolved",
             Self::Absent => "absent",
@@ -197,15 +202,6 @@ fn strip_trailing_normals(dir: &Path, suffix: &[OsString]) -> PathBuf {
     }
 }
 
-fn cache_override_candidates(chunk: &Path, cache_dir: &Path) -> Vec<PathBuf> {
-    let mut v = Vec::new();
-    if let Some(tag) = chunk.file_name() {
-        v.push(lexical_normalize(&cache_dir.join("chunks").join(tag)));
-    }
-    v.push(lexical_normalize(&cache_dir.join("chunks")));
-    v
-}
-
 fn same_dir(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(ca), Ok(cb)) => ca == cb,
@@ -213,28 +209,42 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Apply an explicit `--cache-dir` when rule 2 did not yield an existing directory.
-fn apply_cache_override(
-    chunk: &Path,
+/// When rule 2 did not yield an existing directory: the explicit `--cache-dir`
+/// candidates, then the engine's default cache next to the report. Chunk files
+/// are named by content key, so a directory found here cannot hold a different
+/// chunk under the same name. `chunk` is the report's `chunk_dir` (its file name
+/// is the adapter tag), when present.
+fn apply_cache_fallbacks(
+    chunk: Option<&Path>,
     cache_dir: Option<&Path>,
+    report_dir: &Path,
     mut res: ChunkDirResolution,
 ) -> ChunkDirResolution {
-    let Some(cache_dir) = cache_dir else {
-        return res;
-    };
-    if res.resolved_by == ChunkDirSource::Ambiguous || res.resolved_by == ChunkDirSource::Absent {
+    if res.resolved_by == ChunkDirSource::Ambiguous {
         return res;
     }
     if res.dir.as_ref().is_some_and(|d| d.is_dir()) {
         return res;
     }
-    for cand in cache_override_candidates(chunk, cache_dir) {
-        let exists = cand.is_dir();
-        res.tried.push(cand.clone());
-        if exists {
-            res.dir = Some(cand);
-            res.resolved_by = ChunkDirSource::CacheDirOverride;
-            return res;
+    let default_cache = report_dir.join(".ferrocut-cache");
+    let fallbacks = cache_dir
+        .map(|c| (c.to_path_buf(), ChunkDirSource::CacheDirOverride))
+        .into_iter()
+        .chain([(default_cache, ChunkDirSource::ReportDefaultCache)]);
+    for (cache, source) in fallbacks {
+        let mut cands = Vec::new();
+        if let Some(tag) = chunk.and_then(Path::file_name) {
+            cands.push(lexical_normalize(&cache.join("chunks").join(tag)));
+        }
+        cands.push(lexical_normalize(&cache.join("chunks")));
+        for cand in cands {
+            let exists = cand.is_dir();
+            res.tried.push(cand.clone());
+            if exists {
+                res.dir = Some(cand);
+                res.resolved_by = source;
+                return res;
+            }
         }
     }
     res
@@ -254,26 +264,40 @@ fn apply_cache_override(
 /// join is never done.
 ///
 /// `cache_dir` is the explicit `--cache-dir` only. When rule 2's directory is
-/// missing (including a recorded absolute path whose tree was relocated), the
-/// first existing of `cache_dir/chunks/<chunk_dir file name>` and
-/// `cache_dir/chunks` wins as [`ChunkDirSource::CacheDirOverride`].
+/// missing (including a recorded absolute path whose tree was relocated), or
+/// the report has no `chunk_dir`, the first existing of
+/// `cache_dir/chunks/<chunk_dir file name>` and `cache_dir/chunks` wins as
+/// [`ChunkDirSource::CacheDirOverride`], then the same two under
+/// `<report dir>/.ferrocut-cache` as [`ChunkDirSource::ReportDefaultCache`]
+/// (the engine's default cache location, kept from the previous lookup).
+/// Absent stays Absent only when none of those exist.
 pub fn resolve_chunk_dir(
     rr: &RenderReport,
     report_path: &Path,
     cwd: &Path,
     cache_dir: Option<&Path>,
 ) -> ChunkDirResolution {
+    let report_dir = lexical_normalize(&cwd.join(report_path))
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
     let Some(chunk) = rr.chunk_dir.as_ref() else {
-        return ChunkDirResolution {
-            dir: None,
-            resolved_by: ChunkDirSource::Absent,
-            tried: Vec::new(),
-        };
+        return apply_cache_fallbacks(
+            None,
+            cache_dir,
+            &report_dir,
+            ChunkDirResolution {
+                dir: None,
+                resolved_by: ChunkDirSource::Absent,
+                tried: Vec::new(),
+            },
+        );
     };
     if chunk.is_absolute() {
-        return apply_cache_override(
-            chunk,
+        return apply_cache_fallbacks(
+            Some(chunk),
             cache_dir,
+            &report_dir,
             ChunkDirResolution {
                 dir: Some(chunk.clone()),
                 resolved_by: ChunkDirSource::Recorded,
@@ -288,10 +312,6 @@ pub fn resolve_chunk_dir(
         let expected = output.with_extension("report.json");
         if report_path.file_name() == expected.file_name() {
             let suffix = normal_components(output.parent().unwrap_or(Path::new("")));
-            let report_dir = lexical_normalize(&cwd.join(report_path))
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| PathBuf::from("."));
             if ends_with_normals(&report_dir, &suffix) {
                 let render_cwd = strip_trailing_normals(&report_dir, &suffix);
                 let candidate = lexical_normalize(&render_cwd.join(chunk));
@@ -340,7 +360,7 @@ pub fn resolve_chunk_dir(
             tried,
         },
     };
-    apply_cache_override(chunk, cache_dir, res)
+    apply_cache_fallbacks(Some(chunk), cache_dir, &report_dir, res)
 }
 
 /// The subset of the engine's timeline JSON we use.

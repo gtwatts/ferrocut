@@ -342,6 +342,7 @@
                 "report_location",
                 "process_cwd",
                 "cache_dir_override",
+                "report_default_cache",
                 "ambiguous",
                 "unresolved",
                 "absent"

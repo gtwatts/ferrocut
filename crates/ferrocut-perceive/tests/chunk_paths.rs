@@ -56,7 +56,16 @@ fn absolute_chunk_dir_is_recorded() {
     let res = resolve_chunk_dir(&rr, &a.join("master.report.json"), &b, None);
     assert_eq!(res.resolved_by, ChunkDirSource::Recorded);
     assert_eq!(res.dir.as_deref(), Some(abs.as_path()));
-    assert_eq!(res.tried, vec![abs]);
+    // Nothing exists: the engine's default cache next to the report was also
+    // tried (chunks/<tag>, then chunks) before keeping the recorded path.
+    assert_eq!(
+        res.tried,
+        vec![
+            abs,
+            a.join(".ferrocut-cache/chunks/t"),
+            a.join(".ferrocut-cache/chunks")
+        ]
+    );
     assert!(!res.dir.unwrap().exists());
 }
 
@@ -82,14 +91,22 @@ fn missing_candidates_are_unresolved() {
     let res = resolve_chunk_dir(&rr, &a.join("sub/master.report.json"), &b, None);
     assert_eq!(res.resolved_by, ChunkDirSource::Unresolved);
     assert!(res.dir.is_none());
-    assert_eq!(res.tried.len(), 2);
+    // The two rule-2 candidates, then the default cache next to the report.
+    assert_eq!(res.tried.len(), 4);
     assert!(
-        res.tried
+        res.tried[..2]
             .iter()
             .all(|p| ends_with_rel(p, "sub/.ferrocut-cache/chunks/t"))
     );
-    assert!(res.tried.iter().any(|p| p.starts_with(&a)));
-    assert!(res.tried.iter().any(|p| p.starts_with(&b)));
+    assert!(res.tried[..2].iter().any(|p| p.starts_with(&a)));
+    assert!(res.tried[..2].iter().any(|p| p.starts_with(&b)));
+    assert_eq!(
+        res.tried[2..],
+        [
+            a.join("sub/.ferrocut-cache/chunks/t"),
+            a.join("sub/.ferrocut-cache/chunks")
+        ]
+    );
 }
 
 /// E. A copied report whose name is not `<output stem>.report.json`.
@@ -185,4 +202,48 @@ fn inferred_report_location_and_process_cwd_are_ambiguous() {
     let res = resolve_chunk_dir(&rr, &report, &cwd, None);
     assert_eq!(res.resolved_by, ChunkDirSource::Ambiguous);
     assert!(res.dir.is_none());
+}
+
+/// M. A tree moved together with its report (recorded absolute path gone): the
+/// engine's default cache next to the report is used, without any flag.
+#[test]
+fn moved_tree_uses_the_default_cache_next_to_the_report() {
+    let (_keep_a, a) = canon_temp();
+    let (_keep_b, b) = canon_temp();
+    let old = a.join("old-place/.ferrocut-cache/chunks/tag");
+    let moved = b.join("new-place/.ferrocut-cache/chunks/tag");
+    fs::create_dir_all(&moved).unwrap();
+    let rr = report(old.to_str().unwrap(), "/old-place/master.mkv");
+    let res = resolve_chunk_dir(&rr, &b.join("new-place/master.report.json"), &a, None);
+    assert_eq!(res.resolved_by, ChunkDirSource::ReportDefaultCache);
+    assert_eq!(res.dir.as_deref(), Some(moved.as_path()));
+    // An explicit --cache-dir is preferred over the default location.
+    let explicit = a.join("explicit/chunks/tag");
+    fs::create_dir_all(&explicit).unwrap();
+    let res = resolve_chunk_dir(
+        &rr,
+        &b.join("new-place/master.report.json"),
+        &a,
+        Some(&a.join("explicit")),
+    );
+    assert_eq!(res.resolved_by, ChunkDirSource::CacheDirOverride);
+    assert_eq!(res.dir.as_deref(), Some(explicit.as_path()));
+}
+
+/// N. A report from an engine before per-adapter chunk dirs (no chunk_dir) keeps
+/// the old flat lookup in the default cache; with nothing there it stays Absent.
+#[test]
+fn report_without_chunk_dir_keeps_the_flat_default_cache() {
+    let (_keep_a, a) = canon_temp();
+    let (_keep_b, b) = canon_temp();
+    let rr = RenderReport::from_json(r#"{"total_frames":1,"chunk_frames":1,"chunks":[]}"#).unwrap();
+    let res = resolve_chunk_dir(&rr, &a.join("master.report.json"), &b, None);
+    assert_eq!(res.resolved_by, ChunkDirSource::Absent);
+    assert!(res.dir.is_none());
+    assert_eq!(res.tried, vec![a.join(".ferrocut-cache/chunks")]);
+    let flat = a.join(".ferrocut-cache/chunks");
+    fs::create_dir_all(&flat).unwrap();
+    let res = resolve_chunk_dir(&rr, &a.join("master.report.json"), &b, None);
+    assert_eq!(res.resolved_by, ChunkDirSource::ReportDefaultCache);
+    assert_eq!(res.dir.as_deref(), Some(flat.as_path()));
 }
