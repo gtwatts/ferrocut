@@ -23,7 +23,9 @@
 //! contradicts the problems or the exit code) is reported as an error, never
 //! as a pass. Loudness target and true-peak ceiling: a flag, else a config
 //! key, else what the render was normalized/limited to (its report's audio
-//! analysis), else the timeline's `audio.loudness`, else -14 LUFS / -1 dBTP;
+//! analysis; a recorded `null` means no target and gives the default), else
+//! the timeline's `audio.loudness` (only when the report lacks those keys),
+//! else -14 LUFS / -1 dBTP;
 //! tolerance ±1 LU unless set. The checker reports each threshold's source,
 //! kept in [`CheckOutcome::loudness_target`]. Flags and a config file are
 //! passed through verbatim in `extra_args`.

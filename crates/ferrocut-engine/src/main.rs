@@ -107,8 +107,9 @@ enum Cmd {
         expect_audio: ferrocut_engine::perceive::ExpectAudio,
         /// Passed to the checker verbatim (after `--`), e.g. threshold flags or a config file
         /// (`ferrocut-perceive check --help` lists them). Loudness target and true-peak ceiling:
-        /// a flag, else a config key, else what the render was normalized to, else the timeline's
-        /// audio.loudness, else -14 LUFS / -1 dBTP; the output's loudness_target names each source.
+        /// a flag, else a config key, else what the render was normalized to (a recorded null means no
+        /// target: the default), else the timeline's audio.loudness (only when the render report lacks
+        /// those keys), else -14 LUFS / -1 dBTP; the output's loudness_target names each source.
         #[arg(last = true)]
         args: Vec<String>,
     },

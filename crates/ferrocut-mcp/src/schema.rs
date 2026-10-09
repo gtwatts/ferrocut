@@ -902,7 +902,7 @@ pub fn branch() -> Value {
 fn check_args() -> Value {
     json!({
         "type": "array", "items": { "type": "string" },
-        "description": "extra ferrocut-perceive arguments, verbatim (threshold flags, config file). Loudness target and true-peak ceiling: a flag, else a config key, else what the render was normalized/limited to, else the timeline's audio.loudness, else -14 LUFS / -1 dBTP; tolerance ±1 LU unless set. The result's loudness_target names each value's source."
+        "description": "extra ferrocut-perceive arguments, verbatim (threshold flags, config file). Loudness target and true-peak ceiling: a flag, else a config key, else what the render was normalized/limited to (a recorded null means no target: the default), else the timeline's audio.loudness (only when the render report lacks those keys), else -14 LUFS / -1 dBTP; tolerance ±1 LU unless set. The result's loudness_target names each value's source."
     })
 }
 
