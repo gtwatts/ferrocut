@@ -9793,7 +9793,7 @@
             "stage": "rendered",
             "path": "docs/evaluations/artifacts/agent-visual-workflows/receipt.json",
             "locator": "selected-range-demo-run01",
-            "claim": "Release-candidate cad3de7 CLI and fresh stdio MCP demo (98 assertions, six CPU renders) and typed mover correction (53 assertions): frames [30,110) of a 144-frame 24000/1001 sequence give 80 frames and the exact PCM slice [60060,220220); interior full chunks reused, boundary fragments rendered; a caption edit rerenders only the last 14-frame fragment; undo restores the exact range file. Review hashes selected-range-demo-run01 and selected-range-mover-actual-run01 are in this receipt."
+            "claim": "Release-candidate cad3de7 CLI and fresh stdio MCP demo (98 assertions, six CPU renders) and typed mover correction (53 assertions): frames [30,110) of a 144-frame 24000/1001 sequence give 80 frames and the exact PCM slice [60060,220220); interior full chunks reused and the two boundary fragments rendered on first use; a caption edit rerenders only the last 14-frame fragment and reuses the first boundary fragment; undo restores the exact range file. Review hashes selected-range-demo-run01 and selected-range-mover-actual-run01 are in this receipt."
           },
           {
             "stage": "audit",
@@ -9805,7 +9805,7 @@
         "limitations": [
           "Candidate-route evidence only (release binaries built from cad3de7): the installed CLI and configured MCP route are not verified.",
           "quality_check and `render --check` refuse selected-range masters; there is no range-aware grading, so a range output has no automated quality verdict.",
-          "Reuse is by chunk on the full-timeline grid: boundary fragments always render, and a time-shifted whole chunk is not reused.",
+          "Reuse is by keyed chunk file on the full-timeline grid: a cut boundary fragment cannot reuse the corresponding full-grid chunk, but reuses its own matching cached fragment and renders only on a miss or with force. A time-shifted whole chunk is not reused.",
           "Inspection and output in the demonstration are eight-bit; retained frames were compared at a few sampled instants per run, with no normal-speed playback or listening.",
           "This is a range render into a master file, not an in-application preview-cache indicator as in Premiere."
         ],
@@ -10079,7 +10079,7 @@
             "stage": "rendered",
             "path": "docs/evaluations/artifacts/agent-visual-workflows/receipt.json",
             "locator": "selected-range-demo-run01",
-            "claim": "Release-candidate cad3de7 CLI and fresh stdio MCP demo (98 assertions, six CPU renders) and typed mover correction (53 assertions): frames [30,110) of a 144-frame 24000/1001 sequence give 80 frames and the exact PCM slice [60060,220220); interior full chunks reused, boundary fragments rendered; a caption edit rerenders only the last 14-frame fragment; undo restores the exact range file. Review hashes selected-range-demo-run01 and selected-range-mover-actual-run01 are in this receipt."
+            "claim": "Release-candidate cad3de7 CLI and fresh stdio MCP demo (98 assertions, six CPU renders) and typed mover correction (53 assertions): frames [30,110) of a 144-frame 24000/1001 sequence give 80 frames and the exact PCM slice [60060,220220); interior full chunks reused and the two boundary fragments rendered on first use; a caption edit rerenders only the last 14-frame fragment and reuses the first boundary fragment; undo restores the exact range file. Review hashes selected-range-demo-run01 and selected-range-mover-actual-run01 are in this receipt."
           },
           {
             "stage": "audit",
