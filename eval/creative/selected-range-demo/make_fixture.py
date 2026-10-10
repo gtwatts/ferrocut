@@ -4,7 +4,10 @@
 6 s native sequence at 24000/1001 fps, 12-frame GOPs, 24-frame chunks
 (boundaries 24, 48, 72, 96, 120). The demo range is frames [30, 110):
 neither end is a chunk boundary. Content:
-  - a rectangle moving left to right (keyframed transform),
+  - a rectangle moving left to right (keyframed transform). A clip's
+    transform.position places the LAYER CENTRE (320,180 for this 640x360
+    canvas), so with the shape at layer x 0..60, y 150..210, position
+    x 320 -> 900 moves its left edge 0 -> 580 and y 180 keeps it at y 150..210,
   - a counter: one text clip per second showing 0..5,
   - pulse.wav: 48 kHz stereo float; 1 kHz bursts of 200 ms starting at
     1.15 s and 4.50 s, each crossing one range edge
@@ -57,9 +60,10 @@ def timeline() -> dict:
                 "generator": {"type": "vector_group", "group": {"items": [{"type": "shape", "shape": {
                     "geometry": {"type": "rectangle", "x": 0, "y": 150, "width": 60, "height": 60, "radius": 6},
                     "fill": {"type": "solid", "color": ["0.95", "0.45", "0.2", 1]}}}]}},
+                # position is the layer centre (see the module docstring).
                 "transform": {"position": [
-                    {"keyframes": [{"t": "0", "v": "0"}, {"t": str(SECONDS), "v": "580"}]},
-                    {"keyframes": [{"t": "0", "v": "0"}, {"t": str(SECONDS), "v": "0"}]}]}}]},
+                    {"keyframes": [{"t": "0", "v": "320"}, {"t": str(SECONDS), "v": "900"}]},
+                    {"keyframes": [{"t": "0", "v": "180"}, {"t": str(SECONDS), "v": "180"}]}]}}]},
             {"name": "Counter", "clips": counter},
         ],
         "audio_tracks": [{"name": "pulse", "clips": [
