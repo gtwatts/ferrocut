@@ -1,12 +1,18 @@
 //! Media index: whisper JSON parsing, transcript search, padded cut ranges,
 //! the content-hashed cache (with a fake whisper-cli), GPU->CPU fallback, the
-//! shot-detection hook, and (when whisper.cpp, its model and the eval clip
+//! shot-detection JSON, and (when whisper.cpp, its model and the eval clip
 //! are present) a real transcription of a Sintel line.
+//!
+//! No test here may register a shot detector: `shots::register` is
+//! process-global and the detector id is part of the index cache key, so a
+//! registration racing these `shots: true` cache tests changes the key between
+//! an index and its cached lookup (PR 8 CI run 38009480085). The registry test
+//! is `tests/shots_registry.rs`, its own process.
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
-use ferrocut_core::{BoundaryKind, Rational, RationalTime, ShotBoundary, TimeRange};
+use ferrocut_core::{BoundaryKind, Rational, RationalTime};
 use ferrocut_engine::index::{
     self, IndexOptions, Part, Transcript, WhisperConfig, padded_range, search, shots, whisper,
 };
@@ -237,47 +243,11 @@ fn index_is_cached_by_content_and_falls_back_to_cpu() {
     assert!(reason.contains("missing.bin"), "{reason}");
 }
 
-fn fake_detector(
-    _: &Path,
-    range: Option<TimeRange>,
-) -> Result<Vec<ShotBoundary>, ferrocut_core::NodeError> {
-    let all = vec![
-        ShotBoundary {
-            at: rt(2, 1),
-            span: None,
-            kind: BoundaryKind::Cut,
-            confidence: 0.9,
-        },
-        ShotBoundary {
-            at: rt(5, 1),
-            span: Some((rt(9, 2), rt(11, 2))),
-            kind: BoundaryKind::Dissolve,
-            confidence: 0.6,
-        },
-    ];
-    Ok(all
-        .into_iter()
-        .filter(|b| range.is_none_or(|r| r.contains(b.at)))
-        .collect())
-}
-
+/// The subprocess shot detector's JSON (an array or `{"boundaries": [...]}`).
+/// Pure parsing: no detector registration, which lives in its own test binary
+/// (`tests/shots_registry.rs`) because it changes the index cache key.
 #[test]
-fn shot_hook_uses_the_registered_detector() {
-    // (This test binary's only registration.)
-    assert!(shots::register("fake", fake_detector));
-    assert!(!shots::register("again", fake_detector), "first wins");
-    assert_eq!(shots::detector_id().as_deref(), Some("in-process:fake"));
-    let b = shots::detect_shots(Path::new("x.mkv"), None, &shots::ShotOptions::default()).unwrap();
-    assert_eq!(b.len(), 2);
-    assert_eq!(b[1].span, Some((rt(9, 2), rt(11, 2))));
-    let b = shots::detect_shots(
-        Path::new("x.mkv"),
-        Some(TimeRange::new(rt(4, 1), rt(2, 1))),
-        &shots::ShotOptions::default(),
-    )
-    .unwrap();
-    assert_eq!(b.len(), 1);
-    // The subprocess protocol's JSON (array or {"boundaries": [...]}).
+fn shot_boundary_json_parses() {
     let j = r#"{"boundaries":[{"at":"5/2","span":null,"kind":"fade_in","confidence":1.0}]}"#;
     assert_eq!(
         shots::parse_boundaries(j).unwrap()[0].kind,
