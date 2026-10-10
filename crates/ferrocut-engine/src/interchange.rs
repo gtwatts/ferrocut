@@ -1457,11 +1457,11 @@ where
             to_tick(duration)?;
         }
         tl.validate()?;
-        if tl.camera.is_some() || tl.motion_blur.is_some() {
+        if tl.camera.is_some() || tl.motion_blur.is_some() || !tl.renderer.is_legacy() {
             self.report.loss(
                 "composition_3d",
                 &tl.name,
-                "camera and motion-blur composition settings omitted",
+                "camera, depth renderer and motion-blur composition settings omitted",
             );
         }
         if tl.audio.loudness.is_some() {
@@ -1494,6 +1494,13 @@ where
                     "track_compositing",
                     &track.name,
                     "track mattes and track effects omitted",
+                );
+            }
+            if !track.visible {
+                self.report.loss(
+                    "track_visibility",
+                    &track.name,
+                    "hidden video track exported as visible; native visibility is omitted",
                 );
             }
             for clip in &track.clips {
@@ -2474,6 +2481,7 @@ impl Importer<'_> {
             }
             tracks.push(Track {
                 name: track.name.clone(),
+                visible: true,
                 clips,
                 audio: BusSpec::default(),
                 matte: None,
@@ -2483,6 +2491,7 @@ impl Importer<'_> {
         if tracks.is_empty() {
             tracks.push(Track {
                 name: "Video".into(),
+                visible: true,
                 clips: Vec::new(),
                 audio: BusSpec::default(),
                 matte: None,

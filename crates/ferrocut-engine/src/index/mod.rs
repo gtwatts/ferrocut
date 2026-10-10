@@ -22,6 +22,7 @@ pub mod whisper;
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use anyhow::{Context as _, bail};
@@ -259,6 +260,20 @@ fn plan(media_hash: &str, opts: &IndexOptions) -> Plan {
     }
 }
 
+/// `<pid>-<n>`, unique per call within this process. Scratch and temporary
+/// file names use it: the index key alone is shared by concurrent calls on
+/// identical content (two `index_media` calls in one server, or parallel
+/// tests), and one call removing the other's whisper output or temp index
+/// made it fail spuriously (it then retried on the CPU).
+fn unique_suffix() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 /// Index `media` (or read its cached index).
 pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIndex, IndexInfo)> {
     let t0 = Instant::now();
@@ -366,7 +381,7 @@ pub fn index_media(media: &Path, opts: &IndexOptions) -> anyhow::Result<(MediaIn
     if !transcribe_failed {
         let dir = path.parent().expect("index dir");
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        let tmp = path.with_extension(format!("tmp{}", unique_suffix()));
         std::fs::write(&tmp, serde_json::to_string_pretty(&ix)?)?;
         std::fs::rename(&tmp, &path)?;
     }
@@ -396,11 +411,8 @@ fn transcribe(
     let mono: Vec<f32> = (0..n)
         .map(|i| planes.iter().map(|p| p[i]).sum::<f32>() / k)
         .collect();
-    let base = std::env::temp_dir().join(format!(
-        "ferrocut-index-{}-{}",
-        std::process::id(),
-        &key[..16]
-    ));
+    let base =
+        std::env::temp_dir().join(format!("ferrocut-index-{}-{}", &key[..16], unique_suffix()));
     let wav = base.with_extension("wav");
     whisper::write_wav(&wav, &mono, WHISPER_RATE)?;
     let r = whisper::transcribe(cli, model, &wav, &base, cfg);
@@ -418,4 +430,15 @@ fn transcribe(
         device: r.device.into(),
         segments: r.segments,
     })
+}
+
+#[cfg(test)]
+mod scratch_tests {
+    #[test]
+    fn scratch_names_differ_per_call() {
+        let a = super::unique_suffix();
+        let b = super::unique_suffix();
+        assert_ne!(a, b);
+        assert!(a.starts_with(&format!("{}-", std::process::id())));
+    }
 }

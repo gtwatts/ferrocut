@@ -148,14 +148,24 @@ fn blend_mode() -> Value {
 
 fn matte() -> Value {
     json!({
-        "description": "Track matte: the track directly above is this track's matte source (and is not composited itself). alpha keeps this track where the matte is opaque, luma where it is bright (ACEScg luminance of the premultiplied matte, i.e. luminance times alpha); the _inverted variants keep the rest. The matte track's own linked audio still plays.",
+        "description": "Track matte: default track_above consumes the adjacent video track. source:{track:name} reuses a unique nonempty video track name in this composition, without consuming it. Its visible switch affects compositing, not matte availability or linked audio. Sources include their own effects/matte; cycles, self references and adjustment sources are rejected. Both pictures use the same composition time and independent clip retiming. alpha uses coverage; luma uses ACEScg luminance of premultiplied RGB (brightness times alpha); inverted variants keep the rest.",
         "anyOf": [
             { "type": "null" },
             {
                 "type": "object",
                 "properties": {
                     "mode": { "enum": ["alpha", "alpha_inverted", "luma", "luma_inverted"] },
-                    "source": { "const": "track_above", "description": "default; other matte sources (e.g. vector masks) are a planned hook" }
+                    "source": {
+                        "default": "track_above",
+                        "anyOf": [
+                            { "const": "track_above" },
+                            {
+                                "type": "object",
+                                "properties": { "track": { "type": "string", "minLength": 1 } },
+                                "required": ["track"], "additionalProperties": false
+                            }
+                        ]
+                    }
                 },
                 "required": ["mode"], "additionalProperties": false
             }
@@ -645,10 +655,10 @@ pub fn edit_op() -> Value {
         ),
         op(
             "set_param",
-            "Set one parameter by name on a clip (`clip`), a track's audio bus (`track`) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant, {keyframes} or {expression, value?} (see the guide's Expressions); objects take an object, or null to remove.",
+            "Set one parameter by name on a clip (`clip`), a track (`track`: visible, matte, effects or its audio bus) or the timeline (neither). Names: see timeline_schema `params` (e.g. opacity, transform.position, transform.position.x, transform.scale, transform.rotation, audio.gain_db, audio.pan, audio.mute, audio.fade_in, bus.gain_db, bus.duck, bus.duck.ratio, audio.master_gain_db, audio.loudness, audio.loudness.target_lufs, output.duration). Numeric parameters take a constant, {keyframes} or {expression, value?} (see the guide's Expressions); objects take an object, or null to remove. Reusable matte example: track:Panel, param:matte, value:{mode:alpha,source:{track:Stencil}}; hide only its source picture with track:Stencil, param:visible, value:false.",
             json!({
                 "clip": clip_id(),
-                "track": { "type": "string", "minLength": 1, "description": "track name (its audio bus)" },
+                "track": { "type": "string", "minLength": 1, "description": "track name (video picture controls or audio bus)" },
                 "param": { "type": "string", "minLength": 1, "description": "parameter name" },
                 "value": param_value()
             }),
@@ -818,7 +828,16 @@ pub fn render() -> Value {
             "check_args": check_args(),
             "expect_audio": expect_audio(),
             "deliver": deliver(),
-            "proxies": { "type": "boolean", "default": false, "description": "draft render: read video from half-resolution proxies where they exist (proxy_generate); the summary gains draft=true and the proxies used. Ignored with deliver (a final render always uses the original media). Draft chunks are cached apart from full-resolution ones." }
+            "proxies": { "type": "boolean", "default": false, "description": "draft render: read video from half-resolution proxies where they exist (proxy_generate); the summary gains draft=true and the proxies used. Ignored with deliver (a final render always uses the original media). Draft chunks are cached apart from full-resolution ones." },
+            "range": {
+                "description": "render only a half-open interval of timeline frames into a master (and delivery) that starts at frame 0. Frames are evaluated at their original timeline times; audio is the same samples of the full program's mastered mix (not re-mastered). Interior chunks reuse a full render's cache. The summary and report gain `range` with source/output frames, times and samples. Not combinable with check (the checker grades whole-timeline masters).",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "frames": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 0 }, "description": "[start, end): 0-based timeline frames, end exclusive" },
+                    "time": { "type": "array", "minItems": 2, "maxItems": 2, "items": rational("timeline seconds"), "description": "[t0, t1): the frames whose start time t satisfies t0 <= t < t1" }
+                }
+            }
         }),
         &["timeline", "output"],
     )
@@ -948,7 +967,7 @@ fn transform() -> Value {
 }
 
 fn three_d() -> Value {
-    json!({ "type": "boolean", "default": false, "description": "After Effects 3D layer switch: a card in 3D space seen through the timeline camera; consecutive 3D layers are depth-sorted (farthest first), 2D layers split the runs" })
+    json!({ "type": "boolean", "default": false, "description": "A planar card seen through the timeline camera. Default legacy mode painter-sorts consecutive 3D layers by anchor depth. Opt-in depth_layers_v1 resolves intersections and fractional alpha per pixel, up to 16 authored surfaces per run; visible unconsumed 2D tracks split runs." })
 }
 
 fn clip_motion_blur() -> Value {
@@ -965,7 +984,11 @@ fn camera() -> Value {
             "position": triple("camera position [x, y, z], output pixels"),
             "point_of_interest": triple("the point the camera looks at [x, y, z]"),
             "zoom": animatable("distance in pixels at which a layer appears at 100 %, > 0; exclusive with fov_deg"),
-            "fov_deg": animatable("horizontal angle of view, degrees, (0, 180); exclusive with zoom")
+            "fov_deg": animatable("horizontal angle of view, degrees, (0, 180); exclusive with zoom"),
+            "reference_up": triple("depth_layers_v1 only: finite nonzero world-up [x,y,z], default [0,-1,0]; must not be collinear with viewing axis"),
+            "roll": animatable("depth_layers_v1 only: degrees about viewing axis, default 0"),
+            "near": rational("depth_layers_v1 only: positive near clip distance, default 1"),
+            "far": rational("depth_layers_v1 only: far clip distance > near, default 100000")
         },
         "additionalProperties": false
     })
@@ -1134,6 +1157,7 @@ pub fn timeline() -> Value {
                     "type": "object",
                     "properties": {
                         "name": { "type": "string", "description": "unique (edit ops and duck keys refer to it)" },
+                        "visible": { "type": "boolean", "default": true, "description": "join the final picture stack; false still permits matte use and linked audio; legacy track_above source consumption is unchanged" },
                         "audio": bus(),
                         "matte": matte(),
                         "effects": video_effects(),
@@ -1177,6 +1201,7 @@ pub fn timeline() -> Value {
                 "additionalProperties": false
             },
             "camera": camera(),
+            "renderer": { "type": "string", "enum": ["legacy", "depth_layers_v1"], "default": "legacy", "description": "Opt-in per-pixel planar depth with ordered fractional alpha; at most 16 authored surfaces per consecutive 3D run. Default preserves legacy painter keys and pixels. Unsupported matte, track-effect, overlap or blend interactions error with nesting guidance. D1 has no lights, shadows or aperture DOF." },
             "motion_blur": motion_blur(),
             "markers": markers("timeline time, >= 0 (does not move with ripple edits)")
         },
@@ -1219,6 +1244,25 @@ pub fn preview_frames() -> Value {
             "inline_max": { "type": "integer", "minimum": 256, "maximum": 4096, "default": 1568, "description": "longer side of the inline image in pixels; the PNG is also halved until it is under 3 MB" }
         }),
         &["timeline"],
+    )
+}
+
+/// `artifact_frames`: exact frames decoded from an encoded file.
+pub fn artifact_frames() -> Value {
+    object(
+        json!({
+            "path": path("encoded video file to inspect (a delivery, excerpt or master)"),
+            "frames": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "type": "integer", "minimum": -64 }, "description": "frame ordinals in presentation order from the stream start (0 = first); negative counts from the end (-1 = last, needs a full decode)" },
+            "output_dir": path("directory for the PNGs (default: <file dir>/inspect)"),
+            "each": { "type": "boolean", "default": true, "description": "write one full-resolution PNG per frame, exact straight alpha (<prefix>-<file blake3>-i<ordinal>-<png blake3>.png; an existing file with other content is never replaced)" },
+            "sheet": { "type": "boolean", "default": true, "description": "write a labeled contact sheet (<prefix>-<file blake3>-sheet-<png blake3>.png) when more than one frame is requested" },
+            "cols": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4, "description": "contact sheet columns" },
+            "cell_width": { "type": "integer", "minimum": 64, "maximum": 1920, "default": 480, "description": "contact sheet cell width in pixels" },
+            "prefix": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$", "description": "file name prefix (default: the file stem): letters, digits, '.', '_', '-'" },
+            "inline": { "type": "boolean", "default": true, "description": "also return the sheet (or the single frame) as an image content block" },
+            "inline_max": { "type": "integer", "minimum": 256, "maximum": 4096, "default": 1568, "description": "longer side of the inline image in pixels; the PNG is also halved until it is under 3 MB" }
+        }),
+        &["path", "frames"],
     )
 }
 

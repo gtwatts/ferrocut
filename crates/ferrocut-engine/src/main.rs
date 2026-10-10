@@ -84,6 +84,16 @@ enum Cmd {
         /// records the choice, like `ferrocut-deliver openh264 enable`).
         #[arg(long, requires = "deliver")]
         download_openh264: bool,
+        /// Render only timeline frames START..END (half-open, 0-based) into a
+        /// master that starts at frame 0. Frames are evaluated at their original
+        /// timeline times; the audio is the same samples of the full program's
+        /// mastered mix. Interior chunks reuse a full render's cache.
+        #[arg(long, value_name = "START..END", conflicts_with = "range_time")]
+        range_frames: Option<String>,
+        /// The same range as rational seconds T0..T1 ("1/2..5/2"): the frames
+        /// whose start time t satisfies T0 <= t < T1.
+        #[arg(long, value_name = "T0..T1")]
+        range_time: Option<String>,
     },
     /// Perceptual quality check of a render via ferrocut-perceive (eval grader hook).
     /// Prints JSON; exits 0 pass (or skipped: checker not installed), 1 fail, 2 error.
@@ -393,7 +403,29 @@ enum CaptionCmd {
         /// .srt or .vtt; refuses to overwrite an existing file.
         #[arg(short, long)]
         output: PathBuf,
+        /// Sidecar for a selected-range render (`render --range-frames`): keep
+        /// cues overlapping START..END, clipped to it and shifted so START is 0.
+        #[arg(long, value_name = "START..END", conflicts_with = "range_time")]
+        range_frames: Option<String>,
+        /// The same range as rational seconds T0..T1 (frames starting in it).
+        #[arg(long, value_name = "T0..T1")]
+        range_time: Option<String>,
     },
+}
+
+/// `--range-frames` / `--range-time` against `tl` (bounds checked).
+fn range_arg(
+    tl: &Timeline,
+    frames: Option<&str>,
+    time: Option<&str>,
+) -> anyhow::Result<Option<ferrocut_engine::render::FrameRange>> {
+    use ferrocut_engine::render::FrameRange;
+    let r = match (frames, time) {
+        (Some(f), _) => FrameRange::parse(f, false, tl.output.fps)?,
+        (None, Some(t)) => FrameRange::parse(t, true, tl.output.fps)?,
+        (None, None) => return Ok(None),
+    };
+    Ok(Some(r.check(tl.frame_count())?))
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -656,9 +688,12 @@ fn main() -> anyhow::Result<()> {
                     timeline,
                     track,
                     output,
+                    range_frames,
+                    range_time,
                 } => {
                     let tl = Timeline::load(&timeline)?;
-                    let cues = captions::from_track(&tl, &track)?;
+                    let mut cues = captions::from_track(&tl, &track)?;
+                    let range = range_arg(&tl, range_frames.as_deref(), range_time.as_deref())?;
                     // Report the timeline's own blinks (overlapping tracks
                     // have none to report); the export is unchanged.
                     if let Ok((_, report)) = captions::retime(
@@ -670,6 +705,15 @@ fn main() -> anyhow::Result<()> {
                         for w in &report.warnings {
                             eprintln!("warning: {w}");
                         }
+                    }
+                    if let Some(r) = range {
+                        // Sidecar for a selected-range render of the same frames.
+                        let fps = tl.output.fps;
+                        cues = captions::clip_to_range(
+                            &cues,
+                            ferrocut_core::RationalTime::from_frames(r.start, fps),
+                            ferrocut_core::RationalTime::from_frames(r.end, fps),
+                        )?;
                     }
                     let text = captions::write(&cues, CaptionFormat::from_path(&output)?)?;
                     use std::io::Write as _;
@@ -1038,10 +1082,18 @@ fn main() -> anyhow::Result<()> {
             deliver_qp,
             deliver_no_audio,
             download_openh264,
+            range_frames,
+            range_time,
         } => {
             let started = std::time::Instant::now();
             let jobs_arg = jobs;
             let tl = Timeline::load(&timeline)?;
+            let range = range_arg(&tl, range_frames.as_deref(), range_time.as_deref())?;
+            if range.is_some() && check {
+                anyhow::bail!(
+                    "--check grades a master against its whole timeline; check the full render (a selected-range master is not graded yet)"
+                );
+            }
             if proxies && deliver.is_some() {
                 eprintln!("proxies: ignored (--deliver is a final render: original media)");
             }
@@ -1077,10 +1129,11 @@ fn main() -> anyhow::Result<()> {
                     .join(".ferrocut-cache")
             });
             let jobs = jobs.unwrap_or_else(|| {
-                let (j, why) = ferrocut_engine::vram::default_jobs(
+                let (j, why) = ferrocut_engine::vram::default_jobs_with_extra(
                     &gpu.get().info,
                     c.max_layer_size.0,
                     c.max_layer_size.1,
+                    c.extra_gpu_bytes_per_job,
                 );
                 println!("jobs:    {why}");
                 j
@@ -1095,6 +1148,7 @@ fn main() -> anyhow::Result<()> {
                     jobs,
                     deadline: timeout.map(|s| started + std::time::Duration::from_secs_f64(s)),
                     max_retries: retries,
+                    range,
                     ..RenderOptions::new(cache_dir)
                 },
             )?;
@@ -1179,7 +1233,12 @@ fn main() -> anyhow::Result<()> {
                 );
                 if let (Some(m), Some(t)) = (&a.output, a.analysis.target_lufs) {
                     println!(
-                        "loudness: {:.2} LUFS (target {t}), true peak {:.2} dBTP | gain {:+.2} dB, limiter max {:.2} dB, {} passes",
+                        "loudness{}: {:.2} LUFS (target {t}), true peak {:.2} dBTP | gain {:+.2} dB, limiter max {:.2} dB, {} passes",
+                        if a.measurement_scope.is_some() {
+                            " (full program, not this excerpt)"
+                        } else {
+                            ""
+                        },
                         m.integrated_lufs,
                         m.true_peak_dbtp,
                         a.analysis.norm_gain_db,

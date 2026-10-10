@@ -1,0 +1,1320 @@
+{
+  "name": "Crossing Glass \u2014 native depth study",
+  "renderer": "depth_layers_v1",
+  "output": {
+    "width": 960,
+    "height": 540,
+    "fps": 30,
+    "gop": 30,
+    "duration": 6
+  },
+  "camera": {
+    "zoom": 850,
+    "position": [
+      {
+        "keyframes": [
+          {
+            "t": "0",
+            "v": "480"
+          },
+          {
+            "t": "1",
+            "v": "480"
+          },
+          {
+            "t": "3",
+            "v": "640"
+          },
+          {
+            "t": "4",
+            "v": "340"
+          },
+          {
+            "t": "6",
+            "v": "480"
+          }
+        ]
+      },
+      270,
+      {
+        "keyframes": [
+          {
+            "t": "0",
+            "v": "-850"
+          },
+          {
+            "t": "3",
+            "v": "-820"
+          },
+          {
+            "t": "4",
+            "v": "-900"
+          },
+          {
+            "t": "6",
+            "v": "-850"
+          }
+        ]
+      }
+    ],
+    "point_of_interest": [
+      480,
+      270,
+      0
+    ],
+    "reference_up": [
+      0,
+      -1,
+      0
+    ],
+    "roll": {
+      "keyframes": [
+        {
+          "t": "0",
+          "v": "0"
+        },
+        {
+          "t": "3",
+          "v": "0"
+        },
+        {
+          "t": "9/2",
+          "v": "12"
+        },
+        {
+          "t": "21/4",
+          "v": "-10"
+        },
+        {
+          "t": "6",
+          "v": "0"
+        }
+      ]
+    },
+    "near": 1,
+    "far": 100000
+  },
+  "tracks": [
+    {
+      "name": "Checker",
+      "clips": [
+        {
+          "id": "checker",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "vector_group",
+            "group": {
+              "items": [
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 0,
+                      "y": 0,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 120,
+                      "y": 0,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 240,
+                      "y": 0,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 360,
+                      "y": 0,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 480,
+                      "y": 0,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 600,
+                      "y": 0,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 720,
+                      "y": 0,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 840,
+                      "y": 0,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 0,
+                      "y": 90,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 120,
+                      "y": 90,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 240,
+                      "y": 90,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 360,
+                      "y": 90,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 480,
+                      "y": 90,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 600,
+                      "y": 90,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 720,
+                      "y": 90,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 840,
+                      "y": 90,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 0,
+                      "y": 180,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 120,
+                      "y": 180,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 240,
+                      "y": 180,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 360,
+                      "y": 180,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 480,
+                      "y": 180,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 600,
+                      "y": 180,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 720,
+                      "y": 180,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 840,
+                      "y": 180,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 0,
+                      "y": 270,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 120,
+                      "y": 270,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 240,
+                      "y": 270,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 360,
+                      "y": 270,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 480,
+                      "y": 270,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 600,
+                      "y": 270,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 720,
+                      "y": 270,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 840,
+                      "y": 270,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 0,
+                      "y": 360,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 120,
+                      "y": 360,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 240,
+                      "y": 360,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 360,
+                      "y": 360,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 480,
+                      "y": 360,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 600,
+                      "y": 360,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 720,
+                      "y": 360,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 840,
+                      "y": 360,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 0,
+                      "y": 450,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 120,
+                      "y": 450,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 240,
+                      "y": 450,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 360,
+                      "y": 450,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 480,
+                      "y": 450,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 600,
+                      "y": 450,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 720,
+                      "y": 450,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/10",
+                        "1/10",
+                        "1/10"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "shape",
+                  "shape": {
+                    "geometry": {
+                      "type": "rectangle",
+                      "x": 840,
+                      "y": 450,
+                      "width": 120,
+                      "height": 90,
+                      "radius": 0
+                    },
+                    "fill": {
+                      "type": "solid",
+                      "color": [
+                        "1/5",
+                        "1/5",
+                        "1/5"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "three_d": true,
+          "transform": {
+            "scale": 2,
+            "position_z": 220
+          }
+        }
+      ]
+    },
+    {
+      "name": "Red",
+      "clips": [
+        {
+          "id": "red-glass",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "rectangle",
+                "x": 160,
+                "y": 130,
+                "width": 640,
+                "height": 290,
+                "radius": 20
+              },
+              "fill": {
+                "type": "solid",
+                "color": [
+                  1,
+                  "1/10",
+                  "1/15",
+                  "3/5"
+                ]
+              }
+            }
+          },
+          "three_d": true,
+          "transform": {
+            "rotation_y": -30,
+            "position_z": {
+              "keyframes": [
+                {
+                  "t": "0",
+                  "v": "0"
+                },
+                {
+                  "t": "2",
+                  "v": "0"
+                },
+                {
+                  "t": "3",
+                  "v": "55"
+                },
+                {
+                  "t": "6",
+                  "v": "0"
+                }
+              ]
+            }
+          },
+          "masks": [
+            {
+              "geometry": {
+                "type": "ellipse",
+                "center": [
+                  420,
+                  280
+                ],
+                "radius": [
+                  45,
+                  45
+                ]
+              },
+              "mode": "subtract"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Blue",
+      "clips": [
+        {
+          "id": "blue-glass",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "shape",
+            "shape": {
+              "geometry": {
+                "type": "rectangle",
+                "x": 160,
+                "y": 130,
+                "width": 640,
+                "height": 290,
+                "radius": 20
+              },
+              "fill": {
+                "type": "solid",
+                "color": [
+                  "1/20",
+                  "2/5",
+                  1,
+                  "3/4"
+                ]
+              }
+            }
+          },
+          "three_d": true,
+          "transform": {
+            "rotation_y": 30,
+            "position_z": {
+              "keyframes": [
+                {
+                  "t": "0",
+                  "v": "0"
+                },
+                {
+                  "t": "2",
+                  "v": "0"
+                },
+                {
+                  "t": "3",
+                  "v": "-55"
+                },
+                {
+                  "t": "6",
+                  "v": "0"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Title",
+      "clips": [
+        {
+          "id": "title",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "text",
+            "text": {
+              "content": "CROSSING GLASS",
+              "font": "../../crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+              "font_size": 32,
+              "position": [
+                50,
+                42
+              ],
+              "box_size": [
+                860,
+                48
+              ],
+              "fill": [
+                1,
+                1,
+                1
+              ],
+              "tracking": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Subtitle",
+      "clips": [
+        {
+          "id": "subtitle",
+          "start": 0,
+          "duration": 6,
+          "generator": {
+            "type": "text",
+            "text": {
+              "content": "Two surfaces. One intersection.",
+              "font": "../../crates/ferrocut-engine/tests/data/text/NotoSans-Regular.ttf",
+              "font_size": 18,
+              "position": [
+                50,
+                480
+              ],
+              "box_size": [
+                860,
+                32
+              ],
+              "fill": [
+                "4/5",
+                "4/5",
+                "4/5"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,12 +1,18 @@
 //! Media index: whisper JSON parsing, transcript search, padded cut ranges,
 //! the content-hashed cache (with a fake whisper-cli), GPU->CPU fallback, the
-//! shot-detection hook, and (when whisper.cpp, its model and the eval clip
+//! shot-detection JSON, and (when whisper.cpp, its model and the eval clip
 //! are present) a real transcription of a Sintel line.
+//!
+//! No test here may register a shot detector: `shots::register` is
+//! process-global and the detector id is part of the index cache key, so a
+//! registration racing these `shots: true` cache tests changes the key between
+//! an index and its cached lookup (PR 8 CI run 38009480085). The registry test
+//! is `tests/shots_registry.rs`, its own process.
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 
-use ferrocut_core::{BoundaryKind, Rational, RationalTime, ShotBoundary, TimeRange};
+use ferrocut_core::{BoundaryKind, Rational, RationalTime};
 use ferrocut_engine::index::{
     self, IndexOptions, Part, Transcript, WhisperConfig, padded_range, search, shots, whisper,
 };
@@ -237,47 +243,11 @@ fn index_is_cached_by_content_and_falls_back_to_cpu() {
     assert!(reason.contains("missing.bin"), "{reason}");
 }
 
-fn fake_detector(
-    _: &Path,
-    range: Option<TimeRange>,
-) -> Result<Vec<ShotBoundary>, ferrocut_core::NodeError> {
-    let all = vec![
-        ShotBoundary {
-            at: rt(2, 1),
-            span: None,
-            kind: BoundaryKind::Cut,
-            confidence: 0.9,
-        },
-        ShotBoundary {
-            at: rt(5, 1),
-            span: Some((rt(9, 2), rt(11, 2))),
-            kind: BoundaryKind::Dissolve,
-            confidence: 0.6,
-        },
-    ];
-    Ok(all
-        .into_iter()
-        .filter(|b| range.is_none_or(|r| r.contains(b.at)))
-        .collect())
-}
-
+/// The subprocess shot detector's JSON (an array or `{"boundaries": [...]}`).
+/// Pure parsing: no detector registration, which lives in its own test binary
+/// (`tests/shots_registry.rs`) because it changes the index cache key.
 #[test]
-fn shot_hook_uses_the_registered_detector() {
-    // (This test binary's only registration.)
-    assert!(shots::register("fake", fake_detector));
-    assert!(!shots::register("again", fake_detector), "first wins");
-    assert_eq!(shots::detector_id().as_deref(), Some("in-process:fake"));
-    let b = shots::detect_shots(Path::new("x.mkv"), None, &shots::ShotOptions::default()).unwrap();
-    assert_eq!(b.len(), 2);
-    assert_eq!(b[1].span, Some((rt(9, 2), rt(11, 2))));
-    let b = shots::detect_shots(
-        Path::new("x.mkv"),
-        Some(TimeRange::new(rt(4, 1), rt(2, 1))),
-        &shots::ShotOptions::default(),
-    )
-    .unwrap();
-    assert_eq!(b.len(), 1);
-    // The subprocess protocol's JSON (array or {"boundaries": [...]}).
+fn shot_boundary_json_parses() {
     let j = r#"{"boundaries":[{"at":"5/2","span":null,"kind":"fade_in","confidence":1.0}]}"#;
     assert_eq!(
         shots::parse_boundaries(j).unwrap()[0].kind,
@@ -512,4 +482,99 @@ fn legacy_cached_transcription_errors_are_retried() {
     // Rewritten: the next request is a plain cache hit.
     let (ix2, info) = index::index_media(&media, &opts(false)).unwrap();
     assert!(info.cached && ix2 == ix && runs(&tools) == 2);
+}
+
+/// A whisper-cli stand-in that records each run's `-f` input and `-of`
+/// output base (one `<f> <of>` line per run) and writes WHISPER_JSON there.
+fn recording_whisper(dir: &Path) -> PathBuf {
+    let json = dir.join("fixture.json");
+    std::fs::write(&json, WHISPER_JSON).unwrap();
+    let p = dir.join("whisper-cli");
+    std::fs::write(
+        &p,
+        format!(
+            r#"#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in -f) f=$2; shift;; -of) of=$2; shift;; esac
+  shift
+done
+echo "$f $of" >> "{d}/calls"
+cp "{j}" "$of.json"
+"#,
+            d = dir.display(),
+            j = json.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+/// Two transcriptions of identical content in one process (PR 8 focused
+/// run-01, repeat pass 9: one call removed the other's whisper output and
+/// fell back to the CPU) each own their scratch WAV/JSON. Deterministic:
+/// the same media bytes and model in two directories give the same index
+/// key, so per-process naming handed both calls the same files even run
+/// one after the other; then the same pair concurrently, both succeeding.
+#[test]
+fn identical_content_transcriptions_use_their_own_scratch_files() {
+    let d = tempfile::tempdir().unwrap();
+    let tools = d.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    let cli = recording_whisper(&tools);
+    let model = tools.join("ggml-test.bin");
+    std::fs::write(&model, b"model v1").unwrap();
+    let opts = IndexOptions {
+        transcribe: true,
+        shots: false,
+        whisper: WhisperConfig {
+            cli: Some(cli.clone()),
+            model: Some(model.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let calls = || -> Vec<(String, String)> {
+        std::fs::read_to_string(tools.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| {
+                let (f, of) = l.split_once(' ').unwrap();
+                (f.to_owned(), of.to_owned())
+            })
+            .collect()
+    };
+    let media: Vec<PathBuf> = (0..4)
+        .map(|i| {
+            let dir = d.path().join(format!("m{i}"));
+            std::fs::create_dir(&dir).unwrap();
+            let m = dir.join("vo.wav");
+            write_tone(&m, 1.0);
+            m
+        })
+        .collect();
+    // Sequential: same key, distinct scratch files.
+    let (a, _) = index::index_media(&media[0], &opts).unwrap();
+    let (b, _) = index::index_media(&media[1], &opts).unwrap();
+    assert_eq!(
+        a.key, b.key,
+        "identical content and model share the index key"
+    );
+    let c = calls();
+    assert_eq!(c.len(), 2);
+    assert_ne!(c[0].0, c[1].0, "each call has its own scratch WAV");
+    assert_ne!(c[0].1, c[1].1, "each call has its own whisper output base");
+    // Concurrent: both transcribe once, neither falls back.
+    let (x, y) = std::thread::scope(|s| {
+        let hx = s.spawn(|| index::index_media(&media[2], &opts).unwrap());
+        let hy = s.spawn(|| index::index_media(&media[3], &opts).unwrap());
+        (hx.join().unwrap(), hy.join().unwrap())
+    });
+    assert!(!x.1.cached && !y.1.cached);
+    assert_eq!(x.0.transcript, a.transcript);
+    assert_eq!(y.0.transcript, a.transcript);
+    let c = calls();
+    assert_eq!(c.len(), 4, "exactly one whisper run per call: {c:?}");
+    let bases: std::collections::HashSet<&String> = c.iter().map(|(_, of)| of).collect();
+    assert_eq!(bases.len(), 4, "four distinct output bases: {c:?}");
 }

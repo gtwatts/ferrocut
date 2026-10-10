@@ -3942,11 +3942,11 @@
             "result": {
               "executed": true,
               "exit_code": 0,
-              "recorded_at": "2026-10-09T15:10:39.528696+00:00",
-              "revision": "268f32767812126510759aefce6f424110c7ad4e",
-              "input_digest": "967c1f8f18dfaa3cf379147084edafc9cd90a5b4552a43c4820638dc375d33ed",
-              "log_path": "docs/parity/artifacts/acceptance/PP-067-native-title-edit-render-20261009T151039528696Z.log",
-              "log_sha256": "fc0fb515e9ff6e904e5c4ae833e62dccd507da35652e43de00613ce8fa622108"
+              "recorded_at": "2026-10-10T00:23:37.081972+00:00",
+              "revision": "cad3de7ec0398a563e8634529d996348b065cfde",
+              "input_digest": "49331f1b49acb11f19a9637d782ab1745f8d1cd197de6de34e1e24538c160864",
+              "log_path": "docs/parity/artifacts/acceptance/PP-067-native-title-edit-render-20261010T002337081972Z.log",
+              "log_sha256": "34bd79700c2e78c1bfa43e02f7cbe40a3d27f7349bc9ff54a9fb1d7dde6de984"
             }
           }
         ],
@@ -9732,7 +9732,7 @@
       "proposed_acceptance": "Render a selected range, reuse valid cache and invalidate changed dependencies only.",
       "ferrocut": {
         "status": "partial",
-        "assessed_at": "2026-10-08",
+        "assessed_at": "2026-10-10",
         "acceptance_complete": false,
         "evidence": [
           {
@@ -9758,10 +9758,56 @@
             "path": "crates/ferrocut-mcp/src/lib.rs",
             "locator": "",
             "claim": "Full-sequence render/chunk reuse/invalidation, cancellation and progress reporting exist."
+          },
+          {
+            "stage": "implemented",
+            "path": "crates/ferrocut-engine/src/render.rs",
+            "locator": "pub fn plan_range",
+            "claim": "RenderOptions.range renders half-open timeline frames [start,end) at their original times into a master starting at 0; chunks follow the full grid cut at the ends (interior keys equal a full render's); audio is the same samples of the full program's mastered mix (measurement_scope full_program); the report keeps range.source_frames/output_frames/source_time/source_samples/output_samples."
+          },
+          {
+            "stage": "integrated",
+            "path": "crates/ferrocut-engine/src/main.rs",
+            "locator": "range_frames",
+            "claim": "`ferrocut render --range-frames A..B | --range-time T0..T1` (refused with --check) and `captions export` with the same flags (cues clipped to the range and shifted to 0)."
+          },
+          {
+            "stage": "integrated",
+            "path": "crates/ferrocut-mcp/src/lib.rs",
+            "locator": "struct RangeArg",
+            "claim": "MCP render `range: {frames:[a,b]} | {time:[t0,t1]}`; the summary gains `range`."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-engine/tests/range.rs",
+            "locator": "range_master_equals_the_same_frames_and_samples_of_the_full_master",
+            "claim": "Executed at 29ee840 (lint-only successors 309cd72/691211b accepted statically; Clippy closed at 691211b): 106 focused tests passed, 0 failed, on CPU Vulkan (llvmpipe). Retained review out/production-cycle-20261009/cycle4/review/selected-range-run02-309cd72/REVIEW.json sha256 ffbb3a86e48db209ba027a69198fcfd7086ce2f0b4a53d59feeabfdbc6934f1b; Clippy closure in out/production-cycle-20261009/cycle4/review/combined-cad3de7-b1-closure/REVIEW.json sha256 e39a2b4d5f3032556ec63413836f970eea4a78902024507617796a9c42fb4ccb."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-perceive/tests/range_refusal.rs",
+            "locator": "range_reports_are_not_graded_against_the_whole_timeline",
+            "claim": "The checker refuses a selected-range report before analysis or cache work; part of the same 106-test focused run."
+          },
+          {
+            "stage": "rendered",
+            "path": "docs/evaluations/artifacts/agent-visual-workflows/receipt.json",
+            "locator": "selected-range-demo-run01",
+            "claim": "Release-candidate cad3de7 CLI and fresh stdio MCP demo (98 assertions, six CPU renders) and typed mover correction (53 assertions): frames [30,110) of a 144-frame 24000/1001 sequence give 80 frames and the exact PCM slice [60060,220220); interior full chunks reused and the two boundary fragments rendered on first use; a caption edit rerenders only the last 14-frame fragment and reuses the first boundary fragment; undo restores the exact range file. Review hashes selected-range-demo-run01 and selected-range-mover-actual-run01 are in this receipt."
+          },
+          {
+            "stage": "audit",
+            "path": "docs/evaluations/2026-10-10-agent-visual-workflows.md",
+            "locator": "Selected-range export",
+            "claim": "Public description of the executed candidate comparison and its limits."
           }
         ],
         "limitations": [
-          "Selected time/frame range rendering/export is not exposed as a normal CLI/MCP job."
+          "Candidate-route evidence only (release binaries built from cad3de7): the installed CLI and configured MCP route are not verified.",
+          "quality_check and `render --check` refuse selected-range masters; there is no range-aware grading, so a range output has no automated quality verdict.",
+          "Reuse is by keyed chunk file on the full-timeline grid: a cut boundary fragment cannot reuse the corresponding full-grid chunk, but reuses its own matching cached fragment and renders only on a miss or with force. A time-shifted whole chunk is not reused.",
+          "Inspection and output in the demonstration are eight-bit; retained frames were compared at a few sampled instants per run, with no normal-speed playback or listening.",
+          "This is a range render into a master file, not an in-application preview-cache indicator as in Premiere."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -9769,7 +9815,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "2026-10-10 eng-workflow: reconciled with accepted candidate evidence (focused tests and Clippy, the cad3de7 demo and mover correction, combined validation review fa3a2a2a in the public receipt). Status stays partial and acceptance_complete false: no acceptance check is registered in this ledger, the installed route is unverified, and no inspected artifact is tracked in the repository for a render review."
         ],
         "needs_design": false
       }
@@ -9971,7 +10018,7 @@
       "proposed_acceptance": "Export an exact frame range with matching audio duration and job status.",
       "ferrocut": {
         "status": "partial",
-        "assessed_at": "2026-10-08",
+        "assessed_at": "2026-10-10",
         "acceptance_complete": false,
         "evidence": [
           {
@@ -9997,10 +10044,55 @@
             "path": "crates/ferrocut-mcp/src/lib.rs",
             "locator": "",
             "claim": "Full-sequence render/chunk reuse/invalidation, cancellation and progress reporting exist."
+          },
+          {
+            "stage": "implemented",
+            "path": "crates/ferrocut-engine/src/render.rs",
+            "locator": "pub fn plan_range",
+            "claim": "RenderOptions.range renders half-open timeline frames [start,end) at their original times into a master starting at 0; chunks follow the full grid cut at the ends (interior keys equal a full render's); audio is the same samples of the full program's mastered mix (measurement_scope full_program); the report keeps range.source_frames/output_frames/source_time/source_samples/output_samples."
+          },
+          {
+            "stage": "integrated",
+            "path": "crates/ferrocut-engine/src/main.rs",
+            "locator": "range_frames",
+            "claim": "`ferrocut render --range-frames A..B | --range-time T0..T1` (refused with --check) and `captions export` with the same flags (cues clipped to the range and shifted to 0)."
+          },
+          {
+            "stage": "integrated",
+            "path": "crates/ferrocut-mcp/src/lib.rs",
+            "locator": "struct RangeArg",
+            "claim": "MCP render `range: {frames:[a,b]} | {time:[t0,t1]}`; the summary gains `range`."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-engine/tests/range.rs",
+            "locator": "range_master_equals_the_same_frames_and_samples_of_the_full_master",
+            "claim": "Executed at 29ee840 (lint-only successors 309cd72/691211b accepted statically; Clippy closed at 691211b): 106 focused tests passed, 0 failed, on CPU Vulkan (llvmpipe). Retained review out/production-cycle-20261009/cycle4/review/selected-range-run02-309cd72/REVIEW.json sha256 ffbb3a86e48db209ba027a69198fcfd7086ce2f0b4a53d59feeabfdbc6934f1b; Clippy closure in out/production-cycle-20261009/cycle4/review/combined-cad3de7-b1-closure/REVIEW.json sha256 e39a2b4d5f3032556ec63413836f970eea4a78902024507617796a9c42fb4ccb."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-perceive/tests/range_refusal.rs",
+            "locator": "range_reports_are_not_graded_against_the_whole_timeline",
+            "claim": "The checker refuses a selected-range report before analysis or cache work; part of the same 106-test focused run."
+          },
+          {
+            "stage": "rendered",
+            "path": "docs/evaluations/artifacts/agent-visual-workflows/receipt.json",
+            "locator": "selected-range-demo-run01",
+            "claim": "Release-candidate cad3de7 CLI and fresh stdio MCP demo (98 assertions, six CPU renders) and typed mover correction (53 assertions): frames [30,110) of a 144-frame 24000/1001 sequence give 80 frames and the exact PCM slice [60060,220220); interior full chunks reused and the two boundary fragments rendered on first use; a caption edit rerenders only the last 14-frame fragment and reuses the first boundary fragment; undo restores the exact range file. Review hashes selected-range-demo-run01 and selected-range-mover-actual-run01 are in this receipt."
+          },
+          {
+            "stage": "audit",
+            "path": "docs/evaluations/2026-10-10-agent-visual-workflows.md",
+            "locator": "Selected-range export",
+            "claim": "Public description of the executed candidate comparison and its limits."
           }
         ],
         "limitations": [
-          "Selected time/frame range rendering/export is not exposed as a normal CLI/MCP job."
+          "Candidate-route evidence only (release binaries built from cad3de7): the installed CLI and configured MCP route are not verified.",
+          "quality_check and `render --check` refuse selected-range masters; range audio is cut from the full-program master, so loudness figures describe the full program, not the excerpt.",
+          "Demonstrated on a lossless Matroska master at 640x360; range MP4 delivery, variable-frame-rate sources, high-bit-depth or encoded-alpha delivery were not exercised.",
+          "Frame identity was compared at sampled instants and PCM by exact bytes; no normal-speed playback or listening."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
@@ -10008,7 +10100,8 @@
         "render_reviews": [],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "2026-10-10 eng-workflow: reconciled with accepted candidate evidence (focused tests and Clippy, the cad3de7 demo and mover correction, combined validation review fa3a2a2a in the public receipt). Status stays partial and acceptance_complete false: no acceptance check is registered in this ledger, the installed route is unverified, and no inspected artifact is tracked in the repository for a render review."
         ],
         "needs_design": false
       }
@@ -19638,7 +19731,7 @@
       "proposed_acceptance": "Use one nonadjacent matte for two layers and compare alpha versus luminance.",
       "ferrocut": {
         "status": "partial",
-        "assessed_at": "2026-10-08",
+        "assessed_at": "2026-10-10",
         "acceptance_complete": false,
         "evidence": [
           {
@@ -19646,18 +19739,67 @@
             "path": "crates/ferrocut-engine/src/compile.rs",
             "locator": "",
             "claim": "Native alpha/luma matte compilation exists."
+          },
+          {
+            "stage": "implemented",
+            "path": "docs/design/2026-10-09-reusable-track-mattes.md",
+            "locator": "",
+            "claim": "Additive named matte references and independent video track visibility, with set_param and schema wiring."
+          },
+          {
+            "stage": "integrated",
+            "path": "crates/ferrocut-mcp/src/schema.rs",
+            "locator": "fn matte()",
+            "claim": "Timeline schema exposes the named matte reference and the track `visible` flag to agents."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-engine/tests/reusable_mattes.rs",
+            "locator": "two_recipients_share_one_picture_and_ignore_source_visibility",
+            "claim": "Executed at eb8070c: 31 focused tests passed, 0 failed (engine blend/nest/reusable-matte pixel comparisons; in-process MCP schema/edit/diff/undo/containment), Vulkan lavapipe only. Retained review out/production-cycle-20261009/cycle4/review/reusable-mattes-focused-run02/REVIEW.json sha256 4b48705372ce8228e5ffe39711023160fb1ca7cfe3276ae5d655feb04bac4ecd."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-mcp/tests/reusable_mattes.rs",
+            "locator": "matte_and_visibility_edits_dry_run_diff_journal_and_undo",
+            "claim": "Typed matte and visibility edits with dry run, diff, journal and undo; part of the same 31-test focused run."
+          },
+          {
+            "stage": "rendered",
+            "path": "docs/evaluations/artifacts/agent-visual-workflows/receipt.json",
+            "locator": "matte-depth-demo-run02",
+            "claim": "Release-candidate cad3de7 CLI and fresh stdio MCP matte/depth demo (771 recorded assertions including preflight, protocol and cleanup; 66 native-versus-PNG comparisons): one nonadjacent named source supplies two recipients with alpha, luma and hidden-source variants and reversible typed edits; selected FFV1 frames equal the native previews. Review hash matte-depth-demo-run02 is in this receipt; the lossy viewing copy is covered separately by viewing-correction-actual-run01."
+          },
+          {
+            "stage": "integrated",
+            "path": "examples/reusable-mattes/README.md",
+            "locator": "",
+            "claim": "Editable example project and typed edit scripts used by the demonstration."
           }
         ],
         "limitations": [
-          "Baseline mattes use adjacency/consumption; arbitrary reusable nonadjacent matte references are not supported."
+          "Named sources are existing unique nonempty video track names inside one composition: track-level, not arbitrary layers; no adjustment source, self-reference, cycles or cross-composition references. Legacy track_above retains adjacency and consumption.",
+          "Track visibility is a fixed Boolean, not animatable. Nest/unnest reject relationships or visibility they would discard; foreign interchange reports matte and hidden-video loss.",
+          "Candidate-route evidence only (cad3de7 release binaries, CPU lavapipe): no installed-route or hardware-GPU verification, and eight-bit sampled images only, with no normal-speed playback."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
         "output_review_exemption": null,
-        "render_reviews": [],
+        "render_reviews": [
+          {
+            "kind": "visual",
+            "approved": true,
+            "reviewed_at": "2026-10-10",
+            "reviewer": "review-reviewer@ferrocut (independent); also viewed by eng-workflow@ferrocut on 2026-10-10",
+            "artifact_path": "docs/evaluations/artifacts/agent-visual-workflows/showcase-sheet.png",
+            "artifact_sha256": "85dd2d0108b15be628d67a91e874a3b6887aaee396acb474705b946b325cd3b6",
+            "findings": "Six-frame sheet of the corrected lossy viewing copy. Frames f0, f60 and f120 show the matte section: the red panel and blue ellipse are present in each; the ellipse is solid blue at f0 and carries a dark-to-blue horizontal gradient at f60 and f120; the white gradient panel is visible at f0 and f60 and absent at f120 while the ellipse keeps its gradient. No blank or displaced sampled frame. Temporal sampling only: not continuous playback, not the lossless master, and no judgment of Adobe equivalence or creative quality."
+          }
+        ],
         "production_reviews": [],
         "notes": [
-          "Conservative code audit only; test-source references are not fresh execution or creative-review claims."
+          "Conservative code audit only; test-source references are not fresh execution or creative-review claims.",
+          "2026-10-10 eng-workflow: reconciled with accepted candidate evidence (31 focused tests at eb8070c; cad3de7 matte/depth demo; combined validation review fa3a2a2a in the public receipt). Status stays partial and acceptance_complete false: no acceptance check is registered in this ledger, sources are tracks rather than any eligible layer, and the installed route is unverified."
         ],
         "needs_design": false
       }
@@ -19683,32 +19825,81 @@
       "proposed_acceptance": "Show a matte source while it also controls another layer's transparency.",
       "ferrocut": {
         "status": "partial",
-        "assessed_at": "2026-10-08",
+        "assessed_at": "2026-10-10",
         "acceptance_complete": false,
         "evidence": [
           {
             "stage": "audit",
             "path": "crates/ferrocut-engine/src/blend.rs",
             "locator": "",
-            "claim": "The current adjacent matte source is consumed instead of composited."
+            "claim": "Legacy track_above mattes still consume the adjacent source; named mattes with track `visible` control presentation independently."
           },
           {
             "stage": "audit",
             "path": "crates/ferrocut-engine/src/compile.rs",
             "locator": "",
-            "claim": "The current adjacent matte source is consumed instead of composited."
+            "claim": "Legacy track_above mattes still consume the adjacent source; named mattes with track `visible` control presentation independently."
+          },
+          {
+            "stage": "implemented",
+            "path": "docs/design/2026-10-09-reusable-track-mattes.md",
+            "locator": "",
+            "claim": "Additive named matte references and independent video track visibility, with set_param and schema wiring."
+          },
+          {
+            "stage": "integrated",
+            "path": "crates/ferrocut-mcp/src/schema.rs",
+            "locator": "fn matte()",
+            "claim": "Timeline schema exposes the named matte reference and the track `visible` flag to agents."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-engine/tests/reusable_mattes.rs",
+            "locator": "two_recipients_share_one_picture_and_ignore_source_visibility",
+            "claim": "Executed at eb8070c: 31 focused tests passed, 0 failed (engine blend/nest/reusable-matte pixel comparisons; in-process MCP schema/edit/diff/undo/containment), Vulkan lavapipe only. Retained review out/production-cycle-20261009/cycle4/review/reusable-mattes-focused-run02/REVIEW.json sha256 4b48705372ce8228e5ffe39711023160fb1ca7cfe3276ae5d655feb04bac4ecd."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-mcp/tests/reusable_mattes.rs",
+            "locator": "matte_and_visibility_edits_dry_run_diff_journal_and_undo",
+            "claim": "Typed matte and visibility edits with dry run, diff, journal and undo; part of the same 31-test focused run."
+          },
+          {
+            "stage": "rendered",
+            "path": "docs/evaluations/artifacts/agent-visual-workflows/receipt.json",
+            "locator": "matte-depth-demo-run02",
+            "claim": "Release-candidate cad3de7 CLI and fresh stdio MCP matte/depth demo (771 recorded assertions including preflight, protocol and cleanup; 66 native-versus-PNG comparisons): one nonadjacent named source supplies two recipients with alpha, luma and hidden-source variants and reversible typed edits; selected FFV1 frames equal the native previews. Review hash matte-depth-demo-run02 is in this receipt; the lossy viewing copy is covered separately by viewing-correction-actual-run01."
+          },
+          {
+            "stage": "integrated",
+            "path": "examples/reusable-mattes/README.md",
+            "locator": "",
+            "claim": "Editable example project and typed edit scripts used by the demonstration."
           }
         ],
         "limitations": [
-          "Matte-source visibility cannot be independently enabled while reusing that source as a matte."
+          "Named sources are existing unique nonempty video track names inside one composition: track-level, not arbitrary layers; no adjustment source, self-reference, cycles or cross-composition references. Legacy track_above retains adjacency and consumption.",
+          "Track visibility is a fixed Boolean, not animatable. Nest/unnest reject relationships or visibility they would discard; foreign interchange reports matte and hidden-video loss.",
+          "Candidate-route evidence only (cad3de7 release binaries, CPU lavapipe): no installed-route or hardware-GPU verification, and eight-bit sampled images only, with no normal-speed playback."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
         "output_review_exemption": null,
-        "render_reviews": [],
+        "render_reviews": [
+          {
+            "kind": "visual",
+            "approved": true,
+            "reviewed_at": "2026-10-10",
+            "reviewer": "review-reviewer@ferrocut (independent); also viewed by eng-workflow@ferrocut on 2026-10-10",
+            "artifact_path": "docs/evaluations/artifacts/agent-visual-workflows/showcase-sheet.png",
+            "artifact_sha256": "85dd2d0108b15be628d67a91e874a3b6887aaee396acb474705b946b325cd3b6",
+            "findings": "Six-frame sheet of the corrected lossy viewing copy. Frames f0, f60 and f120 show the matte section: the red panel and blue ellipse are present in each; the ellipse is solid blue at f0 and carries a dark-to-blue horizontal gradient at f60 and f120; the white gradient panel is visible at f0 and f60 and absent at f120 while the ellipse keeps its gradient. No blank or displaced sampled frame. Temporal sampling only: not continuous playback, not the lossless master, and no judgment of Adobe equivalence or creative quality."
+          }
+        ],
         "production_reviews": [],
         "notes": [
-          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded."
+          "Source audit 2026-10-08: implementation/integration state only; full requirement execution and creative acceptance remain unrecorded.",
+          "2026-10-10 eng-workflow: reconciled with accepted candidate evidence (31 focused tests at eb8070c; cad3de7 matte/depth demo; combined validation review fa3a2a2a in the public receipt). Status stays partial and acceptance_complete false: no acceptance check is registered in this ledger, sources are tracks rather than any eligible layer, and the installed route is unverified."
         ],
         "needs_design": false
       }
@@ -21006,27 +21197,82 @@
       "proposed_acceptance": "Composite intersecting planes with correct depth ordering under camera movement.",
       "ferrocut": {
         "status": "partial",
-        "assessed_at": "2026-10-08",
+        "assessed_at": "2026-10-10",
         "acceptance_complete": false,
         "evidence": [
           {
             "stage": "audit",
             "path": "crates/ferrocut-engine/tests/layer3d.rs",
             "locator": "",
-            "claim": "Native planar 2.5D transform/camera render tests exist."
+            "claim": "Native planar 2.5D transform/camera render tests exist for the default legacy path."
+          },
+          {
+            "stage": "implemented",
+            "path": "crates/ferrocut-engine/src/depth.rs",
+            "locator": "DepthLayersV1",
+            "claim": "Opt-in timeline renderer `depth_layers_v1` resolves planar intersections and fractional alpha per pixel by bounded depth peeling, at most 16 authored surfaces per consecutive 3D run. The default `legacy` renderer is unchanged."
+          },
+          {
+            "stage": "audit",
+            "path": "crates/ferrocut-engine/src/compile.rs",
+            "locator": "let depth_mode = !tl.renderer.is_legacy();",
+            "claim": "The compiler takes the painter-sort path whenever the renderer is legacy (the default) and the depth scene path only when depth_layers_v1 is set."
+          },
+          {
+            "stage": "integrated",
+            "path": "crates/ferrocut-mcp/src/schema.rs",
+            "locator": "depth_layers_v1",
+            "claim": "Timeline schema documents the opt-in renderer, its 16-surface limit, the unsupported combinations and the absence of lights, shadows and aperture depth of field."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-engine/tests/depth_scene.rs",
+            "locator": "gpu_crossing_fractional_alpha_reorder_ties_transparent_and_near_clip",
+            "claim": "Executed at 42c285c: 45 focused tests passed (engine depth_scene 9, layer3d 7, nest 6, reusable_mattes 9; in-process MCP 14), CPU Vulkan llvmpipe. Retained review out/production-cycle-20261009/cycle4/review/native-depth-focused-run01/REVIEW.json sha256 fa0ef494b012c23d13c8bf73673fe60f71b45c59ff22bda04c4808beb8b0b0ef."
+          },
+          {
+            "stage": "tested",
+            "path": "crates/ferrocut-mcp/tests/depth_scene.rs",
+            "locator": "real_depth_edit_diff_undo_and_degenerate_batch_are_atomic",
+            "claim": "Typed depth edits with diff, undo and atomic rejection; part of the same 45-test focused run."
+          },
+          {
+            "stage": "rendered",
+            "path": "docs/evaluations/artifacts/agent-visual-workflows/receipt.json",
+            "locator": "matte-depth-demo-run02",
+            "claim": "Release-candidate cad3de7 demo (771 recorded assertions): crossing fractional-alpha cards, a subtractive window, orbit and roll, reordered authoring and analytic controls; cold CLI, warm fresh-MCP and forced CLI masters are byte-identical on the tested CPU backend. Review hash matte-depth-demo-run02 is in this receipt."
+          },
+          {
+            "stage": "integrated",
+            "path": "examples/crossing-glass/README.md",
+            "locator": "",
+            "claim": "Editable example with the typed edit that enables the depth renderer."
           }
         ],
         "limitations": [
-          "Painter ordering has no depth buffer or correct intersecting-plane visibility.",
-          "Parenting, lighting, shadows, depth of field and mesh geometry are not native supported capabilities."
+          "Per-pixel intersection is opt-in (`renderer: depth_layers_v1`); the default legacy renderer still painter-sorts consecutive 3D layers by anchor depth, with no depth buffer and no correct intersecting-plane visibility.",
+          "Depth mode is planar cards only, at most 16 authored surfaces per consecutive 3D run; matte, track-effect, overlap and blend combinations it cannot represent are errors with nesting guidance.",
+          "Parenting, mesh geometry, PBR materials, lights, shadows and depth of field are not native supported capabilities.",
+          "Candidate-route evidence only (cad3de7 release binaries, CPU lavapipe): no installed-route or hardware-GPU verification; eight-bit sampled images only, with no normal-speed playback of the camera move."
         ],
         "acceptance_checks": [],
         "output_review_required": true,
         "output_review_exemption": null,
-        "render_reviews": [],
+        "render_reviews": [
+          {
+            "kind": "visual",
+            "approved": true,
+            "reviewed_at": "2026-10-10",
+            "reviewer": "review-reviewer@ferrocut (independent); also viewed by eng-workflow@ferrocut on 2026-10-10",
+            "artifact_path": "docs/evaluations/artifacts/agent-visual-workflows/showcase-sheet.png",
+            "artifact_sha256": "85dd2d0108b15be628d67a91e874a3b6887aaee396acb474705b946b325cd3b6",
+            "findings": "Six-frame sheet of the corrected lossy viewing copy. Frames f180, f270 and f359 show two translucent cards crossing: the overlap is split along a vertical line into a red-dominant and a blue-dominant half, with a circular window showing blue, and the card outlines differ between the three instants as the camera moves. No blank or displaced sampled frame. Three sampled instants of a lossy copy: not continuous playback, not the lossless master, and no judgment of After Effects equivalence."
+          }
+        ],
         "production_reviews": [],
         "notes": [
-          "Conservative code audit only; test-source references are not fresh execution or creative-review claims."
+          "Conservative code audit only; test-source references are not fresh execution or creative-review claims.",
+          "2026-10-10 eng-workflow: reconciled with accepted candidate evidence (45 focused tests at 42c285c; cad3de7 matte/depth demo; combined validation review fa3a2a2a in the public receipt). Status stays partial and acceptance_complete false: correct intersection needs an opt-in renderer, the row's parenting requirement is unsupported, no acceptance check is registered in this ledger, and the installed route is unverified."
         ],
         "needs_design": false
       }

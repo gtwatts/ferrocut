@@ -56,6 +56,7 @@ cargo test --release
 ./target/release/ferrocut render examples/demo.json -o out/demo.mkv
 ./target/release/ferrocut render examples/demo-edit-opacity.json -o out/edit.mkv   # only chunks 8,9 re-render
 ./target/release/ferrocut render examples/demo-av.json -o out/av.mkv   # dialogue + ducked music, J/L cuts, animated overlay, -14 LUFS
+./target/release/ferrocut render examples/demo-av.json -o out/av-part.mkv --range-frames 30..90   # frames [30,90) only: master starts at 0, same pixels/PCM as those frames of the full master
 echo '[{"op":"slip","clip":"cam_b","delta":"1/2"}]' > /tmp/ops.json
 ./target/release/ferrocut edit examples/demo-av.json /tmp/ops.json -o out/av-slip.json --plan   # prints the chunks that will re-render
 ./target/release/ferrocut diff examples/demo-av.json out/av-slip.json --summary   # structured diff + chunks to re-render (JSON without --summary)
@@ -233,6 +234,7 @@ on `demo-av.json` a 1/2 s slip re-renders 5 of 13 chunks and a roll 1 of 13.
 | `plan` | Chunk plan (index, frame range, content key) without decoding or GPU |
 | `render` | Incremental render (`jobs` (default 4, lowered to fit free VRAM), `force`, `cache_dir`, `cpu`, `timeout_s`, `deliver: "mp4"` or `{format, output, qp, audio, jobs}`); returns `report_path`, hashes, chunk-reuse stats, `oom_backoffs` and, with `deliver`, a `deliver` section |
 | `preview_frames` | Stills and a labeled contact sheet straight from the graph (`at` times, `frames`, or `spread` N evenly spaced), no video encode; the sheet (or single frame) comes back inline as an image, `each` writes full-resolution PNGs |
+| `artifact_frames` | Exact frames decoded from an encoded file (a delivery or excerpt), by presentation-order ordinal (`-1` = last), each with its own pts/time base, conversion and PNG hash; the file's blake3 is pinned and rechecked; the sheet (or single frame) comes back inline |
 | `timeline_schema` | Timeline JSON Schema, edit-op schema (`op` narrows to one op), parameter registry (`query` filters), authoring guide |
 | `report_read` | Summary (or `full`) of a render report |
 | `quality_check` | Perceptual quality check of a render via `ferrocut-perceive` (below): `status`, `problems`, `warnings`; `render` also takes `check: true` |

@@ -34,6 +34,9 @@ pub struct Timeline {
     pub name: String,
     pub output: OutputSpec,
     pub tracks: Vec<Track>,
+    /// Opt-in native per-pixel planar depth; absent preserves legacy keys/math.
+    #[serde(default, skip_serializing_if = "crate::depth::Renderer::is_legacy")]
+    pub renderer: crate::depth::Renderer,
     /// Audio-only tracks, mixed after the video tracks' audio buses.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_tracks: Vec<AudioTrack>,
@@ -294,11 +297,14 @@ fn default_gops_per_chunk() -> u32 {
 pub struct Track {
     #[serde(default)]
     pub name: String,
+    /// Join the final picture stack. Hidden tracks remain available as matte
+    /// sources; linked audio is controlled separately by `audio.mute`.
+    #[serde(default = "default_visible", skip_serializing_if = "is_visible")]
+    pub visible: bool,
     /// The audio bus carrying this track's clips' linked audio.
     #[serde(default, skip_serializing_if = "BusSpec::is_default")]
     pub audio: BusSpec,
-    /// Track matte: this track's picture is cut out by the track above
-    /// (alpha / luma, or inverted), and that track is not composited itself.
+    /// Cut out this track with an adjacent consumed or named reusable source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub matte: Option<MatteSpec>,
     /// Track video effects (see [`crate::fx`]), keyframes in timeline time,
@@ -306,6 +312,14 @@ pub struct Track {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<crate::fx::VideoEffectSpec>,
     pub clips: Vec<Clip>,
+}
+
+fn default_visible() -> bool {
+    true
+}
+
+fn is_visible(visible: &bool) -> bool {
+    *visible
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -560,6 +574,7 @@ impl Timeline {
         if let Some(m) = &self.motion_blur {
             m.validate().map_err(|e| anyhow::anyhow!(e))?;
         }
+        crate::depth::validate(self)?;
         crate::markers::validate(&self.markers, "timeline")?;
         for c in self.tracks.iter().flat_map(|t| &t.clips) {
             crate::markers::validate(&c.markers, &format!("clip {}", c.id))?;
@@ -577,31 +592,12 @@ impl Timeline {
                     track.name
                 );
                 ensure!(
-                    ti + 1 >= self.tracks.len() || self.tracks[ti + 1].matte.is_none(),
-                    "track {} ({:?}): an adjustment track cannot be the matte of the track below",
-                    ti,
-                    track.name
-                );
-                ensure!(
                     !self
                         .tracks
                         .iter()
                         .any(|t| t.clips.iter().any(|c| c.three_d)),
                     "track {ti} ({:?}): adjustment layers are not supported in timelines with 3D layers yet",
                     track.name
-                );
-            }
-            if track.matte.is_some() {
-                ensure!(
-                    ti + 1 < self.tracks.len(),
-                    "track {ti} ({:?}): a track matte needs a video track above it (the matte source)",
-                    track.name
-                );
-                ensure!(
-                    self.tracks[ti + 1].matte.is_none(),
-                    "track {} ({:?}) is the matte for the track below and cannot have a matte itself",
-                    ti + 1,
-                    self.tracks[ti + 1].name
                 );
             }
             let mut sorted: Vec<&Clip> = track.clips.iter().collect();
@@ -786,6 +782,7 @@ impl Timeline {
                 "duplicate track name {n:?}"
             );
         }
+        crate::blend::matte_plan(&self.tracks)?;
         let buses = self
             .tracks
             .iter()

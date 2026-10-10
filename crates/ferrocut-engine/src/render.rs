@@ -84,9 +84,14 @@ pub const ENGINE_VERSION: &str =
 #[derive(Clone, Debug, Serialize)]
 pub struct ChunkPlan {
     pub index: usize,
+    /// First frame of the chunk. In a selected-range render's report this is
+    /// the frame in the output file (0-based); `source_start_frame` is then
+    /// the timeline frame it was evaluated at.
     pub start_frame: i64,
     pub frames: i64,
     pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_start_frame: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -168,6 +173,158 @@ pub struct RenderReport {
     /// [`crate::compile::compile_proxies`]); empty for a full-resolution render.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub proxies: Vec<PathBuf>,
+    /// Present for a selected-range render: the master holds only these
+    /// timeline frames, starting at output frame 0. `total_frames`, chunk
+    /// `start_frame`s and audio sample counts are then output-file values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<RangeReport>,
+}
+
+/// A half-open interval of output (timeline) frames, `[start, end)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct FrameRange {
+    pub start: i64,
+    pub end: i64,
+}
+
+impl FrameRange {
+    /// `start..end` in frames. Refuses empty or reversed intervals; bounds
+    /// against a timeline are checked by [`FrameRange::check`].
+    pub fn frames(start: i64, end: i64) -> anyhow::Result<FrameRange> {
+        anyhow::ensure!(
+            start >= 0,
+            "range start {start} is negative (frames are 0-based)"
+        );
+        anyhow::ensure!(
+            end > start,
+            "range {start}..{end} is empty or reversed (half-open: end must exceed start)"
+        );
+        Ok(FrameRange { start, end })
+    }
+
+    /// The frames whose start time lies in the half-open time interval
+    /// `[t0, t1)`: frame `i` is included iff `t0 <= i / fps < t1`, so
+    /// `start = ceil(t0 * fps)` and `end = ceil(t1 * fps)`. Exact rationals; no
+    /// float rounding.
+    pub fn times(
+        t0: RationalTime,
+        t1: RationalTime,
+        fps: ferrocut_core::FrameRate,
+    ) -> anyhow::Result<FrameRange> {
+        // Validated as rationals before any integer conversion: a negative
+        // start would otherwise ceil to frame 0, and an unchecked multiply
+        // could overflow on a huge time.
+        anyhow::ensure!(
+            t0.seconds() >= ferrocut_core::Rational::ZERO,
+            "time range start {t0} is negative"
+        );
+        anyhow::ensure!(t1 > t0, "time range {t0}..{t1} is empty or reversed");
+        let frame = |t: RationalTime| -> anyhow::Result<i64> {
+            t.seconds()
+                .checked_mul(fps)
+                .map(|r| r.ceil())
+                .map_err(|e| anyhow::anyhow!("time {t} at {fps} fps is out of range ({e})"))
+        };
+        let (start, end) = (frame(t0)?, frame(t1)?);
+        anyhow::ensure!(
+            end > start,
+            "time range {t0}..{t1} contains no frame start at {fps} fps"
+        );
+        FrameRange::frames(start, end)
+    }
+
+    /// Parse `A..B`: integers are frames; with `time` they are rational
+    /// seconds (`"1/2..5/2"`, `"0.5..2.5"`).
+    pub fn parse(
+        text: &str,
+        time: bool,
+        fps: ferrocut_core::FrameRate,
+    ) -> anyhow::Result<FrameRange> {
+        let (a, b) = text
+            .split_once("..")
+            .with_context(|| format!("range {text:?}: expected START..END (half-open)"))?;
+        if time {
+            let t = |v: &str| -> anyhow::Result<RationalTime> {
+                Ok(RationalTime(
+                    v.trim()
+                        .parse::<ferrocut_core::Rational>()
+                        .map_err(|e| anyhow::anyhow!("range time {v:?}: {e}"))?,
+                ))
+            };
+            FrameRange::times(t(a)?, t(b)?, fps)
+        } else {
+            let f = |v: &str| -> anyhow::Result<i64> {
+                v.trim()
+                    .parse::<i64>()
+                    .with_context(|| format!("range frame {v:?} is not an integer"))
+            };
+            FrameRange::frames(f(a)?, f(b)?)
+        }
+    }
+
+    /// Refuse a range that reaches past the timeline's last frame.
+    pub fn check(self, total_frames: i64) -> anyhow::Result<FrameRange> {
+        anyhow::ensure!(
+            self.end <= total_frames,
+            "range {}..{} ends after the timeline ({total_frames} frames)",
+            self.start,
+            self.end
+        );
+        Ok(self)
+    }
+
+    pub fn len(self) -> i64 {
+        self.end - self.start
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.end <= self.start
+    }
+}
+
+/// What a selected-range render holds (see [`RenderReport::range`]).
+#[derive(Clone, Debug, Serialize)]
+pub struct RangeReport {
+    /// Timeline frames `[start, end)` that were evaluated (at their original
+    /// timeline times: nothing is rebased before evaluation).
+    pub source_frames: [i64; 2],
+    /// The same frames in the output file: `[0, end - start)`.
+    pub output_frames: [i64; 2],
+    /// Exact timeline times of the interval (rational seconds).
+    pub source_time: [String; 2],
+    /// Master audio samples `[s0, s1)` of the full program (per channel), and
+    /// their positions in the output file `[0, s1 - s0)`; absent without audio.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_samples: Option<[i64; 2]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_samples: Option<[i64; 2]>,
+    /// The audio is a sample-exact cut of the full program's mastered mix
+    /// (same gain/limiter as a full render), never re-mastered for the
+    /// selection; `audio.analysis` describes the full program.
+    pub audio_mastering: &'static str,
+    /// Timeline frame count, so a checker never mistakes the selection for
+    /// the whole program.
+    pub timeline_frames: i64,
+}
+
+/// Reads the full program's audio shifted by `offset` samples, so output
+/// sample 0 is program sample `offset`.
+struct OffsetFeed<'a> {
+    inner: &'a mut dyn crate::media::concat::AudioFeed,
+    offset: i64,
+}
+
+impl crate::media::concat::AudioFeed for OffsetFeed<'_> {
+    fn read(&mut self, s0: i64, s1: i64) -> anyhow::Result<Vec<f32>> {
+        self.inner.read(s0 + self.offset, s1 + self.offset)
+    }
+}
+
+/// Lexical absolute path for a render-report field (`chunk_dir`, `output`).
+/// Resolved against the process current directory at render time.
+/// Does not canonicalize and does not require the path to exist.
+pub(crate) fn report_path(p: &Path) -> anyhow::Result<PathBuf> {
+    std::path::absolute(p).with_context(|| format!("making {} absolute", p.display()))
 }
 
 /// Output frames in flight per chunk worker in the readback ring.
@@ -251,6 +408,9 @@ pub struct RenderOptions {
     pub max_chunk_restarts: u32,
     /// Called as the render advances (see the module docs).
     pub progress: Option<ProgressFn>,
+    /// Render only these timeline frames into a master that starts at 0
+    /// (`None`: the whole timeline, unchanged behaviour).
+    pub range: Option<FrameRange>,
 }
 
 impl RenderOptions {
@@ -264,6 +424,7 @@ impl RenderOptions {
             max_retries: 2,
             max_chunk_restarts: 2,
             progress: None,
+            range: None,
         }
     }
 }
@@ -325,14 +486,29 @@ pub fn encode_settings(tl: &Timeline) -> EncodeSettings {
 
 /// Pure planning: frame keys -> chunk keys. No decoding, no GPU.
 pub fn plan(tl: &Timeline, c: &Compiled) -> Vec<ChunkPlan> {
+    plan_range(
+        tl,
+        c,
+        FrameRange {
+            start: 0,
+            end: tl.frame_count(),
+        },
+    )
+}
+
+/// [`plan`] for timeline frames `[range.start, range.end)`. Chunks follow the
+/// full timeline's chunk grid, cut at the range ends: interior chunks are the
+/// same chunks (same keys) as a full render's and reuse its cache; a cut edge
+/// chunk holds fewer frames, so its key differs and it is rendered on its own.
+pub fn plan_range(tl: &Timeline, c: &Compiled, range: FrameRange) -> Vec<ChunkPlan> {
     let fps = tl.output.fps;
-    let total = tl.frame_count();
     let cf = tl.chunk_frames();
     let fp = encode_settings(tl).fingerprint();
     let mut out = Vec::new();
-    let mut start = 0;
-    while start < total {
-        let frames = cf.min(total - start);
+    let mut start = range.start;
+    while start < range.end {
+        let grid_end = (start.div_euclid(cf) + 1) * cf;
+        let frames = grid_end.min(range.end) - start;
         let mut h = blake3::Hasher::new();
         h.update(b"ferrocut.chunk.v1\0");
         h.update(ENGINE_VERSION.as_bytes());
@@ -350,6 +526,7 @@ pub fn plan(tl: &Timeline, c: &Compiled) -> Vec<ChunkPlan> {
             start_frame: start,
             frames,
             key: h.finalize().to_hex().to_string(),
+            source_start_frame: None,
         });
         start += frames;
     }
@@ -724,13 +901,27 @@ pub fn render(
     opts: &RenderOptions,
 ) -> anyhow::Result<RenderReport> {
     let t0 = Instant::now();
-    let chunk_dir = opts
-        .cache_dir
-        .join("chunks")
-        .join(adapter_tag(&gpu.get().info));
+    // Recorded in the report as absolute (lexical). Chunk files still land in
+    // this same directory; only the path string stored for later checks changes.
+    let chunk_dir = report_path(
+        &opts
+            .cache_dir
+            .join("chunks")
+            .join(adapter_tag(&gpu.get().info)),
+    )?;
     std::fs::create_dir_all(&chunk_dir)
         .with_context(|| format!("creating {}", chunk_dir.display()))?;
-    let plans = plan(tl, c);
+    let range = match opts.range {
+        Some(r) => Some(FrameRange::frames(r.start, r.end)?.check(tl.frame_count())?),
+        None => None,
+    };
+    let span = range.unwrap_or(FrameRange {
+        start: 0,
+        end: tl.frame_count(),
+    });
+    let plans = plan_range(tl, c, span);
+    // The whole program is mixed and mastered (cached) even for a range, so
+    // the selection's audio is the full master's samples, not a re-master.
     let audio_plan =
         crate::audio::prepare(tl, &opts.cache_dir, opts.force).context("preparing audio")?;
     let gpu0 = gpu.get();
@@ -756,7 +947,7 @@ pub fn render(
             chunks: AtomicU64::new(reused.len() as u64),
             frames: AtomicU64::new(reused.iter().map(|p| p.frames as u64).sum()),
             total_chunks: plans.len(),
-            total_frames: tl.frame_count(),
+            total_frames: span.len(),
             reused_chunks: reused.len(),
         }
     });
@@ -843,20 +1034,27 @@ pub fn render(
     let t_concat = Instant::now();
     let paths: Vec<PathBuf> = plans.iter().map(path_of).collect();
     let refs: Vec<&Path> = paths.iter().map(|p| p.as_path()).collect();
-    let starts: Vec<i64> = plans.iter().map(|p| p.start_frame).collect();
+    // Output-file frame of each chunk: the range starts at 0.
+    let starts: Vec<i64> = plans.iter().map(|p| p.start_frame - span.start).collect();
     if let Some(dir) = out.parent() {
         std::fs::create_dir_all(dir).ok();
     }
     let tmp_out = out.with_extension("partial.mkv");
-    let fs = |i: i64| frame_sample(tl, i);
+    // Program sample of output frame 0, and output frame -> output sample.
+    let s_start = frame_sample(tl, span.start);
+    let fs = |i: i64| frame_sample(tl, i + span.start) - s_start;
     let t_audio = Instant::now();
-    let mut feed = audio_plan.as_ref().map(|a| a.reader());
+    let mut reader = audio_plan.as_ref().map(|a| a.reader());
+    let mut feed = reader.as_mut().map(|r| OffsetFeed {
+        inner: r,
+        offset: s_start,
+    });
     let mut concat_audio = match (&audio_plan, feed.as_mut()) {
         (Some(a), Some(feed)) => Some(ConcatAudio {
             rate: a.program.rate,
             feed,
             frame_sample: &fs,
-            total: a.program.total,
+            total: (frame_sample(tl, span.end).min(a.program.total) - s_start).max(0),
         }),
         _ => None,
     };
@@ -883,19 +1081,25 @@ pub fn render(
             ChunkStatus::Rendered => rendered += p.frames,
             ChunkStatus::Reused => reused += p.frames,
         }
+        let mut plan = p.clone();
+        if range.is_some() {
+            plan.start_frame = p.start_frame - span.start;
+            plan.source_start_frame = Some(p.start_frame);
+        }
         chunks.push(ChunkReport {
-            plan: p.clone(),
+            plan,
             status,
             file_blake3: file_blake3(path)?,
             render_ms: ms[p.index].unwrap_or(0),
             audio_blake3: audio_plan
                 .as_ref()
                 .and_then(|_| stats.chunk_audio_blake3.get(p.index).cloned()),
+            // Output-file samples (program samples shifted to the range start).
             audio_samples: audio_plan.as_ref().map(|a| {
                 let total = a.program.total;
                 [
-                    frame_sample(tl, p.start_frame).min(total),
-                    frame_sample(tl, p.start_frame + p.frames).min(total),
+                    frame_sample(tl, p.start_frame).min(total) - s_start.min(total),
+                    frame_sample(tl, p.start_frame + p.frames).min(total) - s_start.min(total),
                 ]
             }),
         });
@@ -917,8 +1121,8 @@ pub fn render(
             let (v, l, _) = crate::media::ffmpeg_info();
             format!("{v} ({l})")
         },
-        output: out.to_path_buf(),
-        total_frames: tl.frame_count(),
+        output: report_path(out)?,
+        total_frames: span.len(),
         chunk_frames: tl.chunk_frames(),
         jobs: opts.jobs,
         chunks,
@@ -943,12 +1147,44 @@ pub fn render(
         final_blake3: file_blake3(out)?,
         proxies: Vec::new(),
         video_blake3: stats.video_blake3,
+        range: range.map(|r| {
+            let samples = audio_plan.as_ref().map(|a| {
+                let total = a.program.total;
+                [
+                    frame_sample(tl, r.start).min(total),
+                    frame_sample(tl, r.end).min(total),
+                ]
+            });
+            RangeReport {
+                source_frames: [r.start, r.end],
+                output_frames: [0, r.len()],
+                source_time: [
+                    RationalTime::from_frames(r.start, tl.output.fps)
+                        .seconds()
+                        .to_string(),
+                    RationalTime::from_frames(r.end, tl.output.fps)
+                        .seconds()
+                        .to_string(),
+                ],
+                source_samples: samples,
+                output_samples: samples.map(|[a, b]| [0, b - a]),
+                audio_mastering: "full_program_cut",
+                timeline_frames: tl.frame_count(),
+            }
+        }),
         audio: match audio_plan {
             Some(a) => Some(AudioReport {
                 codec: "pcm_f32le",
                 sample_rate: a.program.rate,
                 channels: crate::audio::CHANNELS,
-                samples: a.program.total,
+                // Samples in this file (the whole program unless a range).
+                samples: (frame_sample(tl, span.end).min(a.program.total)
+                    - s_start.min(a.program.total))
+                .max(0),
+                // A range file is a cut of the full program's mastered mix:
+                // `output` and `analysis` were measured on the whole program,
+                // not on this excerpt (which is not re-measured).
+                measurement_scope: range.map(|_| "full_program"),
                 output: Some(a.output),
                 cache: a.cache,
                 sources: a.info,
@@ -1045,6 +1281,7 @@ mod tests {
                     start_frame: start,
                     frames: f,
                     key: String::new(),
+                    source_start_frame: None,
                 };
                 start += f;
                 p
@@ -1078,6 +1315,33 @@ mod tests {
         let r = idx(&contiguous_runs(&all, 2));
         assert_eq!(r.concat(), vec![0, 1, 2, 3]);
         assert!(contiguous_runs(&[], 4).is_empty());
+    }
+
+    #[test]
+    fn report_path_is_lexical_absolute() {
+        let rel = Path::new("chunks/tag/out.mkv");
+        let got = report_path(rel).unwrap();
+        assert!(got.is_absolute());
+        assert_eq!(got, std::path::absolute(rel).unwrap());
+        assert_eq!(got, std::env::current_dir().unwrap().join(rel));
+
+        // `..` is folded lexically. The missing path still resolves, so this
+        // is not `canonicalize` (that would error when the path is absent).
+        let dotted = Path::new("no-such-ferrocut/../ferrocut-report-path-missing.mkv");
+        let got = report_path(dotted).unwrap();
+        assert_eq!(got, std::path::absolute(dotted).unwrap());
+        assert!(got.is_absolute());
+        assert!(got.ends_with("ferrocut-report-path-missing.mkv"));
+        assert!(!got.exists());
+
+        let abs = std::env::current_dir()
+            .unwrap()
+            .join("already-absolute.mkv");
+        assert_eq!(
+            report_path(&abs).unwrap(),
+            std::path::absolute(&abs).unwrap()
+        );
+        assert!(report_path(&abs).unwrap().is_absolute());
     }
 
     #[test]

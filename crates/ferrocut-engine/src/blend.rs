@@ -6,11 +6,10 @@
 //!
 //! A clip's `blend_mode` decides how its track composites onto the tracks
 //! below while that clip is active. A track's `matte` takes its alpha (or
-//! luma, or their inverse) from the track directly above, which is then
-//! used only as the matte and not composited itself (AE "track matte" with
-//! the matte layer hidden). [`MatteSource`] is the hook for other matte
-//! sources: any render node whose output alpha (or luma) is a coverage
-//! mask can feed the matte input, e.g. SeePlus's ThorVG vector masks.
+//! luma, or their inverse) from another track's picture. The default
+//! [`MatteSource::TrackAbove`] consumes the adjacent track, preserving the
+//! original timeline contract. A named source can feed multiple tracks;
+//! its `visible` switch controls compositing, independently of matte use.
 
 use serde::{Deserialize, Serialize};
 
@@ -116,23 +115,127 @@ impl MatteMode {
 }
 
 /// Where a track matte comes from.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MatteSource {
     /// The video track directly above (it is not composited itself).
     #[default]
     TrackAbove,
-    // Hook: `Mask { .. }` (SeePlus's ThorVG shapes rendered to a coverage
-    // frame) plugs in here; compile feeds that node to the matte input.
+    /// A unique, nonempty video track name in the same composition.
+    /// JSON: `{"track":"Stencil"}`. Does not consume the source track.
+    Track(String),
 }
 
 /// A track's matte (JSON `"matte": {"mode": "luma"}`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MatteSpec {
     pub mode: MatteMode,
     #[serde(default)]
     pub source: MatteSource,
+}
+
+/// Resolved dependencies, independent of source visibility and stack order.
+pub(crate) struct MattePlan {
+    pub sources: Vec<Option<usize>>,
+    pub consumed: Vec<bool>,
+    /// Deterministic source-before-recipient traversal.
+    pub order: Vec<usize>,
+}
+
+/// Validate before building any nodes. Iterative traversal avoids a call-stack
+/// limit on an authored chain. A source is its own finished track picture,
+/// including effects and its matte, never a backdrop-dependent adjustment.
+pub(crate) fn matte_plan(tracks: &[crate::timeline::Track]) -> anyhow::Result<MattePlan> {
+    use anyhow::{bail, ensure};
+    let mut sources = vec![None; tracks.len()];
+    let mut consumed = vec![false; tracks.len()];
+    for (ti, track) in tracks.iter().enumerate() {
+        let Some(matte) = &track.matte else {
+            continue;
+        };
+        let si = match &matte.source {
+            MatteSource::TrackAbove => {
+                ensure!(
+                    ti + 1 < tracks.len(),
+                    "track {ti} ({:?}): a track matte needs a video track above it (the matte source)",
+                    track.name
+                );
+                ensure!(
+                    tracks[ti + 1].matte.is_none(),
+                    "track {} ({:?}) is the matte for the track below and cannot have a matte itself",
+                    ti + 1,
+                    tracks[ti + 1].name
+                );
+                consumed[ti + 1] = true;
+                ti + 1
+            }
+            MatteSource::Track(name) => {
+                ensure!(
+                    !name.is_empty(),
+                    "track {ti} ({:?}): matte source track name must not be empty",
+                    track.name
+                );
+                let mut matches = tracks.iter().enumerate().filter(|(_, t)| t.name == *name);
+                let Some((si, _)) = matches.next() else {
+                    bail!(
+                        "track {ti} ({:?}): no video matte source named {name:?} in this composition",
+                        track.name
+                    );
+                };
+                ensure!(
+                    matches.next().is_none(),
+                    "track {ti} ({:?}): ambiguous matte source track {name:?}",
+                    track.name
+                );
+                si
+            }
+        };
+        ensure!(
+            si != ti,
+            "track {ti} ({:?}): a track cannot be its own matte source",
+            track.name
+        );
+        ensure!(
+            !tracks[si].clips.iter().any(|c| c.adjustment),
+            "track {ti} ({:?}): an adjustment track cannot be a matte source ({:?})",
+            track.name,
+            tracks[si].name
+        );
+        sources[ti] = Some(si);
+    }
+    let mut state = vec![0u8; tracks.len()];
+    let mut order = Vec::with_capacity(tracks.len());
+    for start in 0..tracks.len() {
+        if state[start] != 0 {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut next = Some(start);
+        while let Some(ti) = next {
+            match state[ti] {
+                0 => {
+                    state[ti] = 1;
+                    path.push(ti);
+                    next = sources[ti];
+                }
+                1 => bail!(
+                    "track {ti} ({:?}): cyclic track matte dependency",
+                    tracks[ti].name
+                ),
+                _ => break,
+            }
+        }
+        while let Some(ti) = path.pop() {
+            state[ti] = 2;
+            order.push(ti);
+        }
+    }
+    Ok(MattePlan {
+        sources,
+        consumed,
+        order,
+    })
 }
 
 const AP1_Y: [f32; 3] = [0.272_228_7, 0.674_081_8, 0.053_689_52];

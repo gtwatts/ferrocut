@@ -2027,6 +2027,7 @@ fn add_track(
             i,
             crate::timeline::Track {
                 name: name.into(),
+                visible: true,
                 audio: Default::default(),
                 matte: None,
                 effects: vec![],
@@ -2402,6 +2403,10 @@ fn set_param(
     ensure!(
         !(scope == (Scope::Track { audio_track: true }) && spec.name == "matte"),
         "matte applies to video tracks only"
+    );
+    ensure!(
+        !(scope == (Scope::Track { audio_track: true }) && spec.name == "visible"),
+        "visible applies to video tracks only; use bus.mute for audio"
     );
     ensure!(
         !(scope == (Scope::Track { audio_track: true }) && spec.name == "effects"),
@@ -2788,7 +2793,15 @@ fn nest(
     let mut used: Vec<usize> = sel.iter().map(|(t, _)| *t).collect();
     used.sort_unstable();
     used.dedup();
+    let mattes = crate::blend::matte_plan(&tl.tracks)?;
     for &ti in &used {
+        ensure!(
+            tl.tracks[ti].visible
+                && mattes.sources[ti].is_none()
+                && !mattes.sources.contains(&Some(ti)),
+            "nest: track {:?} is hidden or participates in a track matte; nesting these clips would change its visibility or matte relationship (author the nested composition explicitly)",
+            tl.tracks[ti].name
+        );
         let mut clips = tl.tracks[ti].clips.clone();
         clips.sort_by_key(|c| c.start);
         for (i, c) in clips.iter().enumerate() {
@@ -2821,6 +2834,7 @@ fn nest(
             ..tl.output.clone()
         },
         tracks: Vec::new(),
+        renderer: tl.renderer,
         audio_tracks: Vec::new(),
         audio: crate::timeline::AudioSettings {
             sample_rate: tl.audio.sample_rate,
@@ -2845,6 +2859,7 @@ fn nest(
         clips.sort_by_key(|c| c.start);
         inner.tracks.push(crate::timeline::Track {
             name: tl.tracks[ti].name.clone(),
+            visible: true,
             audio: Default::default(),
             matte: None,
             effects: vec![],
@@ -2925,6 +2940,10 @@ fn unnest(
         .comp(&full)
         .with_context(|| format!("unnest: reading {}", full.display()))?;
     ensure!(
+        tl.renderer.is_legacy() && inner.renderer.is_legacy(),
+        "unnest: depth_layers_v1 scene boundaries/camera cannot be flattened safely; keep this composition nested"
+    );
+    ensure!(
         c.fit.is_none()
             && (inner.output.width, inner.output.height) == (tl.output.width, tl.output.height),
         "unnest would change the picture; reset explicit fit and match the composition size first"
@@ -2945,14 +2964,18 @@ fn unnest(
     );
     for t in &inner.tracks {
         ensure!(
-            t.audio == Default::default() && t.matte.is_none(),
-            "unnest: inner track {:?} has bus or matte settings that unnesting would drop",
+            t.audio == Default::default() && t.matte.is_none() && t.visible,
+            "unnest: inner track {:?} has bus, matte or visibility settings that unnesting would drop",
             t.name
         );
     }
+    let mattes = crate::blend::matte_plan(&tl.tracks)?;
     ensure!(
-        inner.tracks.len() <= 1 || tl.tracks[ti].matte.is_none(),
-        "unnest: track {:?} has a matte (the track above); unnesting a multi-track comp would change it",
+        inner.tracks.len() <= 1
+            || (tl.tracks[ti].visible
+                && mattes.sources[ti].is_none()
+                && !mattes.sources.contains(&Some(ti))),
+        "unnest: track {:?} is hidden or participates in a matte; unnesting a multi-track comp would change it",
         tl.tracks[ti].name
     );
     let comp_dir = dir_of(&full);

@@ -3,7 +3,7 @@
 //!
 //! Tools: `timeline_get`, `timeline_schema`, `media_probe`, `index_media`,
 //! `transcript_search`, `shots_list`, `edit_apply`,
-//! `diff`, `plan`, `render`, `preview_frames`, `report_read`, `quality_check`, `log`, `undo`,
+//! `diff`, `plan`, `render`, `preview_frames`, `artifact_frames`, `report_read`, `quality_check`, `log`, `undo`,
 //! `branch`, `openh264`. Resources: `docs://` documents (timeline JSON
 //! Schema, authoring guide, edit-op schema, parameter registry, the
 //! checker's report schema), see [`resources`]. Every input schema is hand-written
@@ -39,7 +39,7 @@ pub mod root;
 pub mod schema;
 mod storytold_tools;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::{Context as _, bail};
@@ -251,8 +251,15 @@ fn build_tools() -> Vec<Tool> {
         tool(
             "preview_frames",
             "Preview frames (stills)",
-            "Render chosen output frames to PNG stills and a labeled contact sheet without encoding video: the same pixels a master render would hold at those frames (8-bit Rec.709), through the real graph and compositor. Choose frames by timeline time (`at`), index (`frames`) or `spread` (N evenly spaced over the whole timeline; default 12). Returns each frame's time, timecode and path, the sheet path, and (inline=true, default) the sheet or single frame as an image so you can look at it immediately. Use each=true and read the full-resolution PNGs to check small text. Look before and after every edit batch; it is much cheaper than a draft render.",
+            "Render chosen output frames to PNG stills and a labeled contact sheet without encoding video: the same pixels a master render would hold at those frames (8-bit Rec.709), through the real graph and compositor. Choose frames by timeline time (`at`), index (`frames`) or `spread` (N evenly spaced over the whole timeline; default 12). Returns each frame's time, timecode and path, the sheet path, and (inline=true, default) the sheet or single frame as an image so you can look at it immediately. Use each=true and read the full-resolution PNGs to check small text. Look before and after every edit batch; it is much cheaper than a draft render. Provenance: `hash` is the timeline as parsed once before rendering (the pixels come from that snapshot); `artifact.kind` is native_render (not an encoded file); each frame carries its render-graph `key` and `png_blake3`, and the sheet and inline image their blake3. Referenced media/fonts are read at render time, not frozen.",
             schema::preview_frames(),
+            rw(false).idempotent(true),
+        ),
+        tool(
+            "artifact_frames",
+            "Inspect encoded frames",
+            "Decode exact frames from a self-contained encoded video file (a delivery, an excerpt or a master; Matroska/WebM, MP4/MOV, AVI, IVF, NUT, MXF or raw H.264/HEVC; never playlists, files that reference others, or MPEG-TS/PS, FLV and Ogg, whose streams are discovered while reading) and look at them: what was actually written, not a re-render (preview_frames renders the timeline instead). Frames are ordinals in presentation order from the stream start (0 = first, -1 = last); each comes back with its own pts, the stream time_base and its exact time from the timestamp (never from nominal fps), key/corrupt/alpha flags, and the conversion applied (source tags, the YUV matrix and range actually used, and that transfer/gamut/tone mapping are not converted; unsupported matrices are refused). Full-resolution PNGs keep straight alpha exactly and are named by content, so repeat observations never overwrite earlier ones. artifact.blake3 is the file as observed before decoding and rechecked after (identity: observed_recheck; a change is an error). Returns a labeled sheet and, inline=true (default), the sheet or single frame as an image (translucent frames over a checkerboard). Sequential decode, at most 100000 frames, 64 returned, 1 GiB held; cancellable.",
+            schema::artifact_frames(),
             rw(false).idempotent(true),
         ),
         tool(
@@ -395,6 +402,27 @@ struct RenderArgs {
     deliver: Option<DeliverArg>,
     #[serde(default)]
     proxies: bool,
+    range: Option<RangeArg>,
+}
+
+/// `render.range`: exactly one of `frames` or `time`, half-open.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RangeArg {
+    frames: Option<[i64; 2]>,
+    time: Option<[ferrocut_core::RationalTime; 2]>,
+}
+
+impl RangeArg {
+    fn resolve(&self, tl: &Timeline) -> anyhow::Result<ferrocut_engine::render::FrameRange> {
+        use ferrocut_engine::render::FrameRange;
+        let r = match (self.frames, self.time) {
+            (Some([a, b]), None) => FrameRange::frames(a, b)?,
+            (None, Some([t0, t1])) => FrameRange::times(t0, t1, tl.output.fps)?,
+            _ => bail!("range: give exactly one of frames or time"),
+        };
+        r.check(tl.frame_count())
+    }
 }
 
 #[derive(Deserialize)]
@@ -922,8 +950,40 @@ pub fn base64(bytes: &[u8]) -> String {
 }
 
 fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
+    preview_frames_captured(cx, a, None)
+}
+
+/// `preview_frames` with `after_capture` run right after the timeline
+/// snapshot is parsed and hashed (a test seam: changing the file there must
+/// not change the returned hash or pixels). `args` are the tool's arguments.
+#[doc(hidden)]
+pub fn preview_frames_after_capture(
+    cx: &Ctx,
+    args: Value,
+    after_capture: &mut dyn FnMut(),
+) -> anyhow::Result<Value> {
+    let a: PreviewArgs = serde_json::from_value(args)?;
+    preview_frames_captured(cx, a, Some(after_capture))
+}
+
+fn preview_frames_captured(
+    cx: &Ctx,
+    a: PreviewArgs,
+    after_capture: Option<&mut dyn FnMut()>,
+) -> anyhow::Result<Value> {
     use ferrocut_engine::preview;
-    let (path, tl) = cx.root.load_timeline(&a.timeline)?;
+    // One snapshot of the document: parse it once, report that parse's hash
+    // (the same `hash` semantics as timeline_get), and render its resolved copy.
+    // Re-reading the file after rendering could label these pixels with a
+    // document edited meanwhile.
+    let path = cx.root.check(&a.timeline)?;
+    let raw = read_timeline(&path)?;
+    let snapshot_hash = timeline_hash(&raw);
+    if let Some(hook) = after_capture {
+        hook();
+    }
+    let tl = project::resolved(&raw, &project::dir_of(&path));
+    cx.root.check_sources(&tl)?;
     let dir = match a.output_dir {
         Some(d) => cx.root.check(&d)?,
         None => project::dir_of(&path).join("stills"),
@@ -955,20 +1015,41 @@ fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
     let stills = preview::render_stills(&tl, &c, &gpu, &frames, &cx.cancel)?;
     let sheet = a.sheet.then_some((a.cols, a.cell_width));
     let r = preview::write_stills(&tl, &stills, &dir, &prefix, a.each || !a.sheet, sheet)?;
+    let frame_key = |frame: i64| {
+        let k = c.graph.frame_key(
+            c.output,
+            ferrocut_core::RationalTime::from_frames(frame, tl.output.fps),
+        );
+        k.0.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+    let file_blake3 = |p: &std::path::Path| ferrocut_engine::index::blake3_file(p);
+    let mut frames_json = Vec::new();
+    for f in &r.frames {
+        frames_json.push(json!({
+            "frame": f.frame,
+            "time": f.time,
+            "timecode": f.timecode,
+            "path": f.path.as_deref().map(|p| rel(cx, p)),
+            // Render-graph key of this output frame (inputs + parameters).
+            "key": frame_key(f.frame),
+            "png_blake3": f.path.as_deref().map(file_blake3).transpose()?,
+        }));
+    }
     let mut out = json!({
-        "hash": timeline_hash(&read_timeline(&path)?),
+        "hash": snapshot_hash,
+        "artifact": {
+            "kind": "native_render",
+            "timeline_hash": snapshot_hash,
+            "snapshot": "timeline parsed once before rendering; media, fonts and other files it references are read when rendered, not frozen",
+        },
         "width": tl.output.width,
         "height": tl.output.height,
         "fps": tl.output.fps.to_string(),
         "total_frames": tl.frame_count(),
         "adapter": gpu.describe(),
-        "frames": r.frames.iter().map(|f| json!({
-            "frame": f.frame,
-            "time": f.time,
-            "timecode": f.timecode,
-            "path": f.path.as_deref().map(|p| rel(cx, p)),
-        })).collect::<Vec<_>>(),
+        "frames": frames_json,
         "sheet": r.sheet.as_deref().map(|p| rel(cx, p)),
+        "sheet_blake3": r.sheet.as_deref().map(file_blake3).transpose()?,
     });
     if a.inline {
         let single = stills.len() == 1;
@@ -988,6 +1069,216 @@ fn preview_frames(cx: &Ctx, a: PreviewArgs) -> anyhow::Result<Value> {
             "width": w,
             "height": h,
             "png_bytes": png.len(),
+            "png_blake3": preview::blake3_hex(&png),
+            "max_png_bytes": INLINE_PNG_MAX_BYTES,
+        });
+        out[INLINE_PNG_KEY] = Value::String(base64(&png));
+    }
+    Ok(out)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactArgs {
+    path: PathBuf,
+    frames: Vec<i64>,
+    output_dir: Option<PathBuf>,
+    #[serde(default = "d_true")]
+    each: bool,
+    #[serde(default = "d_true")]
+    sheet: bool,
+    #[serde(default = "d_cols")]
+    cols: u32,
+    #[serde(default = "d_cell_width")]
+    cell_width: u32,
+    prefix: Option<String>,
+    #[serde(default = "d_true")]
+    inline: bool,
+    #[serde(default = "d_inline_max")]
+    inline_max: u32,
+}
+
+/// `m:ss.ss f<ordinal>` from a frame's exact time; `#<ordinal>` when it has
+/// no timestamp or one before the stream start (labels have no minus sign).
+pub fn ordinal_label(index: u64, time: Option<ferrocut_core::RationalTime>) -> String {
+    let cs = time.map(|t| (t.seconds().to_f64() * 100.0).round() as i64);
+    match cs {
+        Some(cs) if cs >= 0 => format!(
+            "{}:{:02}.{:02} f{index}",
+            cs / 6000,
+            (cs % 6000) / 100,
+            cs % 100
+        ),
+        _ => format!("#{index}"),
+    }
+}
+
+fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
+    use ferrocut_engine::media::inspect;
+    use ferrocut_engine::preview;
+    let path = cx.root.check(&a.path)?;
+    anyhow::ensure!(path.is_file(), "{} is not a file", a.path.display());
+    if !(1..=16).contains(&a.cols) {
+        bail!("cols must be 1..=16");
+    }
+    if !(64..=1920).contains(&a.cell_width) {
+        bail!("cell_width must be 64..=1920");
+    }
+    if !(256..=4096).contains(&a.inline_max) {
+        bail!("inline_max must be 256..=4096");
+    }
+    let prefix = a.prefix.unwrap_or_else(|| {
+        path.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "frames".into())
+    });
+    preview::check_prefix(&prefix)?;
+    let dir = match a.output_dir {
+        Some(d) => cx.root.check(&d)?,
+        None => project::dir_of(&path).join("inspect"),
+    };
+    // One decode at a time; waiting for the lock is cancellable.
+    let started = std::time::Instant::now();
+    let _one_at_a_time = loop {
+        match RENDER_LOCK.try_lock() {
+            Ok(g) => break g,
+            Err(std::sync::TryLockError::Poisoned(p)) => break p.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                anyhow::ensure!(!cx.cancel.is_cancelled(), "cancelled");
+                anyhow::ensure!(
+                    started.elapsed() < std::time::Duration::from_secs(600),
+                    "another render or decode held the server for 10 minutes; try again"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    };
+    // The file is read only through one handle (no secondary files), hashed
+    // before and after decoding; the pixels belong to that observed content.
+    let ins = inspect::inspect_file(&path, &a.frames, &cx.cancel, None)?;
+    // Output buffers (accounted estimate, not total RSS) count against the
+    // same budget as the decoded frames, checked before any is allocated.
+    let single = ins.frames.len() == 1;
+    let plan: Vec<preview::OutputFrame> = ins
+        .frames
+        .iter()
+        .map(|f| preview::OutputFrame {
+            width: f.width,
+            height: f.height,
+            translucent: f.rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 255),
+        })
+        .collect();
+    preview::ensure_output_budget(
+        ins.held_bytes,
+        preview::output_bytes_needed(&plan, a.each, a.cols, a.cell_width),
+        inspect::MAX_RETAINED_BYTES,
+    )?;
+    // The lock stays held through output: one inspection's memory at a time.
+    let art = &ins.identity.blake3[..16];
+    let mut frames_json = Vec::new();
+    for f in &ins.frames {
+        anyhow::ensure!(!cx.cancel.is_cancelled(), "cancelled");
+        let png = if a.each {
+            // Exact straight-alpha PNG, named by artifact, ordinal and the PNG's
+            // own content: a repeat observation reuses the identical file, and
+            // an existing different file is never replaced.
+            let bytes = preview::png_bytes_straight(f.width, f.height, &f.rgba)?;
+            let h = preview::blake3_hex(&bytes);
+            let p = cx.root.check(&dir.join(format!(
+                "{prefix}-{art}-i{:06}-{}.png",
+                f.index,
+                &h[..16]
+            )))?;
+            preview::publish_exclusive(&p, &bytes)?;
+            Some((p, h))
+        } else {
+            None
+        };
+        frames_json.push(json!({
+            "index": f.index,
+            "pts": f.pts,
+            "time": f.time.map(|t| t.seconds().to_string()),
+            "key_frame": f.key_frame,
+            "corrupt": f.corrupt,
+            "width": f.width,
+            "height": f.height,
+            "alpha": f.alpha,
+            "conversion": f.conversion,
+            "path": png.as_ref().map(|(p, _)| rel(cx, p)),
+            "png_blake3": png.as_ref().map(|(_, h)| h.clone()),
+        }));
+    }
+    // Sheets and the inline image are display composites: translucent
+    // frames are shown over a checkerboard (the full PNGs keep exact alpha).
+    let shown: Vec<std::borrow::Cow<'_, [u8]>> = ins
+        .frames
+        .iter()
+        .map(|f| preview::over_checkerboard(&f.rgba, f.width))
+        .collect();
+    anyhow::ensure!(!cx.cancel.is_cancelled(), "cancelled");
+    let sheet_img = if single {
+        None
+    } else {
+        let labels: Vec<String> = ins
+            .frames
+            .iter()
+            .map(|f| ordinal_label(f.index, f.time))
+            .collect();
+        let cells: Vec<(u32, u32, &[u8])> = ins
+            .frames
+            .iter()
+            .zip(&shown)
+            .map(|(f, px)| (f.width, f.height, px.as_ref()))
+            .collect();
+        Some(preview::labeled_sheet(
+            &cells,
+            &labels,
+            a.cols,
+            a.cell_width,
+        )?)
+    };
+    let sheet = match (&sheet_img, a.sheet) {
+        (Some((w, h, img)), true) => {
+            // Named by the sheet's own content: other selections or layouts
+            // of the same artifact get their own file.
+            let bytes = preview::png_bytes(*w, *h, img)?;
+            let hash = preview::blake3_hex(&bytes);
+            let p = cx
+                .root
+                .check(&dir.join(format!("{prefix}-{art}-sheet-{}.png", &hash[..16])))?;
+            preview::publish_exclusive(&p, &bytes)?;
+            Some((p, hash))
+        }
+        _ => None,
+    };
+    let mut out = json!({
+        "artifact": {
+            "kind": "encoded_file",
+            "path": rel(cx, &path),
+            "blake3": ins.identity.blake3,
+            "bytes": ins.identity.bytes,
+            "identity": ins.identity.kind,
+        },
+        "stream": ins.stream,
+        "frames": frames_json,
+        "display": "sheet and inline images composite translucent frames over a grey checkerboard; full-resolution PNGs keep straight alpha exactly",
+        "sheet": sheet.as_ref().map(|(p, _)| rel(cx, p)),
+        "sheet_blake3": sheet.as_ref().map(|(_, h)| h.clone()),
+    });
+    if a.inline {
+        anyhow::ensure!(!cx.cancel.is_cancelled(), "cancelled");
+        let (w, h, img) = match sheet_img {
+            Some(s) => s,
+            None => (ins.frames[0].width, ins.frames[0].height, shown[0].to_vec()),
+        };
+        let (w, h, img) = preview::fit_within(&img, w, h, a.inline_max);
+        let (w, h, png) = preview::png_within(w, h, &img, INLINE_PNG_MAX_BYTES)?;
+        out["inline"] = json!({
+            "kind": if single { "frame" } else { "sheet" },
+            "width": w,
+            "height": h,
+            "png_bytes": png.len(),
+            "png_blake3": preview::blake3_hex(&png),
             "max_png_bytes": INLINE_PNG_MAX_BYTES,
         });
         out[INLINE_PNG_KEY] = Value::String(base64(&png));
@@ -1039,6 +1330,10 @@ pub fn summarize(report: &Value) -> Value {
         "placements": report.get("placements").cloned().unwrap_or_else(|| json!([])),
         "warnings": report.get("warnings").cloned().unwrap_or_else(|| json!([])),
     });
+    // Range renders: `loudness` is the full program's, not the excerpt's.
+    if let Some(scope) = audio.get("measurement_scope") {
+        s["loudness_scope"] = scope.clone();
+    }
     if let Some(p) = report.get("proxies") {
         s["draft"] = json!(true);
         s["proxies"] = p.clone();
@@ -1116,6 +1411,12 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
     let output = cx.root.check(&a.output)?;
     let cache_dir = cx.root.check_opt(a.cache_dir)?;
     let report = cx.root.check_opt(a.report)?;
+    let range = a.range.as_ref().map(|r| r.resolve(&tl)).transpose()?;
+    if range.is_some() && a.check {
+        bail!(
+            "check grades a master against its whole timeline; check the full render (a selected-range master is not graded yet)"
+        );
+    }
     let deliver = match a.deliver {
         Some(d) => {
             let mut o = d.opts();
@@ -1162,9 +1463,14 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
     let cache_dir = cache_dir.unwrap_or_else(|| project::dir_of(&output).join(".ferrocut-cache"));
     let jobs = a.jobs.unwrap_or_else(|| {
         let info = &gpu.get().info;
-        ferrocut_engine::vram::default_jobs(info, c.max_layer_size.0, c.max_layer_size.1)
-            .0
-            .min(MCP_MAX_DEFAULT_JOBS)
+        ferrocut_engine::vram::default_jobs_with_extra(
+            info,
+            c.max_layer_size.0,
+            c.max_layer_size.1,
+            c.extra_gpu_bytes_per_job,
+        )
+        .0
+        .min(MCP_MAX_DEFAULT_JOBS)
     });
     let r = render(
         &tl,
@@ -1179,6 +1485,7 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
             deadline: a
                 .timeout_s
                 .map(|s| started + std::time::Duration::from_secs_f64(s)),
+            range,
             ..RenderOptions::new(cache_dir)
         },
     )?;
@@ -1190,6 +1497,9 @@ fn render_tool(cx: &Ctx, a: RenderArgs) -> anyhow::Result<Value> {
         .with_context(|| format!("writing {}", report_path.display()))?;
     let mut s = summarize(&v);
     s["report_path"] = json!(report_path);
+    if let Some(r) = v.get("range") {
+        s["range"] = r.clone();
+    }
     if a.proxies && !draft {
         s["proxies"] = json!("ignored: deliver is a final render from the original media");
     } else if draft && r.proxies.is_empty() {
@@ -1514,6 +1824,156 @@ pub fn read_doc(uri: &str) -> Option<String> {
     })
 }
 
+/// Path-taking `ferrocut-perceive check` flags, in `--flag value` or `--flag=value` form.
+fn checker_flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    let eq = format!("{flag}=");
+    let mut found = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == flag {
+            found = args.get(i + 1).map(String::as_str);
+            i += 2;
+            continue;
+        }
+        if let Some(v) = args[i].strip_prefix(&eq) {
+            found = Some(v);
+        }
+        i += 1;
+    }
+    found
+}
+
+/// Checker flags that take a path. Their values are root-checked and forwarded
+/// as the checked absolute paths.
+const CHECKER_PATH_FLAGS: [&str; 5] = [
+    "--cache-dir",
+    "--render-report",
+    "--out",
+    "--config",
+    "--brief-cuts",
+];
+
+/// Root-check every path-taking checker flag in `args` (`--flag value` and
+/// `--flag=value`) and return the arguments with those values replaced by the
+/// checked absolute paths. The checker child resolves relative paths against
+/// this server's process cwd, which `--root` need not equal; forwarding the
+/// checked absolute path makes the child read and write exactly what was
+/// checked.
+pub fn normalize_checker_args(root: &Root, args: &[String]) -> anyhow::Result<Vec<String>> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if let Some(flag) = CHECKER_PATH_FLAGS.iter().find(|f| a == *f) {
+            let value = args
+                .get(i + 1)
+                .with_context(|| format!("{flag} needs a value"))?;
+            out.push(a.clone());
+            out.push(path_arg(&check_checker_path(root, flag, value)?)?);
+            i += 2;
+            continue;
+        }
+        if let Some((flag, value)) = CHECKER_PATH_FLAGS
+            .iter()
+            .find_map(|f| a.strip_prefix(&format!("{f}=")).map(|v| (*f, v)))
+        {
+            out.push(format!(
+                "{flag}={}",
+                path_arg(&check_checker_path(root, flag, value)?)?
+            ));
+            i += 1;
+            continue;
+        }
+        out.push(a.clone());
+        i += 1;
+    }
+    Ok(out)
+}
+
+fn path_arg(p: &Path) -> anyhow::Result<String> {
+    p.to_str()
+        .map(str::to_owned)
+        .with_context(|| format!("{} is not valid UTF-8", p.display()))
+}
+
+fn check_checker_path(root: &Root, flag: &str, value: &str) -> anyhow::Result<PathBuf> {
+    root.check(Path::new(value))
+        .with_context(|| format!("{flag} {value} is outside the project root"))
+}
+
+/// Every path the checker child will read or write for this render must stay
+/// inside the project root: the render report, each chunk master it opens
+/// (the leaf, so a symlinked `<key>.mkv` is caught), every existing chunk
+/// search directory, the master whose audio it measures, and the engine cache
+/// it writes analysis into. `paths` is the checker's own decision
+/// ([`perceive::check_paths`]) for the same arguments and cwd, so these are
+/// the paths it uses, not a parallel guess.
+fn enforce_check_paths(root: &Root, paths: &perceive::CheckPaths) -> anyhow::Result<()> {
+    let inside = |what: &str, p: &Path| -> anyhow::Result<()> {
+        root.check(p)
+            .map(drop)
+            .with_context(|| format!("{what} {} is outside the project root", p.display()))
+    };
+    inside("render report", &paths.report)?;
+    for (_, dir) in paths.resolution.search.iter().filter(|(_, d)| d.exists()) {
+        inside("chunk directory", dir)?;
+    }
+    for f in &paths.chunk_files {
+        inside("chunk file", f)?;
+    }
+    if let Some(a) = &paths.audio {
+        inside("audio master", a)?;
+    }
+    inside("checker cache", &paths.cache_dir)?;
+    for w in &paths.writes {
+        inside("checker cache", w)?;
+    }
+    Ok(())
+}
+
+/// Most entries [`enforce_tree`] inspects under one write root before refusing.
+const TREE_ENTRY_LIMIT: usize = 100_000;
+
+/// The checker writes and reads files below its output and cache directories
+/// (`perceive.json`, `sheets/`, `scopes/`, cached analysis JSON and thumbs,
+/// audio analysis). An existing symlink anywhere below them would redirect
+/// that IO, so every existing symlink is root-checked (resolved) before the
+/// checker runs. A symlinked directory that stays inside the root is walked
+/// too, through its canonical path, once (cycles end there). Bounded by
+/// [`TREE_ENTRY_LIMIT`]; the Root TOCTOU limits still apply.
+fn enforce_tree(root: &Root, what: &str, dir: &Path) -> anyhow::Result<()> {
+    let outside = |p: &Path| format!("{what} entry {} is outside the project root", p.display());
+    if std::fs::symlink_metadata(dir).is_err() {
+        return Ok(()); // created by the checker; its ancestors were checked
+    }
+    let start = root.check(dir).with_context(|| outside(dir))?;
+    let mut visited = std::collections::HashSet::new();
+    let mut stack = vec![start];
+    let mut seen = 0usize;
+    while let Some(d) = stack.pop() {
+        if !d.is_dir() || !visited.insert(d.clone()) {
+            continue;
+        }
+        for entry in std::fs::read_dir(&d).with_context(|| format!("reading {}", d.display()))? {
+            let path = entry?.path();
+            seen += 1;
+            anyhow::ensure!(
+                seen <= TREE_ENTRY_LIMIT,
+                "{what} {} has more than {TREE_ENTRY_LIMIT} entries; clear it or pass a fresh directory",
+                dir.display()
+            );
+            let m = std::fs::symlink_metadata(&path)?;
+            if m.file_type().is_symlink() {
+                let target = root.check(&path).with_context(|| outside(&path))?;
+                stack.push(target);
+            } else if m.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Run one tool. `None`: no such tool.
 pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
     let with_timeline = |a: TimelineArgs| -> anyhow::Result<TimelineArgs> {
@@ -1539,19 +1999,52 @@ pub fn call(cx: &Ctx, name: &str, a: Value) -> Option<anyhow::Result<Value>> {
         "plan" => args(name, a).and_then(|a| plan_tool(cx, a)),
         "render" => args(name, a).and_then(|a| render_tool(cx, a)),
         "preview_frames" => args(name, a).and_then(|a| preview_frames(cx, a)),
+        "artifact_frames" => args(name, a).and_then(|a| artifact_frames(cx, a)),
         "report_read" => args(name, a).and_then(|a| report_read(cx, a)),
         "markers_list" => args(name, a).and_then(|a| markers_list(cx, a)),
         "media_status" => args(name, a).and_then(|a| media_status(cx, a)),
         "proxy_generate" => args(name, a).and_then(|a| proxy_generate(cx, a)),
         "quality_check" => args::<CheckArgs>(name, a).and_then(|a| {
             let render = cx.root.check(&a.render)?;
+            // What the child receives: path values checked and made absolute.
+            let args = normalize_checker_args(&cx.root, &a.args)?;
+            let cache = checker_flag_value(&args, "--cache-dir").map(PathBuf::from);
+            let report = checker_flag_value(&args, "--render-report").map(PathBuf::from);
+            // The checker runs as a child of this server and resolves relative
+            // paths against this process's cwd (which --root need not equal), so
+            // decide its paths with the same function and cwd, and check each.
+            let cwd = std::env::current_dir().context("current directory")?;
+            let report_path = match &report {
+                Some(p) => p.clone(),
+                None if render.extension().is_some_and(|e| e == "json") => render.clone(),
+                None => render.with_extension("report.json"),
+            };
+            // A symlinked report pointing outside is refused before it is read.
+            cx.root.check(&report_path).with_context(|| {
+                format!(
+                    "render report {} is outside the project root",
+                    report_path.display()
+                )
+            })?;
+            // A missing report is left for the checker to report as usual.
+            if report_path.exists() {
+                let (_, paths) =
+                    perceive::check_paths(&render, report.as_deref(), cache.as_deref(), &cwd)?;
+                enforce_check_paths(&cx.root, &paths)?;
+                // Existing entries below the directories the checker writes into.
+                enforce_tree(&cx.root, "checker cache", &paths.cache_dir.join("perceive"))?;
+                enforce_tree(&cx.root, "checker cache", &paths.cache_dir.join("audio"))?;
+            }
+            if let Some(out) = checker_flag_value(&args, "--out") {
+                enforce_tree(&cx.root, "--out", Path::new(out))?;
+            }
             let (timeline, _) = cx.root.load_timeline(&a.timeline)?;
             Ok(serde_json::to_value(perceive::check(
                 &render,
                 &timeline,
                 &perceive::CheckOptions {
                     binary: None,
-                    extra_args: a.args,
+                    extra_args: args,
                     timeout: a.timeout_s.map(std::time::Duration::from_secs_f64),
                     expect_audio: a.expect_audio,
                 },

@@ -66,7 +66,14 @@ pub struct AudioReport {
     pub analysis: AnalysisReport,
     /// Measured on the rendered master (assembled block-energy records of
     /// the final chunks, SeePlus's format: what ferrocut-perceive measures).
+    /// For a selected-range render this is the full program's measurement;
+    /// see `measurement_scope`.
     pub output: Option<Measurement>,
+    /// `full_program` for a selected-range render: `output` and `analysis`
+    /// describe the whole timeline's mix, of which this file is a sample-exact
+    /// cut; the excerpt itself is not measured. Absent for a full render.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measurement_scope: Option<&'static str>,
     /// Audio chunk cache counters (premix / final chunks, loudness records).
     pub cache: CacheStats,
     /// blake3 of the master's interleaved f32le samples (= the PCM stream bytes).
