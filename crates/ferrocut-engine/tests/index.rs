@@ -483,3 +483,98 @@ fn legacy_cached_transcription_errors_are_retried() {
     let (ix2, info) = index::index_media(&media, &opts(false)).unwrap();
     assert!(info.cached && ix2 == ix && runs(&tools) == 2);
 }
+
+/// A whisper-cli stand-in that records each run's `-f` input and `-of`
+/// output base (one `<f> <of>` line per run) and writes WHISPER_JSON there.
+fn recording_whisper(dir: &Path) -> PathBuf {
+    let json = dir.join("fixture.json");
+    std::fs::write(&json, WHISPER_JSON).unwrap();
+    let p = dir.join("whisper-cli");
+    std::fs::write(
+        &p,
+        format!(
+            r#"#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in -f) f=$2; shift;; -of) of=$2; shift;; esac
+  shift
+done
+echo "$f $of" >> "{d}/calls"
+cp "{j}" "$of.json"
+"#,
+            d = dir.display(),
+            j = json.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    p
+}
+
+/// Two transcriptions of identical content in one process (PR 8 focused
+/// run-01, repeat pass 9: one call removed the other's whisper output and
+/// fell back to the CPU) each own their scratch WAV/JSON. Deterministic:
+/// the same media bytes and model in two directories give the same index
+/// key, so per-process naming handed both calls the same files even run
+/// one after the other; then the same pair concurrently, both succeeding.
+#[test]
+fn identical_content_transcriptions_use_their_own_scratch_files() {
+    let d = tempfile::tempdir().unwrap();
+    let tools = d.path().join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    let cli = recording_whisper(&tools);
+    let model = tools.join("ggml-test.bin");
+    std::fs::write(&model, b"model v1").unwrap();
+    let opts = IndexOptions {
+        transcribe: true,
+        shots: false,
+        whisper: WhisperConfig {
+            cli: Some(cli.clone()),
+            model: Some(model.clone()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let calls = || -> Vec<(String, String)> {
+        std::fs::read_to_string(tools.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| {
+                let (f, of) = l.split_once(' ').unwrap();
+                (f.to_owned(), of.to_owned())
+            })
+            .collect()
+    };
+    let media: Vec<PathBuf> = (0..4)
+        .map(|i| {
+            let dir = d.path().join(format!("m{i}"));
+            std::fs::create_dir(&dir).unwrap();
+            let m = dir.join("vo.wav");
+            write_tone(&m, 1.0);
+            m
+        })
+        .collect();
+    // Sequential: same key, distinct scratch files.
+    let (a, _) = index::index_media(&media[0], &opts).unwrap();
+    let (b, _) = index::index_media(&media[1], &opts).unwrap();
+    assert_eq!(
+        a.key, b.key,
+        "identical content and model share the index key"
+    );
+    let c = calls();
+    assert_eq!(c.len(), 2);
+    assert_ne!(c[0].0, c[1].0, "each call has its own scratch WAV");
+    assert_ne!(c[0].1, c[1].1, "each call has its own whisper output base");
+    // Concurrent: both transcribe once, neither falls back.
+    let (x, y) = std::thread::scope(|s| {
+        let hx = s.spawn(|| index::index_media(&media[2], &opts).unwrap());
+        let hy = s.spawn(|| index::index_media(&media[3], &opts).unwrap());
+        (hx.join().unwrap(), hy.join().unwrap())
+    });
+    assert!(!x.1.cached && !y.1.cached);
+    assert_eq!(x.0.transcript, a.transcript);
+    assert_eq!(y.0.transcript, a.transcript);
+    let c = calls();
+    assert_eq!(c.len(), 4, "exactly one whisper run per call: {c:?}");
+    let bases: std::collections::HashSet<&String> = c.iter().map(|(_, of)| of).collect();
+    assert_eq!(bases.len(), 4, "four distinct output bases: {c:?}");
+}
