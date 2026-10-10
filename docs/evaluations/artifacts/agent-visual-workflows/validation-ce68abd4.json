@@ -1,0 +1,141 @@
+{
+  "schema": "ferrocut-public-evaluation-v1",
+  "date_utc": "2026-10-10",
+  "source_revision": "ce68abd4c979c4e7112fd863066a44ddf7da397a",
+  "relation_to_demonstrations": "The cad3de7 receipt, movie and sheet beside this file are unchanged and still bind the matte/depth and selected-range demonstrations, which were not rerendered on ce68abd4. The ce68abd4 CPU reference renders and the installed-route fixture did run.",
+  "index_concurrency_fixes": {
+    "focused_source_revision": "11803c480dca25b6578a32fb1ef5779b4ce578d8",
+    "corrections": [
+      "registry registration test isolated in its own test binary (test-only)",
+      "unique per-invocation scratch and temporary paths in the index (product correction) with a deterministic identical-content regression test"
+    ],
+    "focused_run": {
+      "result": "pass",
+      "elapsed_seconds": 112,
+      "test_threads": "default parallel",
+      "index_tests_passed": 10,
+      "registry_tests_passed": 1,
+      "scratch_unit_tests_passed": 1,
+      "repeat_passes": 20,
+      "clippy_engine_all_targets": "pass",
+      "leftover_processes": 0,
+      "forced_cleanup": false,
+      "self_skips": [
+        "real_whisper_finds_the_gatekeepers_line"
+      ],
+      "status_sha256": "6eef0f89a07b9d8e6d755f56e133706f6ccdf4a685e76f7cd24ce79811b8dce5"
+    },
+    "earlier_failed_run": "The first correction alone failed at repeat pass 9; that evidence is retained.",
+    "review": {
+      "name": "ci-index-focused-run02",
+      "retained_receipt_sha256": "a4eb1a49810ae40cb2efbdc1f20d915fc0f8643943e398f8091051784e5c2d09"
+    }
+  },
+  "combined_validation": {
+    "review": {
+      "name": "combined-ce68abd4-actual-run02",
+      "retained_receipt_sha256": "0c660a9a6f274cf7ddf2e6c630c3a4112a0af2e8809d3bf6e88053c9dd24d7d7",
+      "verdict": "accepted_actual_combined_checks_and_four_release_binary_source_binding"
+    },
+    "result_sha256": "35f3508f8ee830f71f10897fccae0e5a3a4cfe109aba1dde5b828c8d92881337",
+    "build_receipt_sha256": "ae168d3f19fc2641dd14848f2acd1da4ff25b488ec01df24aef645d353cb1445",
+    "steps_passed": 7,
+    "elapsed_seconds": 886,
+    "leftover_processes": 0,
+    "forced_cleanup_attempts": 0,
+    "workspace": {
+      "reported_passed": 662,
+      "failed": 0,
+      "ignored_doctests": 2,
+      "self_skips": 3,
+      "test_threads": "serial"
+    },
+    "delivery": {
+      "reported_passed": 8,
+      "failed": 0
+    },
+    "registered_title_acceptance": {
+      "reported_passed": 27,
+      "failed": 0,
+      "note": "overlapping workspace subset, not additional unique coverage"
+    },
+    "cpu_reference_renders": {
+      "demo": {
+        "frames": 288,
+        "output_sha256": "db96a9df0b762ba9d886e1d1385583bfbe30d2c2a29c8a42fca420bf99ffd269",
+        "ssim_samples": 12
+      },
+      "demo-av": {
+        "frames": 312,
+        "output_sha256": "c6a3938852dc30c5c9ffc73c888193ca888bf787d59f3789914777c06eba9131",
+        "ssim_samples": 13
+      },
+      "jobs_1_and_2_byte_identical": true,
+      "historical_reference": "reported video and PCM hash identities and 25 sampled SSIM values of 1.0; reference container bytes differ and container equality is not claimed"
+    }
+  },
+  "binaries_sha256": {
+    "ferrocut": "afdc0da0f035989a2efe4348cfcff5d24c9f23971f1afd7c3e57a809ee399fc4",
+    "ferrocut-mcp": "2553f31d90456c24cd7158273edbc437afef114aba505f44d4519d672222dda4",
+    "ferrocut-perceive": "0b1db56fc910ab534bd7c53a9a7700a7e55770ec0cee113f87aab6a8537984bf",
+    "ferrocut-deliver": "12d07bb0350b19d4092ed38aa5a99174cfe50b1648c2aa29b87257f6e6597692"
+  },
+  "installation": {
+    "status": "installed",
+    "installed_binaries": 4,
+    "predecessors_backed_up": true,
+    "configuration_unchanged": true,
+    "record_sha256": "6069cbca39336c66f9fd62bdad7e4323ed5c48870dd93c4df2867367bb0611f8"
+  },
+  "installed_route_run": {
+    "name": "ce68abd4-run-01",
+    "independent_review": {
+      "name": "installed-route-ce68abd4-actual-run01",
+      "retained_receipt_sha256": "0d3a351cb20ce1ceed1c3e5b09b8f39e92989114380bcfa26ab2b317c65f9ffb",
+      "verdict": "accepted_actual_installed_route_at_stated_scope",
+      "findings": 0
+    },
+    "accepted": true,
+    "execution_sha256": "45e21acacf6f5db10aceafb0a1922b1160a4884aeb2e35792018e3acc92248ad",
+    "result_sha256": "34608a0c26b67abd82fe1c281892fe89690e5a8c7f8225ae98ec060f6158f85d",
+    "inspection_sha256": "2ee237e5b54fda9303b52972f62d950a273e9e0db92b6970da53896b78b6d3e2",
+    "wrapper_assertions": 114,
+    "portable_check_assertions": 71,
+    "assertion_note": "assertion counts, not unique tests",
+    "scope": [
+      "static 320x180 gray fixture; frozen-frame warning retained",
+      "cross-working-directory checker route on a 48-frame master, with an expected loudness failure and an outside-root refusal",
+      "two-frame selected range through the configured MCP server; native and encoded sample images byte-equal"
+    ],
+    "reported_range_sample_frames": 4000,
+    "pcm_independently_decoded": false,
+    "limits": [
+      "static fixture: uniform gray pixels cannot distinguish adjacent frames or establish motion, alpha, matte or depth correctness",
+      "PCM sample counts are reported by the render, not independently decoded; no listening",
+      "fresh configured-process execution only; does not show that an already-open agent session reloaded its tools",
+      "process cleanup rests on the runner's own checks, not an independent host process census"
+    ]
+  },
+  "remote_ci": {
+    "run": 38049021220,
+    "head_sha": "ce68abd4c979c4e7112fd863066a44ddf7da397a",
+    "observed_at_utc": "2026-10-10T11:51:49Z",
+    "status": "in_progress",
+    "conclusion": null,
+    "jobs": {
+      "rustfmt": "success",
+      "clippy, tests, CPU render check": "in_progress"
+    },
+    "earlier_failed_run_on_cad3de7": 38009480085
+  },
+  "not_established": [
+    "Remote CI pass",
+    "Installed-route behaviour beyond the static fixture, checker route and two-frame range",
+    "Reload of tools in an already-open agent session",
+    "Matte/depth or other demonstrations on ce68abd4",
+    "Real Whisper, enabled OpenH264, and full OCIO/CEF/ThorVG/OpenFX library routes",
+    "Playback, listening, creative acceptance or Adobe parity",
+    "Translated-picture cache reuse (separate, uncompiled source)"
+  ],
+  "retention": "Detailed execution records and failed attempts remain under ignored out/production-cycle-20261009/cycle4; this public receipt holds hashes and scoped conclusions, not private transcripts, configuration contents or client media."
+}

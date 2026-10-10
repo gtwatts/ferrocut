@@ -6,10 +6,14 @@ checks. The examples below exercise ordinary CLI and fresh stdio MCP routes.
 They use synthetic source, the repository's licensed test font, exact rational
 time, and the LGPL-only FFmpeg build.
 
-The release binaries were built from
+The demonstrations below ran on release binaries built from
 `cad3de7ec0398a563e8634529d996348b065cfde`. Candidate execution and retained-image
-review are complete at the scopes below. Installed-route verification is still
-pending. This is not playback, listening, creative acceptance, or Adobe parity.
+review are complete at the scopes below. The successor revision
+`ce68abd4c979c4e7112fd863066a44ddf7da397a` adds two index concurrency fixes; it
+was validated and installed. The matte/depth and selected-range demonstrations
+were not rerendered on it; its own reference renders and installed fixture did run
+(see [Combined validation, installation and CI](#combined-validation-installation-and-ci)).
+This is not playback, listening, creative acceptance, or Adobe parity.
 
 ![Six sampled frames from the corrected 12-second viewing copy](artifacts/agent-visual-workflows/showcase-sheet.png)
 
@@ -27,8 +31,8 @@ The exact source, binary, review and artifact hashes are recorded in
 | Named mattes | One nonadjacent source supplies two independently moving recipients; alpha/luma and visible/hidden source variants; reversible typed edits | Native and lossless FFV1 samples agree. Hiding the source preserves the sampled recipient region while removing its uncovered presentation. The legacy adjacent control remains separate. |
 | Planar depth | Crossing fractional-alpha cards, a subtractive window, orbit/roll, reordered authoring, and analytic interior controls | Per-pixel front/back changes appear in the inspected intersection samples. Cold CLI, warm fresh-MCP and forced CLI controls are bit-identical on the tested CPU backend; all 11 warm control chunks are reused. This is planar geometry, without mesh/PBR, lights, shadows or native aperture depth of field. |
 | Encoded-frame inspection | `artifact_frames` and `preview_frames` at matching frame ordinals | The tools return comparable images with source/PTS provenance. The demonstrated FFV1 PNGs match the native samples. Encoded frame time comes from PTS and stream time base, not ordinal divided by nominal fps. Matrix/range handling is distinct from transfer or gamut conversion. |
-| Selected-range export | Native 640×360 sequence at 24000/1001 fps; export frames `[30,110)` across chunk boundaries | Output has 80 frames. Its PCM is the exact 160160-sample-frame slice `[60060,220220)` of the full master. Interior full chunks are reused; boundary fragments render. Range audio uses full-program mastering followed by the cut. |
-| Range edit and undo | Change the counter text in the final boundary chunk, rerender, then undo | Only the last 14-frame fragment rerenders after the edit. Sampled neighboring frames are unchanged. Undo restores the exact original range file; the later full render reuses every chunk and matches the original full file. |
+| Selected-range export | Native 640×360 sequence at 24000/1001 fps; export frames `[30,110)` across chunk boundaries | Output has 80 frames. Its PCM is the exact 160160-sample-frame slice `[60060,220220)` of the full master. Interior full chunks are reused. The two cut boundary fragments cannot reuse the corresponding full-grid chunks; they render on first use and are cached under their own keys. Range audio uses full-program mastering followed by the cut. |
+| Range edit and undo | Change the counter text in the final boundary chunk, rerender, then undo | Only the last 14-frame fragment rerenders after the edit; the first boundary fragment and both interior chunks are reused. Sampled neighboring frames are unchanged. Undo restores the exact original range file; the later full render reuses every chunk and matches the original full file. |
 | Portable quality check | Five CLI and five fresh-MCP calls from a different working directory on a 48-frame synthetic master | Authored target, moved report, relative path and explicit-cache cases pass. Explicitly requesting the wrong loudness target fails, and an escaping directory is refused. This actual path used the earlier `9f1e093` debug candidate; combined tests cover its integration. |
 
 The matte/depth run recorded 771 assertions, including preflight, protocol and
@@ -65,9 +69,9 @@ output as JSON. That run stopped before producing pictures. Its corrected
 strict text parser was reviewed separately; it does not change the product's
 CLI contract or turn displayed key prefixes into full-key proof.
 
-## Combined validation and remaining release work
+## Combined validation, installation and CI
 
-The local combined run completed in 817 seconds with no leftover child
+On `cad3de7`, the local combined run completed in 817 seconds with no leftover child
 processes. It passed formatting, Clippy, the workspace tests, delivery unit/bin
 tests, registered title acceptance, release builds, and the CPU reference
 render checks. The workspace reported 659 passes, including three optional
@@ -80,17 +84,68 @@ at jobs 1 and 2 were bit-identical, all 25 retained reference SSIM values were
 1.0, and the audio hash matched. Optional OCIO, CEF, ThorVG and OpenFX stub
 builds do not establish full-library integration.
 
-Remote CI run `38009480085` subsequently failed
-`legacy_cached_transcription_errors_are_retried`. Source diagnosis found that
-another test registers a process-global shot detector while the cache test can
-be running, changing the detector-dependent cache key. Local combined tests
-used one test thread and did not exercise that ordering. A test-only isolation
-correction is under independent review; its default-parallel validation and a
-new remote CI result are pending. The local pass is not a remote CI pass.
+Remote CI run `38009480085` on that revision failed
+`legacy_cached_transcription_errors_are_retried`. Diagnosis found two
+concurrency defects, and `ce68abd4` corrects both:
 
-The PP-067 ledger receipt is refreshed from the executed candidate title
-acceptance; it does not promote any additional parity row. The optimized
-timeline-shift cache proposal remains design work and is not implemented here.
+- **Test isolation.** One index test registered a process-global shot detector
+  while a cache test could be running, which changed the detector-dependent
+  cache key. The registration test now runs in its own test binary.
+- **Product correction.** Two transcriptions of identical content in one
+  process shared a scratch-file name. Scratch and temporary paths are now
+  unique per invocation, with a deterministic regression test that runs
+  identical-content transcriptions sequentially and concurrently.
+
+The first correction alone failed its ninth repeated pass, which exposed the
+second defect. With both, a focused run at default test parallelism passed the
+index and registry tests, 20 consecutive repetitions and Clippy. The optional
+real-Whisper test self-skipped in that run, so real Whisper was not exercised.
+
+The combined run was repeated on `ce68abd4`. All seven steps passed in 886
+seconds with no leftover child processes. The workspace reported 662 passes,
+including the same three optional self-skips, plus two ignored doctests.
+Delivery added eight passes, and the 27 registered title tests again repeat a
+workspace subset. These workspace tests ran serially; the default-parallel
+evidence is the focused run above. For the two CPU reference renders:
+
+- independent cold runs at jobs 1 and 2 produced byte-identical files;
+- the reported video and PCM hashes matched the historical references, whose
+  container bytes differ, so no container equality is claimed;
+- all 25 sampled SSIM values were 1.0.
+
+The optional OCIO, CEF, ThorVG and OpenFX libraries were again built as stubs.
+
+The four `ce68abd4` release binaries are installed. The previous binaries
+were backed up and the agent configuration file is byte-identical before and
+after. A fresh installed-route run then completed and was independently
+accepted with no findings, at this narrow scope:
+
+- a static 320×180 gray fixture, with the expected frozen-frame warning kept;
+- checker calls from a different working directory on a 48-frame master,
+  including an expected loudness failure and a refused outside-root path;
+- a two-frame selected range through the configured MCP server, whose native
+  and encoded sample images are byte-equal.
+
+The run recorded 114 wrapper assertions and 71 portable-check assertions;
+these are assertion counts, not unique tests. The range report's 4000 sample
+frames are a reported figure, not an independent PCM decode, and nothing was
+listened to. The fixture is static: uniform gray pixels cannot distinguish
+adjacent frames or show motion, alpha, matte or depth correctness. The
+runner's process-release record and the model's image inspection are separate
+evidence. The run does not repeat the matte/depth demonstration, and it does
+not show that an already-open agent session has reloaded its tools.
+
+Remote CI run `38049021220` is on exactly `ce68abd4`. When observed at
+2026-10-10 11:51 UTC it was still in progress: the formatting job had
+succeeded and the Clippy, test and CPU render job had not finished. No remote
+pass is claimed from local evidence.
+
+The hashes for this section are in
+[the ce68abd4 validation receipt](artifacts/agent-visual-workflows/validation-ce68abd4.json).
+The PP-067 ledger receipt is refreshed from the executed title acceptance; it
+does not promote any additional parity row. Translated-picture cache reuse is
+separate, uncompiled source work and is not in the validated or installed
+revision.
 
 ## Reproduction sources
 
