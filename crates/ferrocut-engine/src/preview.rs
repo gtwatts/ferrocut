@@ -202,6 +202,11 @@ pub fn render_stills(
 }
 
 /// Encode straight RGBA8 as PNG bytes.
+/// blake3 of bytes as lowercase hex (content identity of an inline image).
+pub fn blake3_hex(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
 pub fn png_bytes(width: u32, height: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>> {
     let size = tiny_skia::IntSize::from_wh(width, height).context("empty image")?;
     // Opaque pixels: straight == premultiplied, so no conversion is needed.
@@ -365,17 +370,52 @@ pub fn contact_sheet(
     cols: u32,
     cell_w: u32,
 ) -> anyhow::Result<(u32, u32, Vec<u8>)> {
-    ensure!(!stills.is_empty(), "no stills");
-    let (sw, sh) = (stills[0].width, stills[0].height);
+    let cells: Vec<(u32, u32, &[u8])> = stills
+        .iter()
+        .map(|s| (s.width, s.height, s.rgba.as_slice()))
+        .collect();
+    let labels: Vec<String> = stills.iter().map(|s| timecode(tl, s.frame)).collect();
+    labeled_sheet(&cells, &labels, cols, cell_w)
+}
+
+/// Size of a [`labeled_sheet`] of `n` cells whose first image is `sw` x
+/// `sh` (before the [`MAX_SHEET_PIXELS`] check): `(width, height, cell
+/// width, cell height, columns)`.
+pub fn sheet_layout(
+    sw: u32,
+    sh: u32,
+    n: usize,
+    cols: u32,
+    cell_w: u32,
+) -> (u64, u64, u32, u32, u32) {
     let cell_w = cell_w.min(sw).max(16);
     let cell_h = ((sh as u64 * cell_w as u64) / sw as u64).max(1) as u32;
-    let cols = cols.clamp(1, stills.len() as u32);
-    let rows = (stills.len() as u32).div_ceil(cols);
+    let cols = cols.clamp(1, n.max(1) as u32);
+    let rows = (n as u32).div_ceil(cols);
+    let gap = 4u64;
+    (
+        cols as u64 * cell_w as u64 + (cols as u64 + 1) * gap,
+        rows as u64 * cell_h as u64 + (rows as u64 + 1) * gap,
+        cell_w,
+        cell_h,
+        cols,
+    )
+}
+
+/// [`contact_sheet`] for any RGBA images (`(width, height, rgba)`), each
+/// labeled with its own text (digits, `:`, `.`, `f`, `s`, `#`, space). Cells
+/// take the first image's aspect; others are scaled into it.
+pub fn labeled_sheet(
+    cells: &[(u32, u32, &[u8])],
+    labels: &[String],
+    cols: u32,
+    cell_w: u32,
+) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+    ensure!(!cells.is_empty(), "no stills");
+    ensure!(cells.len() == labels.len(), "one label per still");
+    let (w, h, cell_w, cell_h, cols) =
+        sheet_layout(cells[0].0, cells[0].1, cells.len(), cols, cell_w);
     let gap = 4;
-    let (w, h) = (
-        cols as u64 * cell_w as u64 + (cols as u64 + 1) * gap as u64,
-        rows as u64 * cell_h as u64 + (rows as u64 + 1) * gap as u64,
-    );
     ensure!(
         w * h <= MAX_SHEET_PIXELS,
         "a {w}x{h} contact sheet is too large (max {MAX_SHEET_PIXELS} pixels): fewer columns, a smaller cell_width or fewer frames"
@@ -386,16 +426,16 @@ pub fn contact_sheet(
         *px = [24, 24, 28, 255];
     }
     let scale = (cell_w / 160).clamp(1, 4);
-    for (i, s) in stills.iter().enumerate() {
+    for (i, ((cw, ch, rgba), text)) in cells.iter().zip(labels).enumerate() {
         let (cx, cy) = (i as u32 % cols, i as u32 / cols);
         let (ox, oy) = (gap + cx * (cell_w + gap), gap + cy * (cell_h + gap));
-        let small = downscale(&s.rgba, s.width, s.height, cell_w, cell_h);
+        let small = downscale(rgba, *cw, *ch, cell_w, cell_h);
         for y in 0..cell_h {
             let src = &small[(y * cell_w * 4) as usize..((y + 1) * cell_w * 4) as usize];
             let d = (((oy + y) * w + ox) * 4) as usize;
             img[d..d + src.len()].copy_from_slice(src);
         }
-        label(&mut img, w, h, ox, oy, &timecode(tl, s.frame), scale);
+        label(&mut img, w, h, ox, oy, text, scale);
     }
     Ok((w, h, img))
 }
@@ -479,4 +519,234 @@ pub fn write_stills(
         width: tl.output.width,
         height: tl.output.height,
     })
+}
+
+/// PNG of straight-alpha RGBA8 that keeps every pixel's RGB and alpha
+/// exactly. Fully opaque images use [`png_bytes`] (compressed); images with
+/// any alpha below 255 are written as an exact RGBA PNG with stored
+/// (uncompressed) deflate blocks, because the compressed encoder takes
+/// premultiplied pixels and would change the RGB of translucent ones.
+pub fn png_bytes_straight(width: u32, height: u32, rgba: &[u8]) -> anyhow::Result<Vec<u8>> {
+    ensure!(
+        rgba.len() == width as usize * height as usize * 4 && width > 0 && height > 0,
+        "pixel buffer size"
+    );
+    if rgba.chunks_exact(4).all(|p| p[3] == 255) {
+        return png_bytes(width, height, rgba);
+    }
+    // Written straight into one buffer of the exact final size (no separate
+    // filtered-row, deflate or chunk copies): stored deflate blocks, Adler-32
+    // and the IDAT CRC are computed while the rows are copied.
+    fn crc_update(mut c: u32, bytes: &[u8]) -> u32 {
+        for &b in bytes {
+            c ^= b as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    0xedb8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+            }
+        }
+        c
+    }
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        let c = crc_update(crc_update(0xffff_ffff, kind), data);
+        out.extend_from_slice(&(!c).to_be_bytes());
+    }
+    const BLOCK: usize = 65_535;
+    let row = width as usize * 4;
+    let raw_len = (row + 1) * height as usize;
+    let blocks = raw_len.div_ceil(BLOCK);
+    let z_len = 2 + raw_len + 5 * blocks + 4;
+    ensure!(
+        z_len <= u32::MAX as usize,
+        "image too large for one PNG chunk"
+    );
+    let mut out = Vec::with_capacity(8 + 25 + 12 + z_len + 12);
+    out.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    let mut ihdr = [0u8; 13];
+    ihdr[..4].copy_from_slice(&width.to_be_bytes());
+    ihdr[4..8].copy_from_slice(&height.to_be_bytes());
+    ihdr[8..].copy_from_slice(&[8, 6, 0, 0, 0]); // 8-bit RGBA, no interlace
+    chunk(&mut out, b"IHDR", &ihdr);
+    out.extend_from_slice(&(z_len as u32).to_be_bytes());
+    let idat_start = out.len();
+    out.extend_from_slice(b"IDAT");
+    out.extend_from_slice(&[0x78, 0x01]);
+    let (mut a, mut b) = (1u32, 0u32);
+    let (mut left_in_block, mut written) = (0usize, 0usize);
+    let mut emit = |out: &mut Vec<u8>, mut bytes: &[u8]| {
+        while !bytes.is_empty() {
+            if left_in_block == 0 {
+                let n = (raw_len - written).min(BLOCK) as u16;
+                out.push(u8::from(written + n as usize == raw_len));
+                out.extend_from_slice(&n.to_le_bytes());
+                out.extend_from_slice(&(!n).to_le_bytes());
+                left_in_block = n as usize;
+            }
+            let take = left_in_block.min(bytes.len());
+            for &v in &bytes[..take] {
+                a = (a + v as u32) % 65521;
+                b = (b + a) % 65521;
+            }
+            out.extend_from_slice(&bytes[..take]);
+            left_in_block -= take;
+            written += take;
+            bytes = &bytes[take..];
+        }
+    };
+    for y in 0..height as usize {
+        emit(&mut out, &[0]); // filter: none
+        emit(&mut out, &rgba[y * row..(y + 1) * row]);
+    }
+    out.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    let c = crc_update(0xffff_ffff, &out[idat_start..]);
+    out.extend_from_slice(&(!c).to_be_bytes());
+    chunk(&mut out, b"IEND", &[]);
+    Ok(out)
+}
+
+/// Accounted output-buffer budget (an estimate of the buffers the encoder
+/// allocates, not total process memory) for one PNG encode of a
+/// `width` x `height` RGBA image by [`png_bytes_straight`] or [`png_bytes`].
+///
+/// The translucent path holds one exact-size buffer (about 1x). The opaque
+/// path (tiny-skia 0.12 + png 0.18) is the larger and is what this covers:
+/// the pixmap copy and the demultiplied copy (2x), filtered-row buffers (a
+/// few rows), and the zlib output and final file vectors, each up to twice a
+/// worst-case incompressible stream after geometric growth, plus a stored
+/// fallback candidate of the same size (5 streams), plus 1 MiB of headroom.
+pub fn png_encode_bound(width: u32, height: u32) -> u64 {
+    let (w, h) = (width as u64, height as u64);
+    let row = w * 4 + 1;
+    let raw = row * h;
+    // Stored deflate: 5 bytes per 64 KiB block plus zlib/PNG framing.
+    let stream = raw + raw.div_ceil(65_535) * 5 + 64;
+    2 * w * h * 4 + 8 * row + 5 * stream + (1 << 20)
+}
+
+/// One frame (or the only image) of an inspection output plan.
+#[derive(Clone, Copy, Debug)]
+pub struct OutputFrame {
+    pub width: u32,
+    pub height: u32,
+    /// Any alpha below 255 (needs a display composite copy).
+    pub translucent: bool,
+}
+
+/// Accounted output-buffer bytes for writing `frames` as full-resolution
+/// PNGs (`each`, one at a time) and then the display: translucent
+/// composites, plus the contact sheet (`cols`, `cell_w`) with its PNG and
+/// the inline copy and its PNG, or for one frame the inline copy and its PNG.
+/// The two phases do not overlap, so the larger counts.
+pub fn output_bytes_needed(frames: &[OutputFrame], each: bool, cols: u32, cell_w: u32) -> u64 {
+    if frames.is_empty() {
+        return 0;
+    }
+    let size = |f: &OutputFrame| f.width as u64 * f.height as u64 * 4;
+    let pngs = if each {
+        frames
+            .iter()
+            .map(|f| png_encode_bound(f.width, f.height))
+            .max()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let composites: u64 = frames.iter().filter(|f| f.translucent).map(size).sum();
+    let picture = if frames.len() == 1 {
+        let f = &frames[0];
+        size(f) + png_encode_bound(f.width, f.height)
+    } else {
+        let f0 = &frames[0];
+        let (w, h, ..) = sheet_layout(f0.width, f0.height, frames.len(), cols, cell_w);
+        let (w, h) = (w.min(u32::MAX as u64) as u32, h.min(u32::MAX as u64) as u32);
+        let sheet = w as u64 * h as u64 * 4;
+        // Sheet + its PNG, then the inline copy (at most the sheet) + its PNG.
+        2 * sheet + 2 * png_encode_bound(w, h)
+    };
+    pngs.max(composites + picture)
+}
+
+/// Refuse output whose accounted buffers plus `held` (decoded frames) exceed
+/// `budget`.
+pub fn ensure_output_budget(held: u64, needed: u64, budget: u64) -> anyhow::Result<()> {
+    ensure!(
+        held + needed <= budget,
+        "frames ({held} bytes) plus their PNG/sheet/inline output buffers ({needed} bytes, accounted estimate) exceed {budget} bytes; request fewer or smaller frames, or a smaller cell_width"
+    );
+    Ok(())
+}
+
+/// Display composite of straight-alpha RGBA over an 8-pixel checkerboard
+/// (grey 102 / 153), so translucency stays visible after resizing or in a
+/// contact sheet; the result is opaque. Opaque input is returned unchanged.
+pub fn over_checkerboard(rgba: &[u8], width: u32) -> std::borrow::Cow<'_, [u8]> {
+    if rgba.chunks_exact(4).all(|p| p[3] == 255) {
+        return std::borrow::Cow::Borrowed(rgba);
+    }
+    let mut out = rgba.to_vec();
+    for (i, px) in out.chunks_exact_mut(4).enumerate() {
+        let (x, y) = (i as u32 % width, i as u32 / width);
+        let bg: u32 = if ((x / 8) + (y / 8)) % 2 == 0 {
+            102
+        } else {
+            153
+        };
+        let a = px[3] as u32;
+        for c in &mut px[..3] {
+            *c = ((*c as u32 * a + bg * (255 - a) + 127) / 255) as u8;
+        }
+        px[3] = 255;
+    }
+    std::borrow::Cow::Owned(out)
+}
+
+/// Write `bytes` at `path` without replacing anything: the file is created
+/// through a temporary and a hard link (atomic, fails if `path` exists). If
+/// `path` already holds exactly these bytes it is kept (an idempotent repeat
+/// observation); different existing content is an error, never overwritten.
+/// Returns whether a new file was created.
+pub fn publish_exclusive(path: &Path, bytes: &[u8]) -> anyhow::Result<bool> {
+    let dir = path.parent().context("output path has no directory")?;
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let name = path
+        .file_name()
+        .context("output path has no file name")?
+        .to_string_lossy();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = dir.join(format!(".{name}.{}.{nanos}.tmp", std::process::id()));
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .with_context(|| format!("creating {}", tmp.display()))?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+    }
+    let linked = std::fs::hard_link(&tmp, path);
+    let _ = std::fs::remove_file(&tmp);
+    match linked {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let existing =
+                std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+            ensure!(
+                existing == bytes,
+                "{} already exists with different content; it was not replaced",
+                path.display()
+            );
+            Ok(false)
+        }
+        Err(e) => Err(e).with_context(|| format!("publishing {}", path.display())),
+    }
 }

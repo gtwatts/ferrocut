@@ -4,6 +4,7 @@ pub mod audio;
 pub mod concat;
 pub mod decode;
 pub mod encode;
+pub mod inspect;
 pub mod probe;
 pub mod proxy;
 

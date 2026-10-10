@@ -828,7 +828,16 @@ pub fn render() -> Value {
             "check_args": check_args(),
             "expect_audio": expect_audio(),
             "deliver": deliver(),
-            "proxies": { "type": "boolean", "default": false, "description": "draft render: read video from half-resolution proxies where they exist (proxy_generate); the summary gains draft=true and the proxies used. Ignored with deliver (a final render always uses the original media). Draft chunks are cached apart from full-resolution ones." }
+            "proxies": { "type": "boolean", "default": false, "description": "draft render: read video from half-resolution proxies where they exist (proxy_generate); the summary gains draft=true and the proxies used. Ignored with deliver (a final render always uses the original media). Draft chunks are cached apart from full-resolution ones." },
+            "range": {
+                "description": "render only a half-open interval of timeline frames into a master (and delivery) that starts at frame 0. Frames are evaluated at their original timeline times; audio is the same samples of the full program's mastered mix (not re-mastered). Interior chunks reuse a full render's cache. The summary and report gain `range` with source/output frames, times and samples. Not combinable with check (the checker grades whole-timeline masters).",
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "frames": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer", "minimum": 0 }, "description": "[start, end): 0-based timeline frames, end exclusive" },
+                    "time": { "type": "array", "minItems": 2, "maxItems": 2, "items": rational("timeline seconds"), "description": "[t0, t1): the frames whose start time t satisfies t0 <= t < t1" }
+                }
+            }
         }),
         &["timeline", "output"],
     )
@@ -1235,6 +1244,25 @@ pub fn preview_frames() -> Value {
             "inline_max": { "type": "integer", "minimum": 256, "maximum": 4096, "default": 1568, "description": "longer side of the inline image in pixels; the PNG is also halved until it is under 3 MB" }
         }),
         &["timeline"],
+    )
+}
+
+/// `artifact_frames`: exact frames decoded from an encoded file.
+pub fn artifact_frames() -> Value {
+    object(
+        json!({
+            "path": path("encoded video file to inspect (a delivery, excerpt or master)"),
+            "frames": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "type": "integer", "minimum": -64 }, "description": "frame ordinals in presentation order from the stream start (0 = first); negative counts from the end (-1 = last, needs a full decode)" },
+            "output_dir": path("directory for the PNGs (default: <file dir>/inspect)"),
+            "each": { "type": "boolean", "default": true, "description": "write one full-resolution PNG per frame, exact straight alpha (<prefix>-<file blake3>-i<ordinal>-<png blake3>.png; an existing file with other content is never replaced)" },
+            "sheet": { "type": "boolean", "default": true, "description": "write a labeled contact sheet (<prefix>-<file blake3>-sheet-<png blake3>.png) when more than one frame is requested" },
+            "cols": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4, "description": "contact sheet columns" },
+            "cell_width": { "type": "integer", "minimum": 64, "maximum": 1920, "default": 480, "description": "contact sheet cell width in pixels" },
+            "prefix": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*$", "description": "file name prefix (default: the file stem): letters, digits, '.', '_', '-'" },
+            "inline": { "type": "boolean", "default": true, "description": "also return the sheet (or the single frame) as an image content block" },
+            "inline_max": { "type": "integer", "minimum": 256, "maximum": 4096, "default": 1568, "description": "longer side of the inline image in pixels; the PNG is also halved until it is under 3 MB" }
+        }),
+        &["path", "frames"],
     )
 }
 

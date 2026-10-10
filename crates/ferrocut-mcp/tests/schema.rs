@@ -154,6 +154,7 @@ fn every_tool_schema_is_a_strict_object() {
             "plan",
             "render",
             "preview_frames",
+            "artifact_frames",
             "markers_list",
             "media_status",
             "proxy_generate",

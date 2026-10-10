@@ -710,3 +710,30 @@ pub fn from_track(tl: &Timeline, track: &str) -> anyhow::Result<Vec<CaptionCue>>
     validate(&cues)?;
     Ok(cues)
 }
+
+/// Cues for a selected-range export of the timeline interval `[t0, t1)`,
+/// re-timed so `t0` is 0 in the exported file.
+///
+/// Boundary policy: a cue that overlaps the interval is kept and clipped to
+/// it (a cue straddling `t0` starts at 0; one straddling `t1` ends at the
+/// file's end), then shifted by `-t0`; cues entirely outside are dropped. Ids
+/// and text are unchanged. Exact rationals: no frame snapping is added here.
+pub fn clip_to_range(
+    cues: &[CaptionCue],
+    t0: RationalTime,
+    t1: RationalTime,
+) -> anyhow::Result<Vec<CaptionCue>> {
+    ensure!(t1 > t0, "caption range {t0}..{t1} is empty or reversed");
+    let out: Vec<CaptionCue> = cues
+        .iter()
+        .filter(|c| c.end > t0 && c.start < t1)
+        .map(|c| CaptionCue {
+            id: c.id.clone(),
+            start: c.start.max(t0) - t0,
+            end: c.end.min(t1) - t0,
+            text: c.text.clone(),
+        })
+        .collect();
+    validate(&out)?;
+    Ok(out)
+}
