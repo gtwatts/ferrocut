@@ -1165,7 +1165,7 @@ fn artifact_frames(cx: &Ctx, a: ArtifactArgs) -> anyhow::Result<Value> {
         .map(|f| preview::OutputFrame {
             width: f.width,
             height: f.height,
-            translucent: f.rgba.chunks_exact(4).any(|p| p[3] != 255),
+            translucent: f.rgba.as_chunks::<4>().0.iter().any(|p| p[3] != 255),
         })
         .collect();
     preview::ensure_output_budget(

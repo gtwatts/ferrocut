@@ -531,7 +531,7 @@ pub fn png_bytes_straight(width: u32, height: u32, rgba: &[u8]) -> anyhow::Resul
         rgba.len() == width as usize * height as usize * 4 && width > 0 && height > 0,
         "pixel buffer size"
     );
-    if rgba.chunks_exact(4).all(|p| p[3] == 255) {
+    if rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255) {
         return png_bytes(width, height, rgba);
     }
     // Written straight into one buffer of the exact final size (no separate
@@ -686,11 +686,11 @@ pub fn ensure_output_budget(held: u64, needed: u64, budget: u64) -> anyhow::Resu
 /// (grey 102 / 153), so translucency stays visible after resizing or in a
 /// contact sheet; the result is opaque. Opaque input is returned unchanged.
 pub fn over_checkerboard(rgba: &[u8], width: u32) -> std::borrow::Cow<'_, [u8]> {
-    if rgba.chunks_exact(4).all(|p| p[3] == 255) {
+    if rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255) {
         return std::borrow::Cow::Borrowed(rgba);
     }
     let mut out = rgba.to_vec();
-    for (i, px) in out.chunks_exact_mut(4).enumerate() {
+    for (i, px) in out.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let (x, y) = (i as u32 % width, i as u32 / width);
         let bg: u32 = if ((x / 8) + (y / 8)) % 2 == 0 {
             102

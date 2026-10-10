@@ -650,7 +650,11 @@ fn sws_matrix(space: color::Space) -> anyhow::Result<(i32, String)> {
 }
 
 /// The conversion for a frame format, fixed per (format, size, tags).
-fn conversion_for(f: &frame::Video) -> anyhow::Result<(Option<(i32, bool)>, Conversion, bool)> {
+/// libswscale coefficients and full-range flag to apply (None for RGB), the
+/// reported conversion, and whether the format carries alpha.
+type ConversionPlan = (Option<(i32, bool)>, Conversion, bool);
+
+fn conversion_for(f: &frame::Video) -> anyhow::Result<ConversionPlan> {
     use ffmpeg_next::ffi::{
         AV_PIX_FMT_FLAG_ALPHA, AV_PIX_FMT_FLAG_BAYER, AV_PIX_FMT_FLAG_HWACCEL, AV_PIX_FMT_FLAG_PAL,
         AV_PIX_FMT_FLAG_RGB,
@@ -795,7 +799,7 @@ fn to_encoded(
     }
     if !s.alpha {
         // Formats without alpha are opaque, whatever the scaler left there.
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             px[3] = 255;
         }
     }
