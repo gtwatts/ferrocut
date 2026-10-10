@@ -204,7 +204,7 @@ fn an_escaping_symlink_at_an_output_name_is_refused() {
 #[test]
 fn translucent_pixels_are_kept_exactly_and_shown_over_a_checkerboard() {
     // 16x16: a semi-transparent pixel, a fully transparent one, opaque rest.
-    let mut rgba = vec![10u8, 20, 30, 255].repeat(16 * 16);
+    let mut rgba = [10u8, 20, 30, 255].repeat(16 * 16);
     rgba[..4].copy_from_slice(&[64, 32, 16, 128]);
     rgba[4..8].copy_from_slice(&[200, 100, 50, 0]);
     let png = preview::png_bytes_straight(16, 16, &rgba).unwrap();
@@ -223,7 +223,7 @@ fn translucent_pixels_are_kept_exactly_and_shown_over_a_checkerboard() {
     );
     assert_eq!(&shown[8..12], &[10, 20, 30, 255], "opaque unchanged");
     // Opaque images keep the compressed encoder (unchanged native output).
-    let opaque = vec![1u8, 2, 3, 255].repeat(4);
+    let opaque = [1u8, 2, 3, 255].repeat(4);
     assert_eq!(
         preview::png_bytes_straight(2, 2, &opaque).unwrap(),
         preview::png_bytes(2, 2, &opaque).unwrap()
