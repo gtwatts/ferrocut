@@ -1,4 +1,9 @@
-# Selected-range demo: run request (not yet executed)
+# Selected-range demo: reproduction sequence
+
+Candidate execution and the subsequent mover-fixture correction were accepted
+on 2026-10-10 at technical and sampled-image scope. See the
+[evaluation](../../../docs/evaluations/2026-10-10-agent-visual-workflows.md) for
+actual frame/PCM/cache comparisons, source hashes and untested dimensions.
 
 Synthetic, original fixture. The only external asset is the repository's own test font,
 NotoSans-Regular.ttf (`crates/ferrocut-engine/tests/data/text/`).
@@ -30,7 +35,7 @@ written to a new `out/selected-range-demo/` directory.
 8. Legacy no-range control: re-render full.mkv. Expect all chunks reused, final_blake3 unchanged, and no `range` in the report.
 9. Visual: the calling agent inspects the inline sheets from step 6 and states the observed mover, counter and caption at the range edges. Playback and listening are NOT claimed. Only ordered frames and PCM equality are checked.
    - Expected mover: a full orange square at y 150..209 whose left edge is 580·t/6 px: about 121 at frame 30, 125 at frame 31, 407 at frame 101 and 440 at frame 109.
-   - Clip `transform.position` is the layer centre. An earlier version of this fixture keyframed it as if it were the top-left corner (x 0 → 580, y 0). The square was then cut off at the top edge and off-screen at the range start. Demo run-01 on 2026-10-09 recorded this; it was corrected with x 320 → 900, y 180 and verified by a before/after run.
+   - Clip `transform.position` is the layer centre. An earlier version of this fixture keyframed it as if it were the top-left corner (x 0 → 580, y 0). The square was then cut off at the top edge and off-screen at the range start. Demo run-01 on 2026-10-10 UTC recorded this; it was corrected with x 320 → 900, y 180 and verified by a before/after run.
 
 Cost estimate, with one GPU job of -j 4 or less:
 - Release build of ferrocut + ferrocut-mcp from the branch: about 10–15 min cold, the dominant cost.

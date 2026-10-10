@@ -1,0 +1,64 @@
+{
+  "schema": "ferrocut-public-evaluation-v1",
+  "date_utc": "2026-10-10",
+  "source_revision": "cad3de7ec0398a563e8634529d996348b065cfde",
+  "binary_build_receipt_sha256": "0372cd686561ca15339a6bb723f1e9c73f2f8e8f8868ff0b59bffe1090c54c02",
+  "binaries_sha256": {
+    "ferrocut": "d7d63f4a48c16d3e45d2a655a3ff543d7ad75f4edb5671c8c9d0ebb873256d9d",
+    "ferrocut-mcp": "be2ffa96247d557baa841f41fc1dc4c4d1786668904e6f6604ca2104a6987a4b",
+    "ferrocut-perceive": "0b1db56fc910ab534bd7c53a9a7700a7e55770ec0cee113f87aab6a8537984bf",
+    "ferrocut-deliver": "12d07bb0350b19d4092ed38aa5a99174cfe50b1648c2aa29b87257f6e6597692"
+  },
+  "portable_actual_route_revision": "9f1e093b1d38c5d32568c607d4ad4f5cb7934b77",
+  "fixture_source_successor": "188046da9843839190cbbbd08c4e0960118296c4",
+  "reviews": {
+    "combined-cad3de7-actual-run01": {
+      "retained_receipt_sha256": "fa3a2a2adb3fa5c55da90c705ee3857e0b49af1ca5461ef4bd18453f42543b83",
+      "verdict": "accepted_combined_checks_and_release_candidate"
+    },
+    "portable-check-actual-run01": {
+      "retained_receipt_sha256": "1e565584b094485e2904480c6d11de2b1c9799463d1925f6196e8788c192f7f9",
+      "verdict": "accepted-debug-candidate-actual-route-scope"
+    },
+    "selected-range-demo-run01": {
+      "retained_receipt_sha256": "4d16a6593ec1d0fdf603773df569e67e423898d0cf45d7e7ac3dd3978810eeca",
+      "verdict": "accepted"
+    },
+    "selected-range-mover-actual-run01": {
+      "retained_receipt_sha256": "b27ab052c946678789a2766948a400a7aa24b6b7e5244c5d380f58beea9d8fd9",
+      "verdict": "accepted_bounded_actual_fixture_correction"
+    },
+    "matte-depth-demo-run02": {
+      "retained_receipt_sha256": "91f1f4674bba125cd57fe19920969c673970ca811898978efcfa288e2ff622c8",
+      "verdict": "accepted_native_ffv1_technical_and_sampled_picture_scope; viewing_derivative_changes_needed"
+    },
+    "viewing-correction-actual-run01": {
+      "retained_receipt_sha256": "fe7820a58db33839607f087b078fe48c774acaf842e38e000edd7d9ccb6997bb",
+      "verdict": "accepted_metadata_corrected_derivative_at_retained_execution_and_sampled_visual_scope"
+    }
+  },
+  "published_artifacts": {
+    "showcase-bt709.mp4": {
+      "sha256": "be3a83ec7aadbe7c718bc889c560888c251b057977ad9c3186f80c9ef9d81c32",
+      "bytes": 1528556,
+      "origin": "byte copy of retained reviewed output"
+    },
+    "showcase-sheet.png": {
+      "sha256": "85dd2d0108b15be628d67a91e874a3b6887aaee396acb474705b946b325cd3b6",
+      "bytes": 76058,
+      "origin": "byte copy of retained reviewed output"
+    }
+  },
+  "scope": [
+    "Candidate CLI/MCP, native and FFV1 comparisons, sampled retained image review",
+    "Viewing derivative color metadata correction preserves compressed packet contents",
+    "Synthetic generators and licensed repository test font; no client media"
+  ],
+  "not_established": [
+    "Installed route",
+    "Playback/listening or creative acceptance",
+    "Full mesh/PBR/shadow/depth-of-field support",
+    "Remote CI pass after the index-test race correction"
+  ],
+  "retention": "Detailed execution records and original failed attempts remain under ignored out/production-cycle-20261009/cycle4; this public receipt contains hashes and scoped conclusions, not private transcripts."
+}

@@ -35,18 +35,20 @@ copy. Exercise dry-run, committed edit, plan/diff and `undo`. `alpha.ops` and
 `luma.ops` are complete phase settings; `hidden-source.ops` changes only visibility.
 The authored snapshots permit same-time comparisons without mutating a source.
 
-When a render slot is granted, compare frames 0, 36, 72, 108 and 143 across alpha
+For reproduction, compare frames 0, 36, 72, 108 and 143 across alpha
 and luma, then luma and hidden. Require identical recipient-region pixels for
 the visibility pair and a nonempty changed region on the right. Inspect the full
 six-second result plus ordered boundary frames 45–50 and 93–98, first frame 0
 and last frame 143. Record actual inspected images and timecoded findings; these
-checkpoints are planned controls, not observations.
+checkpoints describe the repeatable control sequence.
 
 `legacy-control.json` is the independent 64×32, 24 fps, one-second adjacent
 control retained from the installed baseline plan. Its mask is consumed above
 the panel. Compare unchanged old/new chunk keys and native render pixels, then
 apply `legacy-adjacent.ops` and undo to recover the original.
 
-No render, playback, encoded output, image inspection, or perceptual acceptance
-claim is made here. Native execution, before/after images, undo, and independent
-review remain pending the lead's render slot.
+Candidate CLI/MCP execution, before/after images, undo and independent retained
+review were completed on 2026-10-10. See the
+[executed evaluation](../../docs/evaluations/2026-10-10-agent-visual-workflows.md)
+for exact hashes, sampled findings, the viewing-copy color-tag correction and
+remaining installed-route/playback limits.

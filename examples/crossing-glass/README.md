@@ -6,10 +6,11 @@ then rolls, under a crisp 2D title. All geometry is native and synthetic. The
 bundled Noto Sans test font retains its existing license. No client material,
 pre-rendered depth, generated image, light or blur illusion is used.
 
-This package is **authored source, not executed acceptance**. The implementation,
-regressions and these timelines still require the scheduled adapter tests,
-before/after renders and actual model image inspection. No stills, playback,
-listening, release or installed-route result is claimed here.
+Candidate adapter tests, before/after native and lossless renders, actual image
+inspection and independent review were completed on 2026-10-10. See the
+[executed evaluation](../../docs/evaluations/2026-10-10-agent-visual-workflows.md)
+for exact source/binary hashes, sample scopes and the corrected lossy viewing
+copy. Playback, listening and installed-route acceptance remain separate.
 
 | File | Intended control |
 |---|---|
@@ -33,7 +34,7 @@ premultiplied over, with no background. The artistic demo has different colors,
 a checkerboard and antialiased source shapes, so those constants are not its
 encoded-display pixel predictions.
 
-After a dedicated execution grant, use normal CLI/MCP schema/params, typed
+For reproduction, use normal CLI/MCP schema/params, typed
 edit/plan/diff/undo, preview_frames and native FFV1 render. Retain the original
 and edited timeline bytes, journal, binaries/revision, frame identities and
 output hashes. The minimum image sequence is f0, f30, f60, dense f88–92,
@@ -47,4 +48,4 @@ Filtering currently uses bilinear source samples and single-sample raster edges;
 inspect oblique edges separately from stable interior tests. No lights, shadows,
 native aperture depth of field, mesh/PBR, one-node orientation camera or full
 After Effects parity is claimed. See the [depth contract](../../docs/design/2026-10-09-native-depth-d1.md)
-for supported combinations, memory model and remaining execution work.
+for supported combinations and the memory model.
