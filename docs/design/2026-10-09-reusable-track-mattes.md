@@ -1,8 +1,11 @@
 # Reusable track mattes and source visibility
 
-Source implementation for AE-105/106, based on `21f9bb6`. Validation, rendered
-output, installed-tool verification and independent acceptance are separate
-milestones. This document does not claim those executions occurred.
+Source implementation for AE-105/106, based on `21f9bb6`. Candidate execution
+followed on 2026-10-10: focused tests and a release-candidate CLI/MCP
+demonstration with sampled image review are recorded in
+[the evaluation](../evaluations/2026-10-10-agent-visual-workflows.md).
+Installed-tool verification and playback remain pending; both ledger rows stay
+partial.
 
 ## User operation
 

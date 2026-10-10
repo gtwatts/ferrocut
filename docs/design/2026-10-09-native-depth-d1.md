@@ -1,9 +1,13 @@
 # D1 native planar depth and camera contract
 
-Source checkpoint, 2026-10-09. Execution and perceptual acceptance remain pending.
+Source checkpoint, 2026-10-09. Candidate execution followed on 2026-10-10:
+focused tests and a release-candidate CLI/MCP demonstration with sampled image
+review are recorded in
+[the evaluation](../evaluations/2026-10-10-agent-visual-workflows.md).
+Installed-route verification, playback and perceptual acceptance remain pending.
 This implements an opt-in `depth_layers_v1` renderer for consecutive planar 3D
 tracks. Existing `legacy` projects retain the old homography/painter path and
-camera hashing when new controls are absent. The capability ledger is unchanged.
+camera hashing when new controls are absent. Ledger row AE-128 stays partial.
 
 Source-space clip time mapping, masks, opacity and clip effects feed a scene
 node before projection. Native fit/default anchors and signed data-window corners
